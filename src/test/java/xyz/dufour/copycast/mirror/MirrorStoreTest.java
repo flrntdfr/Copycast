@@ -34,7 +34,8 @@ class MirrorStoreTest {
     }
 
     private static ProbeResult rssProbe(String title) {
-        return new ProbeResult(true, SourceType.RSS, title, "Desc", "https://img.example/c.png", "Jane", 3, null);
+        return new ProbeResult(true, SourceType.RSS, "RSS", title, "Desc",
+                "https://img.example/c.png", "Jane", 3, null);
     }
 
     @Test
@@ -203,6 +204,22 @@ class MirrorStoreTest {
 
         Files.writeString(store.listingJson(mirror.getId()), "{\"id\":\"single\"}");
         assertEquals(Set.of("single"), store.currentKeys(mirror));
+
+        // YouTube channels nest videos inside tab playlists.
+        Files.writeString(store.listingJson(mirror.getId()), """
+                {"id":"chan","entries":[
+                  {"id":"chan-videos","entries":[{"id":"v1"},{"id":"v2"}]},
+                  {"id":"chan-shorts","entries":[{"id":"s1"}]}
+                ]}
+                """);
+        assertEquals(Set.of("v1", "v2", "s1"), store.currentKeys(mirror));
+    }
+
+    @Test
+    void createStoresTheServiceName() throws IOException {
+        Mirror mirror = store.create("https://yt.example/c/chan", ytdlpProbe(), null);
+        assertEquals("YouTube", store.find(mirror.getId()).orElseThrow().getService());
+        assertEquals("YouTube", mirror.displayService());
     }
 
     @Test
@@ -218,7 +235,7 @@ class MirrorStoreTest {
     }
 
     private static ProbeResult ytdlpProbe() {
-        return new ProbeResult(true, SourceType.YTDLP, "Chan", "d", null, "Up", 2, null);
+        return new ProbeResult(true, SourceType.YTDLP, "YouTube", "Chan", "d", null, "Up", 2, null);
     }
 
     private static Episode byKey(List<Episode> episodes, String key) {

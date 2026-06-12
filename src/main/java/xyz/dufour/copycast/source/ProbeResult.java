@@ -6,6 +6,7 @@ import xyz.dufour.copycast.mirror.SourceType;
 public record ProbeResult(
         boolean supported,
         SourceType type,
+        String service,
         String title,
         String description,
         String imageUrl,
@@ -14,6 +15,6 @@ public record ProbeResult(
         String error) {
 
     public static ProbeResult unsupported(String error) {
-        return new ProbeResult(false, null, null, null, null, null, 0, error);
+        return new ProbeResult(false, null, null, null, null, null, null, 0, error);
     }
 }

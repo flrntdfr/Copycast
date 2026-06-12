@@ -114,16 +114,18 @@ public class MainView extends VerticalLayout {
     private void configureGrid() {
         grid.setSizeFull();
         grid.addClassName("copycast-grid");
+        grid.addColumn(new ComponentRenderer<>(this::healthDot))
+                .setHeader("").setFlexGrow(0).setWidth("52px");
         grid.addColumn(new ComponentRenderer<>(mirror ->
                         new RouterLink(mirror.displayTitle(), MirrorDetailView.class, mirror.getId())))
                 .setHeader("Mirror").setFlexGrow(3);
-        grid.addColumn(mirror -> mirror.getType() == null ? "" : mirror.getType().name())
-                .setHeader("Type").setFlexGrow(0).setWidth("90px");
+        grid.addColumn(Mirror::displayService)
+                .setHeader("Service").setFlexGrow(0).setWidth("110px");
         grid.addColumn(mirror -> store.episodes(mirror).size())
                 .setHeader("Episodes").setFlexGrow(0).setWidth("110px");
         grid.addColumn(mirror -> UiSupport.gigabytes(store.sizeOnDiskBytes(mirror.getId())))
                 .setHeader("Size").setFlexGrow(0).setWidth("110px");
-        grid.addColumn(new ComponentRenderer<>(this::healthBadge))
+        grid.addColumn(new ComponentRenderer<>(this::healthLabel))
                 .setHeader("Health").setFlexGrow(2);
         grid.addColumn(new ComponentRenderer<>(this::actions))
                 .setHeader("Actions").setFlexGrow(0).setWidth("220px");
@@ -144,17 +146,24 @@ public class MainView extends VerticalLayout {
         return mirror.getLastError() == null ? Health.OK : Health.WARN;
     }
 
-    private Span healthBadge(Mirror mirror) {
+    private Span healthDot(Mirror mirror) {
         Health health = health(mirror);
         Span dot = new Span();
         dot.addClassName("copycast-health-dot");
-        dot.getStyle().set("background-color", health.color);
-        Span badge = new Span(dot, new Span(healthText(mirror, health)));
-        badge.getStyle().set("display", "inline-flex").set("align-items", "center");
-        if (mirror.getLastError() != null) {
-            badge.getElement().setAttribute("title", mirror.getLastError());
+        if (refresh.isBusy(mirror.getId())) {
+            dot.addClassName("blinking");
         }
-        return badge;
+        dot.getStyle().set("background-color", health.color);
+        dot.getElement().setAttribute("title", healthText(mirror, health));
+        return dot;
+    }
+
+    private Span healthLabel(Mirror mirror) {
+        Span label = new Span(healthText(mirror, health(mirror)));
+        if (mirror.getLastError() != null) {
+            label.getElement().setAttribute("title", mirror.getLastError());
+        }
+        return label;
     }
 
     private String healthText(Mirror mirror, Health health) {
@@ -182,6 +191,11 @@ public class MainView extends VerticalLayout {
                 mirror.isPaused() ? "Resume" : "Pause", () -> {
                     mirror.setPaused(!mirror.isPaused());
                     store.save(mirror);
+                    if (mirror.isPaused()) {
+                        refresh.cancel(mirror.getId());
+                    } else {
+                        refresh.request(mirror.getId(), RefreshService.Trigger.MANUAL);
+                    }
                     reload();
                 });
         Button delete = iconButton(VaadinIcon.TRASH, "Delete",
@@ -241,8 +255,8 @@ public class MainView extends VerticalLayout {
         dialog.setHeaderTitle("Mirror \"" + (result.title() != null ? result.title() : url) + "\"?");
         VerticalLayout content = new VerticalLayout();
         content.setPadding(false);
-        content.add(new Paragraph("Detected as " + result.type() + " with "
-                + result.episodeCount() + " episode(s)."));
+        content.add(new Paragraph("Detected as " + (result.service() != null ? result.service() : result.type())
+                + " with " + result.episodeCount() + " episode(s)."));
         if (result.description() != null && !result.description().isBlank()) {
             String snippet = result.description().length() > 300
                     ? result.description().substring(0, 300) + "…"

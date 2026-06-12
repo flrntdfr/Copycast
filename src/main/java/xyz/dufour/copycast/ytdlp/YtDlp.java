@@ -123,6 +123,17 @@ public class YtDlp {
 
     public Result run(Path workDir, Duration timeout, List<String> args)
             throws IOException, InterruptedException {
+        return run(workDir, timeout, args, process -> {
+        });
+    }
+
+    /**
+     * Runs yt-dlp, handing the spawned process to {@code onStart} so callers
+     * can cancel it (e.g. when a Mirror is paused mid-download).
+     */
+    public Result run(Path workDir, Duration timeout, List<String> args,
+                      java.util.function.Consumer<Process> onStart)
+            throws IOException, InterruptedException {
         ensureInstalled();
         List<String> command = new ArrayList<>();
         command.add(binary.toString());
@@ -130,13 +141,27 @@ public class YtDlp {
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(workDir.toFile());
         Process process = builder.start();
+        onStart.accept(process);
         CompletableFuture<String> out = readAsync(process.getInputStream());
         CompletableFuture<String> err = readAsync(process.getErrorStream());
         if (!process.waitFor(timeout.toSeconds(), TimeUnit.SECONDS)) {
-            process.destroyForcibly();
+            destroyTree(process, true);
             throw new IOException("yt-dlp timed out after " + timeout);
         }
-        return new Result(process.exitValue(), out.join(), err.join());
+        return new Result(process.exitValue(), drain(out), drain(err));
+    }
+
+    /**
+     * Terminates yt-dlp and everything it spawned (ffmpeg etc.) — killing
+     * only the parent leaves orphans holding the output pipes open.
+     */
+    public static void destroyTree(Process process, boolean forcibly) {
+        process.descendants().forEach(forcibly ? ProcessHandle::destroyForcibly : ProcessHandle::destroy);
+        if (forcibly) {
+            process.destroyForcibly();
+        } else {
+            process.destroy();
+        }
     }
 
     private static CompletableFuture<String> readAsync(java.io.InputStream stream) {
@@ -147,6 +172,18 @@ public class YtDlp {
                 return "";
             }
         });
+    }
+
+    /** Orphaned grandchildren can keep a pipe open; never block on it forever. */
+    private static String drain(CompletableFuture<String> future) {
+        try {
+            return future.get(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return "";
+        }
     }
 
     private static String assetName() {

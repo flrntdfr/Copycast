@@ -14,6 +14,7 @@ import xyz.dufour.copycast.mirror.MirrorStore;
 import xyz.dufour.copycast.mirror.SourceType;
 import xyz.dufour.copycast.source.ProbeService;
 import xyz.dufour.copycast.source.Rss;
+import xyz.dufour.copycast.source.YtListing;
 import xyz.dufour.copycast.util.Http;
 import xyz.dufour.copycast.util.Ids;
 import xyz.dufour.copycast.util.Mime;
@@ -58,6 +59,8 @@ public class RefreshService {
         return thread;
     });
     private final Set<String> busy = ConcurrentHashMap.newKeySet();
+    private final Set<String> cancelRequested = ConcurrentHashMap.newKeySet();
+    private final java.util.Map<String, Process> runningProcesses = new ConcurrentHashMap<>();
 
     public RefreshService(MirrorStore store, YtDlp ytDlp, ObjectMapper mapper, CopycastProperties props) {
         this.store = store;
@@ -86,11 +89,33 @@ public class RefreshService {
         }
         queue.submit(() -> {
             try {
-                refresh(mirrorId);
+                refresh(mirrorId, trigger);
             } finally {
                 busy.remove(mirrorId);
+                cancelRequested.remove(mirrorId);
+                runningProcesses.remove(mirrorId);
             }
         });
+    }
+
+    /**
+     * Cancels an in-flight Refresh: the running yt-dlp process is terminated
+     * (it leaves .part files and its download archive, so the next Refresh
+     * resumes where it stopped). Used when a Mirror is paused mid-download.
+     */
+    public void cancel(String mirrorId) {
+        if (!busy.contains(mirrorId)) {
+            return;
+        }
+        cancelRequested.add(mirrorId);
+        Process process = runningProcesses.get(mirrorId);
+        if (process != null) {
+            YtDlp.destroyTree(process, false);
+        }
+    }
+
+    private boolean isCancelled(String mirrorId) {
+        return cancelRequested.contains(mirrorId);
     }
 
     private boolean withinCooldown(Mirror mirror) {
@@ -110,9 +135,13 @@ public class RefreshService {
         }
     }
 
-    private void refresh(String mirrorId) {
+    private void refresh(String mirrorId, Trigger trigger) {
         Mirror mirror = store.find(mirrorId).orElse(null);
         if (mirror == null) {
+            return;
+        }
+        // The Mirror may have been paused while this run sat in the queue.
+        if (mirror.isPaused() && trigger != Trigger.MANUAL) {
             return;
         }
         log.info("Refreshing {} ({})", mirror.displayTitle(), mirrorId);
@@ -121,12 +150,18 @@ public class RefreshService {
             String warnings = mirror.getType() == SourceType.RSS
                     ? refreshRss(mirror)
                     : refreshYtDlp(mirror);
-            mirror.setLastSuccessAt(Instant.now());
+            if (!isCancelled(mirrorId)) {
+                mirror.setLastSuccessAt(Instant.now());
+            }
             mirror.setLastError(warnings);
         } catch (Exception e) {
             String message = e.getMessage() != null ? e.getMessage() : e.toString();
             log.warn("Refresh of {} failed: {}", mirrorId, message);
             mirror.setLastError(message);
+        }
+        if (isCancelled(mirrorId)) {
+            log.info("Refresh of {} cancelled (paused)", mirrorId);
+            mirror.setLastError("Paused mid-refresh; downloads resume on the next refresh");
         }
         store.save(mirror);
     }
@@ -150,6 +185,9 @@ public class RefreshService {
         int failures = 0;
         String lastFailure = null;
         for (Element item : items) {
+            if (isCancelled(mirror.getId())) {
+                break;
+            }
             String identity = Rss.itemIdentity(item);
             String enclosure = Rss.enclosureUrl(item);
             if (identity == null || enclosure == null) {
@@ -157,7 +195,7 @@ public class RefreshService {
             }
             String key = Ids.episodeKey(identity);
             if (store.findAudio(mirror.getId(), key).isEmpty()) {
-                YtDlp.Result result = ytDlp.run(store.dir(mirror.getId()), Duration.ofHours(2), List.of(
+                YtDlp.Result result = runCancellable(mirror.getId(), Duration.ofHours(2), List.of(
                         "--no-progress", "--no-warnings",
                         "--download-archive", store.archiveFile(mirror.getId()).toString(),
                         // -x without --audio-format: enclosures that are already
@@ -165,6 +203,9 @@ public class RefreshService {
                         "-x",
                         "-o", episodesDir.resolve(key + ".%(ext)s").toString(),
                         enclosure));
+                if (isCancelled(mirror.getId())) {
+                    break;
+                }
                 if (!result.ok() || store.findAudio(mirror.getId(), key).isEmpty()) {
                     failures++;
                     lastFailure = result.stderrTail();
@@ -184,8 +225,11 @@ public class RefreshService {
 
     /** Returns a warning summary, or null if everything succeeded. */
     private String refreshYtDlp(Mirror mirror) throws IOException, InterruptedException {
-        YtDlp.Result listing = ytDlp.run(store.dir(mirror.getId()), Duration.ofMinutes(15),
+        YtDlp.Result listing = runCancellable(mirror.getId(), Duration.ofMinutes(15),
                 List.of("-J", "--flat-playlist", "--no-warnings", mirror.getSourceUrl()));
+        if (isCancelled(mirror.getId())) {
+            return null;
+        }
         if (!listing.ok()) {
             throw new IOException("Listing failed: " + listing.stderrTail());
         }
@@ -196,6 +240,10 @@ public class RefreshService {
                 root.path("description").asText(null),
                 ProbeService.thumbnail(root),
                 root.path("uploader").asText(root.path("channel").asText(null)));
+        String service = YtListing.serviceName(root);
+        if (service != null) {
+            mirror.setService(service);
+        }
         fetchArtworkIfMissing(mirror.getId(), MirrorStore.COVER, ProbeService.thumbnail(root));
 
         Path episodesDir = store.episodesDir(mirror.getId());
@@ -214,8 +262,30 @@ public class RefreshService {
             args.add(String.valueOf(mirror.getCap()));
         }
         args.add(mirror.getSourceUrl());
-        YtDlp.Result download = ytDlp.run(store.dir(mirror.getId()), Duration.ofHours(12), args);
-        return download.ok() ? null : "Some downloads failed: " + download.stderrTail();
+        YtDlp.Result download = runCancellable(mirror.getId(), Duration.ofHours(12), args);
+        if (isCancelled(mirror.getId()) || download.ok()) {
+            return null;
+        }
+        return "Some downloads failed: " + download.stderrTail();
+    }
+
+    private YtDlp.Result runCancellable(String mirrorId, Duration timeout, List<String> args)
+            throws IOException, InterruptedException {
+        if (isCancelled(mirrorId)) {
+            return new YtDlp.Result(143, "", "cancelled before start");
+        }
+        try {
+            return ytDlp.run(store.dir(mirrorId), timeout, args, process -> {
+                runningProcesses.put(mirrorId, process);
+                // Cancel may have raced with process start; never leave a
+                // process running for a Mirror that was just paused.
+                if (isCancelled(mirrorId)) {
+                    YtDlp.destroyTree(process, false);
+                }
+            });
+        } finally {
+            runningProcesses.remove(mirrorId);
+        }
     }
 
     private void updateMeta(Mirror mirror, String title, String description, String imageUrl, String author) {

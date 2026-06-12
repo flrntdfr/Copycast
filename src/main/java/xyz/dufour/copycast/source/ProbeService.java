@@ -49,7 +49,7 @@ public class ProbeService {
             byte[] body = Http.get(url, Duration.ofSeconds(60));
             Document doc = XmlUtil.parse(body);
             return Rss.parse(doc).map(channel -> new ProbeResult(
-                    true, SourceType.RSS,
+                    true, SourceType.RSS, "RSS",
                     channel.title(), channel.description(), channel.imageUrl(), channel.author(),
                     channel.items().size(), null));
         } catch (Exception e) {
@@ -66,13 +66,13 @@ public class ProbeService {
                 return ProbeResult.unsupported("yt-dlp does not support this URL: " + result.stderrTail());
             }
             JsonNode root = mapper.readTree(result.stdout());
-            int count = root.has("entries") ? root.path("entries").size() : 1;
             return new ProbeResult(true, SourceType.YTDLP,
+                    YtListing.serviceName(root),
                     root.path("title").asText(null),
                     root.path("description").asText(null),
                     thumbnail(root),
                     root.path("uploader").asText(root.path("channel").asText(null)),
-                    count, null);
+                    YtListing.leafEntries(root).size(), null);
         } catch (Exception e) {
             return ProbeResult.unsupported("Probe failed: " + e.getMessage());
         }
