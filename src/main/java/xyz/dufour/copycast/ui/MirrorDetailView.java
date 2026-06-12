@@ -200,7 +200,8 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         feedUrl.setValue(feeds.feedUrl(mirror));
         feedUrl.setReadOnly(true);
         feedUrl.setWidthFull();
-        Button copy = new Button("Copy", e -> UiSupport.copyToClipboard(feeds.feedUrl(mirror)));
+        Button copy = new Button("Copy");
+        UiSupport.copyOnClick(copy, feeds.feedUrl(mirror));
         HorizontalLayout feedRow = new HorizontalLayout(feedUrl, copy);
         feedRow.setWidthFull();
         feedRow.setAlignItems(FlexComponent.Alignment.BASELINE);

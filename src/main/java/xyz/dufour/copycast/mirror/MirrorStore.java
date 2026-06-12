@@ -338,11 +338,11 @@ public class MirrorStore {
         try {
             JsonNode info = mapper.readTree(Files.readAllBytes(infoJson));
             return new SidecarMeta(
-                    info.path("title").asText(null),
-                    info.path("description").asText(null),
+                    info.path("title").asString(null),
+                    info.path("description").asString(null),
                     infoTimestamp(info),
                     info.hasNonNull("duration") ? (long) info.path("duration").asDouble() : null,
-                    info.path("webpage_url").asText(null));
+                    info.path("webpage_url").asString(null));
         } catch (Exception e) {
             log.warn("Unreadable info sidecar {}: {}", infoJson, e.getMessage());
             return null;
@@ -374,7 +374,7 @@ public class MirrorStore {
             // Channels nest videos inside tab playlists; flatten before
             // collecting ids or everything looks Delisted.
             for (JsonNode entry : xyz.dufour.copycast.source.YtListing.leafEntries(root)) {
-                keys.add(entry.path("id").asText());
+                keys.add(entry.path("id").asString());
             }
             return keys;
         } catch (Exception e) {
@@ -417,7 +417,7 @@ public class MirrorStore {
         if (info.hasNonNull("release_timestamp")) {
             return Instant.ofEpochSecond(info.path("release_timestamp").asLong());
         }
-        String uploadDate = info.path("upload_date").asText(null);
+        String uploadDate = info.path("upload_date").asString(null);
         if (uploadDate != null && uploadDate.length() == 8) {
             try {
                 return LocalDate.parse(uploadDate, DateTimeFormatter.BASIC_ISO_DATE)

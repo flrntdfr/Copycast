@@ -34,26 +34,42 @@ final class UiSupport {
         dialog.open();
     }
 
-    static void copyToClipboard(String text) {
-        // navigator.clipboard only exists in secure contexts (https or
-        // literal localhost); fall back to execCommand for plain-http LAN use.
-        UI.getCurrent().getPage().executeJs("""
-                const text = $0;
-                if (navigator.clipboard && window.isSecureContext) {
-                  navigator.clipboard.writeText(text);
-                } else {
-                  const ta = document.createElement('textarea');
-                  ta.value = text;
-                  ta.style.position = 'fixed';
-                  ta.style.opacity = '0';
-                  document.body.appendChild(ta);
-                  ta.focus();
-                  ta.select();
-                  document.execCommand('copy');
-                  document.body.removeChild(ta);
+    /**
+     * Makes clicking {@code button} copy {@code text}. The copy runs in a
+     * client-side click listener: browsers only grant clipboard access
+     * within a user gesture, and a server round-trip (executeJs from a
+     * server-side listener) arrives after that window has closed. The
+     * async clipboard API needs a secure context (https or localhost);
+     * everything else falls back to execCommand.
+     */
+    static void copyOnClick(Button button, String text) {
+        button.getElement().executeJs("""
+                this.__copyText = $0;
+                if (!this.__copyWired) {
+                  this.__copyWired = true;
+                  this.addEventListener('click', () => {
+                    const text = this.__copyText;
+                    const fallback = () => {
+                      const ta = document.createElement('textarea');
+                      ta.value = text;
+                      ta.style.position = 'fixed';
+                      ta.style.opacity = '0';
+                      document.body.appendChild(ta);
+                      ta.focus();
+                      ta.select();
+                      try { document.execCommand('copy'); } catch (e) { }
+                      document.body.removeChild(ta);
+                    };
+                    if (navigator.clipboard && window.isSecureContext) {
+                      navigator.clipboard.writeText(text).catch(fallback);
+                    } else {
+                      fallback();
+                    }
+                  });
                 }
                 """, text);
-        Notification.show("Copied: " + text, 3000, Notification.Position.BOTTOM_START);
+        button.addClickListener(e -> Notification.show("Copied: " + text,
+                3000, Notification.Position.BOTTOM_START));
     }
 
     static String gigabytes(long bytes) {

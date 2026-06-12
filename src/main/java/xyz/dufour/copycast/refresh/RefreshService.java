@@ -236,10 +236,10 @@ public class RefreshService {
         writeAtomically(store.listingJson(mirror.getId()), listing.stdout().getBytes(StandardCharsets.UTF_8));
         JsonNode root = mapper.readTree(listing.stdout());
         updateMeta(mirror,
-                root.path("title").asText(null),
-                root.path("description").asText(null),
+                root.path("title").asString(null),
+                root.path("description").asString(null),
                 ProbeService.thumbnail(root),
-                root.path("uploader").asText(root.path("channel").asText(null)));
+                root.path("uploader").asString(root.path("channel").asString(null)));
         String service = YtListing.serviceName(root);
         if (service != null) {
             mirror.setService(service);

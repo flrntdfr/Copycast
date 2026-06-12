@@ -113,10 +113,10 @@ public class ProbeService {
             JsonNode root = mapper.readTree(result.stdout());
             return new ProbeResult(true, url, SourceType.YTDLP,
                     YtListing.serviceName(root),
-                    root.path("title").asText(null),
-                    root.path("description").asText(null),
+                    root.path("title").asString(null),
+                    root.path("description").asString(null),
                     thumbnail(root),
-                    root.path("uploader").asText(root.path("channel").asText(null)),
+                    root.path("uploader").asString(root.path("channel").asString(null)),
                     YtListing.leafEntries(root).size(), null);
         } catch (Exception e) {
             return ProbeResult.unsupported("Probe failed: " + e.getMessage());
@@ -125,11 +125,11 @@ public class ProbeService {
 
     public static String thumbnail(JsonNode root) {
         if (root.hasNonNull("thumbnail")) {
-            return root.path("thumbnail").asText();
+            return root.path("thumbnail").asString();
         }
         JsonNode thumbnails = root.path("thumbnails");
         if (thumbnails.isArray() && !thumbnails.isEmpty()) {
-            return thumbnails.get(thumbnails.size() - 1).path("url").asText(null);
+            return thumbnails.get(thumbnails.size() - 1).path("url").asString(null);
         }
         return null;
     }

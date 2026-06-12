@@ -191,8 +191,9 @@ public class MainView extends VerticalLayout {
     }
 
     private HorizontalLayout actions(Mirror mirror) {
-        Button copy = iconButton(VaadinIcon.COPY, "Copy feed URL",
-                () -> UiSupport.copyToClipboard(feeds.feedUrl(mirror)));
+        Button copy = iconButton(VaadinIcon.COPY, "Copy feed URL", () -> {
+        });
+        UiSupport.copyOnClick(copy, feeds.feedUrl(mirror));
         Button refreshNow = iconButton(VaadinIcon.REFRESH, "Refresh now", () -> {
             refresh.request(mirror.getId(), RefreshService.Trigger.MANUAL);
             reload();

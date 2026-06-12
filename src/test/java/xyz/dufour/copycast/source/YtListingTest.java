@@ -26,7 +26,7 @@ class YtListingTest {
                 """);
         List<JsonNode> leaves = YtListing.leafEntries(channel);
         assertEquals(4, leaves.size());
-        assertEquals("v1", leaves.getFirst().path("id").asText());
+        assertEquals("v1", leaves.getFirst().path("id").asString());
     }
 
     @Test
