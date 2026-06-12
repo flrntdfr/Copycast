@@ -1,8 +1,8 @@
 html {
-  --lumo-primary-color: hsl(262, 60%, 52%);
-  --lumo-primary-text-color: hsl(262, 60%, 46%);
-  --lumo-primary-color-50pct: hsla(262, 60%, 52%, 0.5);
-  --lumo-primary-color-10pct: hsla(262, 60%, 52%, 0.08);
+  --lumo-primary-color: hsl(24, 94%, 50%);
+  --lumo-primary-text-color: hsl(24, 94%, 40%);
+  --lumo-primary-color-50pct: hsla(24, 94%, 50%, 0.5);
+  --lumo-primary-color-10pct: hsla(24, 94%, 50%, 0.08);
   --lumo-border-radius-m: 0.5em;
   --lumo-border-radius-l: 0.85em;
 }
@@ -18,7 +18,7 @@ h1.copycast-title,
 h2.copycast-title {
   font-weight: 800;
   letter-spacing: -0.03em;
-  background: linear-gradient(90deg, hsl(262, 60%, 52%), hsl(312, 65%, 50%));
+  background: linear-gradient(90deg, hsl(24, 94%, 50%), hsl(350, 85%, 52%));
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -51,4 +51,33 @@ vaadin-grid.copycast-grid {
 .copycast-cover {
   border-radius: var(--lumo-border-radius-m);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+
+.copycast-player {
+  background: var(--lumo-base-color);
+  border-radius: var(--lumo-border-radius-l);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07), 0 4px 16px rgba(0, 0, 0, 0.05);
+  padding: var(--lumo-space-xs) var(--lumo-space-m);
+}
+
+.copycast-player-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 35%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--lumo-font-size-s);
+}
+
+.copycast-player input[type="range"] {
+  accent-color: var(--lumo-primary-color);
+  margin: 0;
+}
+
+.copycast-player-time {
+  color: var(--lumo-secondary-text-color);
+  font-size: var(--lumo-font-size-s);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
