@@ -1,3 +1,18 @@
-# yt-dlp version pinned in config, fetched at startup
+# yt-dlp version pinned in config, bundled into the image at build time
 
-The Docker image does not bundle yt-dlp. The exact version is pinned once, in the runtime config file; at startup Copycast downloads that release binary (cached on the data volume, so it is a one-time fetch per version) and refuses to fall back to an unpinned "latest". Bumping the version is a config edit plus restart — no image rebuild — and the active version and its release date are reported on the main page. The considered alternatives were baking yt-dlp into the image (reproducible, but the pin would live in the Dockerfile, duplicating runtime configuration, and every bump means a rebuild) and self-updating on a schedule (survives YouTube extractor breakage unattended, but the running version becomes unpredictable). We chose a single source of truth for the pin and predictable behavior, accepting that when a site change breaks the pinned extractor, Refreshes fail until the operator bumps the version.
+The exact yt-dlp version is pinned once, in `application.yaml` — never in the
+Dockerfile. The Docker build greps the pin out of that file and bakes the
+matching release binary into the image at `/opt/copycast/bin`, so a fresh
+container needs no network access to become operational. At runtime the app
+resolves a binary matching the configured pin in order: the bundled one, a
+previously cached one in `<data-dir>/bin`, and only as a fallback a download
+from GitHub — which covers bumping the pin in `/config` without rebuilding
+the image. The active version and its release date are reported on the main
+page. The considered alternatives were declaring the version as a Dockerfile
+`ARG` (duplicates runtime configuration; the app could no longer verify or
+fetch the pinned version itself) and downloading at first launch (single
+source of truth, but startup then depends on GitHub being reachable). We
+accepted a small build-time coupling — the Dockerfile parses the config file
+— to keep one source of truth, offline-capable startup, and rebuild-free
+version bumps. When a site change breaks the pinned extractor, the operator
+bumps the pin and either rebuilds or simply restarts.

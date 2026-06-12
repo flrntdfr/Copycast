@@ -1,0 +1,23 @@
+target/
+data/
+
+# Vaadin generated frontend tooling (recreated by prepare-frontend)
+node_modules/
+src/main/frontend/generated/
+src/main/bundles/
+src/main/dev-bundle/
+package.json
+package-lock.json
+tsconfig.json
+types.d.ts
+vite.config.ts
+vite.generated.ts
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# direnv / nix
+.direnv/
+result

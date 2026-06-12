@@ -1,0 +1,9 @@
+services:
+  copycast:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      - ./config:/config
+    restart: unless-stopped

@@ -1,0 +1,37 @@
+# Copycast configuration — the single place for every option.
+# In Docker, mount this directory at /config; the container picks it up
+# automatically (SPRING_CONFIG_ADDITIONAL_LOCATION=optional:file:/config/).
+# Every value shown here is the default; uncomment and edit what you need.
+
+copycast:
+  # Public base URL of this Copycast instance, as reachable by your podcast
+  # client. Used to build enclosure URLs inside Mirror Feeds.
+  base-url: "http://localhost:8080"
+
+  # Data directory. All state lives here: one directory per Mirror with the
+  # yt-dlp download archive, audio files, metadata sidecars and descriptor.
+  # In Docker this is /data (set by the image); do not change it there.
+  #data-dir: "data"
+
+  # How often each Mirror is Refreshed by the scheduler (hours).
+  refresh-hours: 24
+
+  # A fetch of a Mirror Feed also triggers an asynchronous Refresh, at most
+  # once per this cooldown (minutes). The feed response is never delayed.
+  fetch-cooldown-minutes: 15
+
+  ytdlp:
+    # Pinned yt-dlp release. The Docker image ships the binary matching the
+    # pin in src/main/resources/application.yaml (baked in at build time).
+    # If you change the pin here without rebuilding the image, the runtime
+    # falls back to downloading the new version into <data-dir>/bin.
+    # Releases: https://github.com/yt-dlp/yt-dlp/releases
+    version: "2026.06.09"
+    # Where the image ships the bundled binary (no need to change this).
+    #bundled-dir: "/opt/copycast/bin"
+    # Set to false to forbid the download fallback; the pinned binary must
+    # then exist in bundled-dir or <data-dir>/bin.
+    auto-download: true
+
+#server:
+#  port: 8080
