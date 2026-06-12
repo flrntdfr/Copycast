@@ -1,7 +1,7 @@
 # ---- Build stage ----------------------------------------------------------
 # Runs on the build host's architecture: the jar is arch-independent, so
 # multi-arch image builds don't need to run Maven under emulation.
-FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-21 AS build
+FROM --platform=$BUILDPLATFORM maven:3-eclipse-temurin-26 AS build
 WORKDIR /build
 COPY pom.xml ./
 # Warm the dependency cache; tolerate partial resolution offline quirks.
