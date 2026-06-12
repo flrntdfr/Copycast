@@ -66,12 +66,19 @@ public class MainView extends VerticalLayout {
     private final FeedGenerator feeds;
     private final YtDlp ytDlp;
 
+    /** Everything a grid row renders; rows only re-render when this changes. */
+    private record RowSnapshot(String id, String title, String service, boolean paused,
+                               Health health, String lastRefreshText, String healthTitle,
+                               int episodes, String size, boolean busy) {
+    }
+
     private final TextField urlField = new TextField();
     private final Button mirrorButton = new Button("Mirror");
     private final ProgressBar probing = new ProgressBar();
     private final Span stats = new Span();
     private final Grid<Mirror> grid = new Grid<>();
     private Registration pollRegistration;
+    private List<RowSnapshot> lastRows;
 
     public MainView(MirrorStore store, ProbeService probe, RefreshService refresh,
                     FeedGenerator feeds, YtDlp ytDlp) {
@@ -273,17 +280,19 @@ public class MainView extends VerticalLayout {
             cap.setMax(result.episodeCount());
             cap.setValue(result.episodeCount());
         }
-        // Compact: just wide enough for the number and the stepper buttons.
-        cap.setWidth("9em");
+        // Compact, but wide enough that the label never ellipsizes.
+        cap.setWidth("12em");
+        cap.addClassName("copycast-cap");
         cap.setValueChangeMode(ValueChangeMode.EAGER);
         // The explanation sits outside the field so it can use the full
-        // dialog width instead of wrapping in a 9em column.
+        // dialog width instead of wrapping in a narrow column.
         Span capHelper = new Span();
         capHelper.addClassName("copycast-stats");
         Runnable updateCapHelper = () -> capHelper.setText(capText(cap.getValue(), result.episodeCount()));
         cap.addValueChangeListener(e -> updateCapHelper.run());
         updateCapHelper.run();
         content.add(cap, capHelper);
+        content.setHorizontalComponentAlignment(FlexComponent.Alignment.CENTER, cap, capHelper);
         dialog.add(content);
         Button cancel = new Button("Cancel", e -> dialog.close());
         Button create = new Button("Create Mirror", e -> {
@@ -309,6 +318,15 @@ public class MainView extends VerticalLayout {
         dialog.open();
     }
 
+    private RowSnapshot snapshot(Mirror mirror) {
+        Health health = health(mirror);
+        return new RowSnapshot(mirror.getId(), mirror.displayTitle(), mirror.displayService(),
+                mirror.isPaused(), health, lastRefreshText(mirror), healthText(mirror, health),
+                store.episodes(mirror).size(),
+                UiSupport.gigabytes(store.sizeOnDiskBytes(mirror.getId())),
+                refresh.isBusy(mirror.getId()));
+    }
+
     private static String capText(Integer value, int episodeCount) {
         String tail = " and will keep adding new episodes as they are released, unless paused.";
         if (value == null || (episodeCount > 0 && value >= episodeCount)) {
@@ -319,7 +337,13 @@ public class MainView extends VerticalLayout {
 
     private void reload() {
         List<Mirror> mirrors = store.list();
-        grid.setItems(mirrors);
+        // Resetting the grid rebuilds every row component; skip it when
+        // nothing a row renders has changed (the 3s poll mostly no-ops).
+        List<RowSnapshot> rows = mirrors.stream().map(this::snapshot).toList();
+        if (!rows.equals(lastRows)) {
+            grid.setItems(mirrors);
+            lastRows = rows;
+        }
 
         int episodes = mirrors.stream().mapToInt(m -> store.episodes(m).size()).sum();
         long bytes = mirrors.stream().mapToLong(m -> store.sizeOnDiskBytes(m.getId())).sum();

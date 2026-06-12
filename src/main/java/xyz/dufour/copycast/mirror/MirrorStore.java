@@ -10,6 +10,7 @@ import org.w3c.dom.Element;
 import xyz.dufour.copycast.config.CopycastProperties;
 import xyz.dufour.copycast.source.ProbeResult;
 import xyz.dufour.copycast.source.Rss;
+import xyz.dufour.copycast.util.FileCache;
 import xyz.dufour.copycast.util.Ids;
 import xyz.dufour.copycast.util.Mime;
 import xyz.dufour.copycast.util.XmlUtil;
@@ -30,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 /**
@@ -49,12 +51,29 @@ public class MirrorStore {
 
     private static final Logger log = LoggerFactory.getLogger(MirrorStore.class);
 
+    static final long SIZE_TTL_MILLIS = 30_000;
+
+    private record SizeEntry(long computedAt, long bytes) {
+    }
+
     private final CopycastProperties props;
     private final ObjectMapper mapper;
+    // Sidecars are immutable once written; these caches turn the steady-state
+    // read path (UI polls, feed generation) into stat calls instead of parses.
+    private final FileCache<SidecarMeta> sidecarCache = new FileCache<>();
+    private final FileCache<Set<String>> currentKeysCache = new FileCache<>();
+    private final Map<String, SizeEntry> sizeCache = new ConcurrentHashMap<>();
 
     public MirrorStore(CopycastProperties props, ObjectMapper mapper) {
         this.props = props;
         this.mapper = mapper;
+    }
+
+    /** Drops all runtime caches; they refill lazily. */
+    void clearRuntimeCaches() {
+        sidecarCache.clear();
+        currentKeysCache.clear();
+        sizeCache.clear();
     }
 
     public Path mirrorsDir() {
@@ -148,6 +167,9 @@ public class MirrorStore {
     }
 
     public void delete(String id) throws IOException {
+        // Deleting is rare; dropping all caches is simpler than tracking
+        // which entries belong to this Mirror.
+        clearRuntimeCaches();
         Path root = dir(id);
         if (!Files.exists(root)) {
             return;
@@ -190,8 +212,23 @@ public class MirrorStore {
         return Optional.empty();
     }
 
-    /** Total bytes a Mirror occupies on disk (audio, artwork, metadata). */
+    /**
+     * Total bytes a Mirror occupies on disk (audio, artwork, metadata).
+     * Cached briefly: the tree walk is the most expensive read we have, and
+     * nobody needs the size column accurate to the second.
+     */
     public long sizeOnDiskBytes(String id) {
+        SizeEntry cached = sizeCache.get(id);
+        long now = System.currentTimeMillis();
+        if (cached != null && now - cached.computedAt() < SIZE_TTL_MILLIS) {
+            return cached.bytes();
+        }
+        long bytes = computeSizeOnDisk(id);
+        sizeCache.put(id, new SizeEntry(now, bytes));
+        return bytes;
+    }
+
+    private long computeSizeOnDisk(String id) {
         Path root = dir(id);
         if (!Files.isDirectory(root)) {
             return 0;
@@ -231,42 +268,34 @@ public class MirrorStore {
         return episodes;
     }
 
+    /** Metadata captured at archive time; immutable on disk, hence cacheable. */
+    private record SidecarMeta(String title, String description, Instant pubDate,
+                               Long durationSeconds, String guid) {
+    }
+
     private Episode readEpisode(Mirror mirror, String key, Path audio, boolean delisted) {
         long size = audio.toFile().length();
         String mime = Mime.forFileName(audio.getFileName().toString());
         Path itemXml = episodesDir(mirror.getId()).resolve(key + ".item.xml");
+        SidecarMeta meta = null;
         if (Files.isRegularFile(itemXml)) {
-            try {
-                Document doc = XmlUtil.parse(Files.readAllBytes(itemXml));
-                Element item = doc.getDocumentElement();
-                return new Episode(key,
-                        firstNonBlank(XmlUtil.childText(item, "title"), key),
-                        XmlUtil.childText(item, "description"),
-                        Rss.pubDate(item),
-                        audio, size, mime,
-                        parseDuration(XmlUtil.childNs(item, XmlUtil.ITUNES_NS, "duration")
-                                .map(e -> e.getTextContent().trim()).orElse(null)),
-                        XmlUtil.childText(item, "guid"),
-                        delisted);
-            } catch (IOException e) {
-                log.warn("Unreadable item sidecar {}: {}", itemXml, e.getMessage());
+            meta = sidecarCache.get(itemXml, this::loadItemMeta);
+        }
+        if (meta == null) {
+            Path infoJson = episodesDir(mirror.getId()).resolve(key + ".info.json");
+            if (Files.isRegularFile(infoJson)) {
+                meta = sidecarCache.get(infoJson, this::loadInfoMeta);
             }
         }
-        Path infoJson = episodesDir(mirror.getId()).resolve(key + ".info.json");
-        if (Files.isRegularFile(infoJson)) {
-            try {
-                JsonNode info = mapper.readTree(Files.readAllBytes(infoJson));
-                return new Episode(key,
-                        firstNonBlank(info.path("title").asText(null), key),
-                        info.path("description").asText(null),
-                        infoTimestamp(info),
-                        audio, size, mime,
-                        info.hasNonNull("duration") ? (long) info.path("duration").asDouble() : null,
-                        info.path("webpage_url").asText(null),
-                        delisted);
-            } catch (IOException e) {
-                log.warn("Unreadable info sidecar {}: {}", infoJson, e.getMessage());
-            }
+        if (meta != null) {
+            return new Episode(key,
+                    firstNonBlank(meta.title(), key),
+                    meta.description(),
+                    meta.pubDate(),
+                    audio, size, mime,
+                    meta.durationSeconds(),
+                    meta.guid(),
+                    delisted);
         }
         Instant mtime = Instant.ofEpochMilli(audio.toFile().lastModified());
         return new Episode(key, key, null, mtime, audio, size, mime, null, key, delisted);
@@ -274,27 +303,72 @@ public class MirrorStore {
 
     /** Episode keys the Source currently lists; empty when undeterminable. */
     public Set<String> currentKeys(Mirror mirror) {
-        try {
-            if (mirror.getType() == SourceType.RSS) {
-                Path feed = feedXml(mirror.getId());
-                if (!Files.isRegularFile(feed)) {
-                    return Set.of();
-                }
-                Set<String> keys = new HashSet<>();
-                Rss.parse(XmlUtil.parse(Files.readAllBytes(feed))).ifPresent(channel -> {
-                    for (Element item : channel.items()) {
-                        String identity = Rss.itemIdentity(item);
-                        if (identity != null) {
-                            keys.add(Ids.episodeKey(identity));
-                        }
-                    }
-                });
-                return keys;
-            }
-            Path listing = listingJson(mirror.getId());
-            if (!Files.isRegularFile(listing)) {
+        if (mirror.getType() == SourceType.RSS) {
+            Path feed = feedXml(mirror.getId());
+            if (!Files.isRegularFile(feed)) {
                 return Set.of();
             }
+            return currentKeysCache.get(feed, this::loadRssKeys);
+        }
+        Path listing = listingJson(mirror.getId());
+        if (!Files.isRegularFile(listing)) {
+            return Set.of();
+        }
+        return currentKeysCache.get(listing, this::loadListingKeys);
+    }
+
+    private SidecarMeta loadItemMeta(Path itemXml) {
+        try {
+            Document doc = XmlUtil.parse(Files.readAllBytes(itemXml));
+            Element item = doc.getDocumentElement();
+            return new SidecarMeta(
+                    XmlUtil.childText(item, "title"),
+                    XmlUtil.childText(item, "description"),
+                    Rss.pubDate(item),
+                    parseDuration(XmlUtil.childNs(item, XmlUtil.ITUNES_NS, "duration")
+                            .map(e -> e.getTextContent().trim()).orElse(null)),
+                    XmlUtil.childText(item, "guid"));
+        } catch (Exception e) {
+            log.warn("Unreadable item sidecar {}: {}", itemXml, e.getMessage());
+            return null;
+        }
+    }
+
+    private SidecarMeta loadInfoMeta(Path infoJson) {
+        try {
+            JsonNode info = mapper.readTree(Files.readAllBytes(infoJson));
+            return new SidecarMeta(
+                    info.path("title").asText(null),
+                    info.path("description").asText(null),
+                    infoTimestamp(info),
+                    info.hasNonNull("duration") ? (long) info.path("duration").asDouble() : null,
+                    info.path("webpage_url").asText(null));
+        } catch (Exception e) {
+            log.warn("Unreadable info sidecar {}: {}", infoJson, e.getMessage());
+            return null;
+        }
+    }
+
+    private Set<String> loadRssKeys(Path feed) {
+        try {
+            Set<String> keys = new HashSet<>();
+            Rss.parse(XmlUtil.parse(Files.readAllBytes(feed))).ifPresent(channel -> {
+                for (Element item : channel.items()) {
+                    String identity = Rss.itemIdentity(item);
+                    if (identity != null) {
+                        keys.add(Ids.episodeKey(identity));
+                    }
+                }
+            });
+            return keys;
+        } catch (Exception e) {
+            log.warn("Could not parse {}: {}", feed, e.getMessage());
+            return Set.of();
+        }
+    }
+
+    private Set<String> loadListingKeys(Path listing) {
+        try {
             JsonNode root = mapper.readTree(Files.readAllBytes(listing));
             Set<String> keys = new HashSet<>();
             // Channels nest videos inside tab playlists; flatten before
@@ -303,10 +377,37 @@ public class MirrorStore {
                 keys.add(entry.path("id").asText());
             }
             return keys;
-        } catch (IOException e) {
-            log.warn("Could not determine current keys for {}: {}", mirror.getId(), e.getMessage());
+        } catch (Exception e) {
+            log.warn("Could not parse {}: {}", listing, e.getMessage());
             return Set.of();
         }
+    }
+
+    /**
+     * A change token for everything the Mirror Feed is generated from, plus
+     * the most recent modification time. Used to cache generated feeds and
+     * answer conditional requests from podcast clients.
+     */
+    public record Fingerprint(long token, Instant lastModified) {
+    }
+
+    public Fingerprint fingerprint(String id) {
+        long token = 1;
+        Instant last = Instant.EPOCH;
+        for (Path path : List.of(dir(id).resolve("mirror.json"), feedXml(id),
+                listingJson(id), episodesDir(id))) {
+            long millis;
+            try {
+                millis = Files.getLastModifiedTime(path).toMillis();
+            } catch (IOException e) {
+                millis = -1;
+            }
+            token = token * 31 + millis;
+            if (millis > last.toEpochMilli()) {
+                last = Instant.ofEpochMilli(millis);
+            }
+        }
+        return new Fingerprint(token, last);
     }
 
     public static Instant infoTimestamp(JsonNode info) {
