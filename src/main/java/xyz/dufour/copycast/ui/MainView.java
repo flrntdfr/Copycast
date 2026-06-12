@@ -127,8 +127,8 @@ public class MainView extends VerticalLayout {
                 .setHeader("Episodes").setFlexGrow(0).setWidth("110px");
         grid.addColumn(mirror -> UiSupport.gigabytes(store.sizeOnDiskBytes(mirror.getId())))
                 .setHeader("Size").setFlexGrow(0).setWidth("110px");
-        grid.addColumn(new ComponentRenderer<>(this::healthLabel))
-                .setHeader("Health").setFlexGrow(2);
+        grid.addColumn(this::lastRefreshText)
+                .setHeader("Last refresh").setFlexGrow(2);
         grid.addColumn(new ComponentRenderer<>(this::actions))
                 .setHeader("Actions").setFlexGrow(0).setWidth("220px");
     }
@@ -160,12 +160,12 @@ public class MainView extends VerticalLayout {
         return dot;
     }
 
-    private Span healthLabel(Mirror mirror) {
-        Span label = new Span(healthText(mirror, health(mirror)));
-        if (mirror.getLastError() != null) {
-            label.getElement().setAttribute("title", mirror.getLastError());
+    /** The column only reports the last update; health lives in the dot. */
+    private String lastRefreshText(Mirror mirror) {
+        if (refresh.isBusy(mirror.getId())) {
+            return "Refreshing…";
         }
-        return label;
+        return UiSupport.relative(mirror.getLastSuccessAt());
     }
 
     private String healthText(Mirror mirror, Health health) {
