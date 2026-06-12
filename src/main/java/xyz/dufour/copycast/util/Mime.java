@@ -18,6 +18,13 @@ public final class Mime {
             Map.entry("wav", "audio/wav"),
             Map.entry("mka", "audio/x-matroska"));
 
+    private static final Map<String, String> IMAGE_TYPES = Map.of(
+            "jpg", "image/jpeg",
+            "jpeg", "image/jpeg",
+            "png", "image/png",
+            "webp", "image/webp",
+            "gif", "image/gif");
+
     private Mime() {
     }
 
@@ -25,8 +32,30 @@ public final class Mime {
         return AUDIO_TYPES.keySet();
     }
 
+    public static Set<String> imageExtensions() {
+        return IMAGE_TYPES.keySet();
+    }
+
     public static String forFileName(String fileName) {
-        return AUDIO_TYPES.getOrDefault(extension(fileName), "application/octet-stream");
+        String ext = extension(fileName);
+        String audio = AUDIO_TYPES.get(ext);
+        if (audio != null) {
+            return audio;
+        }
+        return IMAGE_TYPES.getOrDefault(ext, "application/octet-stream");
+    }
+
+    /** Best-effort image file extension from a Content-Type header and URL. */
+    public static String imageExtension(String contentType, String url) {
+        String type = contentType == null ? "" : contentType.split(";")[0].trim().toLowerCase(Locale.ROOT);
+        for (Map.Entry<String, String> entry : IMAGE_TYPES.entrySet()) {
+            if (entry.getValue().equals(type)) {
+                return entry.getKey();
+            }
+        }
+        String path = url == null ? "" : url.split("[?#]")[0];
+        String fromUrl = extension(path);
+        return IMAGE_TYPES.containsKey(fromUrl) ? fromUrl : "jpg";
     }
 
     public static String extension(String fileName) {

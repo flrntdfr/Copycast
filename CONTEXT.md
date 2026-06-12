@@ -20,6 +20,10 @@ _Avoid_: Output feed, generated feed, proxy feed
 A single audio item archived within a Mirror, together with its preserved metadata. Episode metadata is captured at archive time and is permanent; the Mirror Feed lists the union of every Episode ever archived.
 _Avoid_: Item, entry, track, video
 
+**Artwork**:
+The cover image of a Mirror and the images of its Episodes, archived alongside the audio and served from the Mirror like any other asset.
+_Avoid_: Thumbnail, image
+
 **Delisted**:
 The state of an Episode that the Source no longer lists. A Delisted Episode remains in the Mirror Feed unchanged; its state is visible only in the Copycast UI.
 _Avoid_: Removed, deleted, orphaned

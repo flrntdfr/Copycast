@@ -145,6 +145,7 @@ class FeedGeneratorTest {
                 new ProbeResult(true, SourceType.YTDLP, "Chan", "A channel",
                         "https://img.example/chan.png", "Up", 1, null), null);
         Files.writeString(store.episodesDir(mirror.getId()).resolve("vid1.m4a"), "abcd");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve("vid1.webp"), "img");
         Files.writeString(store.episodesDir(mirror.getId()).resolve("vid1.info.json"), """
                 {"id":"vid1","title":"Video One","description":"d","upload_date":"20260601",
                  "duration":90,"webpage_url":"https://yt.example/w/vid1"}
@@ -158,6 +159,8 @@ class FeedGeneratorTest {
 
         Element item = XmlUtil.children(channel, "item").getFirst();
         assertEquals("Video One", XmlUtil.childText(item, "title"));
+        assertEquals(generator.mediaUrl(mirror, "vid1.webp"),
+                XmlUtil.childNs(item, XmlUtil.ITUNES_NS, "image").orElseThrow().getAttribute("href"));
         Element guid = XmlUtil.child(item, "guid").orElseThrow();
         assertEquals("https://yt.example/w/vid1", guid.getTextContent());
         assertEquals("false", guid.getAttribute("isPermaLink"));
@@ -185,6 +188,56 @@ class FeedGeneratorTest {
         Element item = XmlUtil.children(channel, "item").getFirst();
         assertEquals("orphan", XmlUtil.childText(item, "title"));
         assertTrue(XmlUtil.child(item, "enclosure").isPresent());
+    }
+
+    @Test
+    void artworkReferencesAreRewrittenToArchivedCopies() throws IOException {
+        Mirror mirror = rssMirror();
+        Files.writeString(store.feedXml(mirror.getId()), """
+                <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+                  <channel>
+                    <title>My Pod</title>
+                    <image><url>https://img.example/remote.png</url></image>
+                    <itunes:image href="https://img.example/remote.png"/>
+                    <item><guid>ep-1</guid></item>
+                  </channel>
+                </rss>
+                """);
+        archiveEpisode(mirror, "ep-1", "Episode One", "Mon, 01 Jun 2026 10:00:00 GMT", "a");
+        String key = Ids.episodeKey("ep-1");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve("cover.jpg"), "img");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(key + ".png"), "img");
+
+        Document doc = parse(generator.generate(mirror));
+        Element channel = channelOf(doc);
+        String coverUrl = generator.mediaUrl(mirror, "cover.jpg");
+
+        Element image = XmlUtil.child(channel, "image").orElseThrow();
+        assertEquals(coverUrl, XmlUtil.childText(image, "url"));
+        assertEquals(coverUrl, XmlUtil.childNs(channel, XmlUtil.ITUNES_NS, "image")
+                .orElseThrow().getAttribute("href"));
+
+        Element item = XmlUtil.children(channel, "item").getFirst();
+        assertEquals(generator.mediaUrl(mirror, key + ".png"),
+                XmlUtil.childNs(item, XmlUtil.ITUNES_NS, "image").orElseThrow().getAttribute("href"));
+    }
+
+    @Test
+    void remoteArtworkIsKeptWhenNothingIsArchived() throws IOException {
+        Mirror mirror = rssMirror();
+        Files.writeString(store.feedXml(mirror.getId()), """
+                <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+                  <channel>
+                    <title>My Pod</title>
+                    <itunes:image href="https://img.example/remote.png"/>
+                  </channel>
+                </rss>
+                """);
+
+        Document doc = parse(generator.generate(mirror));
+        assertEquals("https://img.example/remote.png",
+                XmlUtil.childNs(channelOf(doc), XmlUtil.ITUNES_NS, "image")
+                        .orElseThrow().getAttribute("href"));
     }
 
     @Test

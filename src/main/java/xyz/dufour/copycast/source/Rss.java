@@ -52,6 +52,14 @@ public final class Rss {
         return enclosureUrl(item);
     }
 
+    /** Per-episode artwork declared on the item, if any. */
+    public static String itemImageUrl(Element item) {
+        return XmlUtil.childNs(item, XmlUtil.ITUNES_NS, "image")
+                .map(e -> e.getAttribute("href"))
+                .filter(href -> !href.isBlank())
+                .orElse(null);
+    }
+
     public static String enclosureUrl(Element item) {
         return XmlUtil.child(item, "enclosure")
                 .map(e -> e.getAttribute("url"))

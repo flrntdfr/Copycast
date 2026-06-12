@@ -16,6 +16,7 @@ import xyz.dufour.copycast.source.ProbeService;
 import xyz.dufour.copycast.source.Rss;
 import xyz.dufour.copycast.util.Http;
 import xyz.dufour.copycast.util.Ids;
+import xyz.dufour.copycast.util.Mime;
 import xyz.dufour.copycast.util.XmlUtil;
 import xyz.dufour.copycast.ytdlp.YtDlp;
 
@@ -138,6 +139,7 @@ public class RefreshService {
                 .orElseThrow(() -> new IOException("Source is not a valid RSS feed anymore"));
         writeAtomically(store.feedXml(mirror.getId()), xml);
         updateMeta(mirror, channel.title(), channel.description(), channel.imageUrl(), channel.author());
+        fetchArtworkIfMissing(mirror.getId(), MirrorStore.COVER, channel.imageUrl());
 
         List<Element> items = channel.items();
         if (mirror.getCap() != null && items.size() > mirror.getCap()) {
@@ -175,6 +177,7 @@ public class RefreshService {
             if (!Files.exists(itemXml)) {
                 writeAtomically(itemXml, XmlUtil.serialize(item, true).getBytes(StandardCharsets.UTF_8));
             }
+            fetchArtworkIfMissing(mirror.getId(), key, Rss.itemImageUrl(item));
         }
         return failures == 0 ? null : failures + " episode(s) failed, last error: " + lastFailure;
     }
@@ -193,6 +196,7 @@ public class RefreshService {
                 root.path("description").asText(null),
                 ProbeService.thumbnail(root),
                 root.path("uploader").asText(root.path("channel").asText(null)));
+        fetchArtworkIfMissing(mirror.getId(), MirrorStore.COVER, ProbeService.thumbnail(root));
 
         Path episodesDir = store.episodesDir(mirror.getId());
         Files.createDirectories(episodesDir);
@@ -203,7 +207,7 @@ public class RefreshService {
                 // only truly video-only sources get converted.
                 "-f", "bestaudio[ext=m4a]/bestaudio",
                 "-x",
-                "--write-info-json", "--no-write-playlist-metafiles",
+                "--write-info-json", "--write-thumbnail", "--no-write-playlist-metafiles",
                 "-o", episodesDir.resolve("%(id)s.%(ext)s").toString()));
         if (mirror.getCap() != null) {
             args.add("--playlist-end");
@@ -226,6 +230,24 @@ public class RefreshService {
         }
         if (author != null && !author.isBlank()) {
             mirror.setAuthor(author);
+        }
+    }
+
+    /**
+     * Archives channel or episode Artwork next to the audio. Best effort:
+     * artwork must never fail a Refresh, and existing files are kept (they
+     * may be the only surviving copy).
+     */
+    private void fetchArtworkIfMissing(String mirrorId, String baseName, String url) {
+        if (url == null || url.isBlank() || store.findArtwork(mirrorId, baseName).isPresent()) {
+            return;
+        }
+        try {
+            Http.Content content = Http.getContent(url, Duration.ofMinutes(1));
+            String ext = Mime.imageExtension(content.contentType(), url);
+            writeAtomically(store.episodesDir(mirrorId).resolve(baseName + "." + ext), content.bytes());
+        } catch (Exception e) {
+            log.debug("Artwork fetch failed for {} ({}): {}", mirrorId, url, e.getMessage());
         }
     }
 

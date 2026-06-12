@@ -70,6 +70,7 @@ class RefreshServiceTest {
                   printf 'audio' > "$f"
                   base=${f%.m4a}
                   printf '{"id":"%s","title":"Video %s","upload_date":"20260601","duration":61,"webpage_url":"https://yt.example/w/%s"}' "$id" "$id" "$id" > "$base.info.json"
+                  printf 'thumb' > "$base.webp"
                 done < "$DIR/ids.txt"
                 ;;
               *)
@@ -100,16 +101,27 @@ class RefreshServiceTest {
         }
     }
 
-    private String serveFeed(String body, int status) throws IOException {
+    private String serveFeed(String bodyTemplate, int status) throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        String base = "http://127.0.0.1:" + server.getAddress().getPort();
+        // The feed template may reference artwork via {base}.
+        String body = bodyTemplate.replace("{base}", base);
         server.createContext("/feed.xml", exchange -> {
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(status, bytes.length);
             exchange.getResponseBody().write(bytes);
             exchange.close();
         });
+        server.createContext("/art/", exchange -> {
+            byte[] bytes = "img".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type",
+                    exchange.getRequestURI().getPath().endsWith(".png") ? "image/png" : "image/jpeg");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
         server.start();
-        return "http://127.0.0.1:" + server.getAddress().getPort() + "/feed.xml";
+        return base + "/feed.xml";
     }
 
     private static String rssFeed(String title, String... guids) {
@@ -120,14 +132,16 @@ class RefreshServiceTest {
                       <title>Episode %s</title>
                       <guid isPermaLink="false">%s</guid>
                       <pubDate>Mon, 01 Jun 2026 10:00:00 GMT</pubDate>
+                      <itunes:image href="{base}/art/%s.jpg"/>
                       <enclosure url="https://pod.example/%s.mp3" length="1" type="audio/mpeg"/>
                     </item>
-                    """.formatted(guid, guid, guid));
+                    """.formatted(guid, guid, guid, guid));
         }
         return """
-                <rss version="2.0"><channel>
+                <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>
                   <title>%s</title>
                   <description>d</description>
+                  <itunes:image href="{base}/art/cover.png"/>
                   %s
                 </channel></rss>
                 """.formatted(title, items);
@@ -173,8 +187,13 @@ class RefreshServiceTest {
             assertTrue(store.findAudio(mirror.getId(), key).isPresent());
             // Metadata captured permanently at archive time (union semantics).
             assertTrue(Files.isRegularFile(store.episodesDir(mirror.getId()).resolve(key + ".item.xml")));
+            // Episode Artwork archived alongside the audio.
+            assertTrue(store.findArtwork(mirror.getId(), key).isPresent());
         }
         assertTrue(episodes.stream().noneMatch(Episode::delisted));
+
+        // Channel Artwork archived with the extension from its content type.
+        assertTrue(Files.isRegularFile(store.episodesDir(mirror.getId()).resolve("cover.png")));
     }
 
     @Test
@@ -273,6 +292,8 @@ class RefreshServiceTest {
         assertEquals("audio/mp4", first.mimeType());
         assertTrue(first.title().startsWith("Video vid"));
         assertTrue(episodes.stream().noneMatch(Episode::delisted));
+        // --write-thumbnail produced per-episode Artwork.
+        assertTrue(store.findArtwork(mirror.getId(), "vid1").isPresent());
 
         // An Episode the Source no longer lists shows as Delisted in the UI…
         Files.writeString(store.episodesDir(mirror.getId()).resolve("vid3.m4a"), "x");

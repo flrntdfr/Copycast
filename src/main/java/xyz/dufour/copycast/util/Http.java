@@ -19,7 +19,14 @@ public final class Http {
     private Http() {
     }
 
+    public record Content(byte[] bytes, String contentType) {
+    }
+
     public static byte[] get(String url, Duration timeout) throws IOException, InterruptedException {
+        return getContent(url, timeout).bytes();
+    }
+
+    public static Content getContent(String url, Duration timeout) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(timeout)
                 .header("User-Agent", USER_AGENT)
@@ -29,6 +36,6 @@ public final class Http {
         if (response.statusCode() / 100 != 2) {
             throw new IOException("HTTP " + response.statusCode() + " fetching " + url);
         }
-        return response.body();
+        return new Content(response.body(), response.headers().firstValue("Content-Type").orElse(""));
     }
 }

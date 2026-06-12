@@ -30,8 +30,29 @@ final class UiSupport {
     }
 
     static void copyToClipboard(String text) {
-        UI.getCurrent().getPage().executeJs("navigator.clipboard.writeText($0)", text);
+        // navigator.clipboard only exists in secure contexts (https or
+        // literal localhost); fall back to execCommand for plain-http LAN use.
+        UI.getCurrent().getPage().executeJs("""
+                const text = $0;
+                if (navigator.clipboard && window.isSecureContext) {
+                  navigator.clipboard.writeText(text);
+                } else {
+                  const ta = document.createElement('textarea');
+                  ta.value = text;
+                  ta.style.position = 'fixed';
+                  ta.style.opacity = '0';
+                  document.body.appendChild(ta);
+                  ta.focus();
+                  ta.select();
+                  document.execCommand('copy');
+                  document.body.removeChild(ta);
+                }
+                """, text);
         Notification.show("Copied: " + text, 3000, Notification.Position.BOTTOM_START);
+    }
+
+    static String gigabytes(long bytes) {
+        return "%.2f GB".formatted(bytes / (1024.0 * 1024.0 * 1024.0));
     }
 
     static String relative(Instant instant) {

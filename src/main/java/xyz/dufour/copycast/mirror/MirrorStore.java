@@ -159,19 +159,47 @@ public class MirrorStore {
         }
     }
 
+    /**
+     * Basename of the archived channel artwork. Cannot collide with episode
+     * keys (16-hex digests or yt-dlp video ids).
+     */
+    public static final String COVER = "cover";
+
     /** The audio file for an episode key, if it has been archived. */
     public Optional<Path> findAudio(String id, String key) {
+        return findByExtensions(id, key, Mime.audioExtensions());
+    }
+
+    /** Archived artwork for an episode key or {@link #COVER}, if present. */
+    public Optional<Path> findArtwork(String id, String baseName) {
+        return findByExtensions(id, baseName, Mime.imageExtensions());
+    }
+
+    private Optional<Path> findByExtensions(String id, String baseName, java.util.Set<String> extensions) {
         Path episodes = episodesDir(id);
         if (!Files.isDirectory(episodes)) {
             return Optional.empty();
         }
-        for (String ext : Mime.audioExtensions()) {
-            Path candidate = episodes.resolve(key + "." + ext);
+        for (String ext : extensions) {
+            Path candidate = episodes.resolve(baseName + "." + ext);
             if (Files.isRegularFile(candidate)) {
                 return Optional.of(candidate);
             }
         }
         return Optional.empty();
+    }
+
+    /** Total bytes a Mirror occupies on disk (audio, artwork, metadata). */
+    public long sizeOnDiskBytes(String id) {
+        Path root = dir(id);
+        if (!Files.isDirectory(root)) {
+            return 0;
+        }
+        try (Stream<Path> walk = Files.walk(root)) {
+            return walk.filter(Files::isRegularFile).mapToLong(f -> f.toFile().length()).sum();
+        } catch (IOException e) {
+            return 0;
+        }
     }
 
     /** All archived Episodes, newest first, with Delisted state computed. */
