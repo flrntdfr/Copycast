@@ -1,7 +1,7 @@
 package xyz.dufour.copycast.mirror;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -106,8 +106,8 @@ public class MirrorStore {
             return Optional.empty();
         }
         try {
-            return Optional.of(mapper.readValue(file.toFile(), Mirror.class));
-        } catch (IOException e) {
+            return Optional.of(mapper.readValue(Files.readAllBytes(file), Mirror.class));
+        } catch (Exception e) {
             log.warn("Unreadable descriptor {}: {}", file, e.getMessage());
             return Optional.empty();
         }
@@ -255,7 +255,7 @@ public class MirrorStore {
         Path infoJson = episodesDir(mirror.getId()).resolve(key + ".info.json");
         if (Files.isRegularFile(infoJson)) {
             try {
-                JsonNode info = mapper.readTree(infoJson.toFile());
+                JsonNode info = mapper.readTree(Files.readAllBytes(infoJson));
                 return new Episode(key,
                         firstNonBlank(info.path("title").asText(null), key),
                         info.path("description").asText(null),
@@ -295,7 +295,7 @@ public class MirrorStore {
             if (!Files.isRegularFile(listing)) {
                 return Set.of();
             }
-            JsonNode root = mapper.readTree(listing.toFile());
+            JsonNode root = mapper.readTree(Files.readAllBytes(listing));
             Set<String> keys = new HashSet<>();
             // Channels nest videos inside tab playlists; flatten before
             // collecting ids or everything looks Delisted.

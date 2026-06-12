@@ -1,6 +1,6 @@
 package xyz.dufour.copycast.source;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 import xyz.dufour.copycast.TestSupport;
 
