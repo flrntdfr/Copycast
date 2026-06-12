@@ -14,7 +14,7 @@
     <groupId>xyz.dufour</groupId>
     <artifactId>copycast</artifactId>
     <!-- The project version. Bump here; CI tags the container image with it. -->
-    <version>0.2.0</version>
+    <version>0.2.1</version>
     <name>Copycast</name>
     <description>Self-hosted podcast mirroring and archiving service</description>
 
