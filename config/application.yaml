@@ -1,0 +1,33 @@
+# Copycast configuration — the single place for every option.
+# In Docker, mount this directory at /config; the container picks it up
+# automatically (SPRING_CONFIG_ADDITIONAL_LOCATION=optional:file:/config/).
+# Every value shown here is the default; uncomment and edit what you need.
+
+copycast:
+  # Public base URL of this Copycast instance, as reachable by your podcast
+  # client. Used to build enclosure URLs inside Mirror Feeds.
+  base-url: "http://localhost:8080"
+
+  # Data directory. All state lives here: one directory per Mirror with the
+  # yt-dlp download archive, audio files, metadata sidecars and descriptor.
+  # In Docker this is /data (set by the image); do not change it there.
+  #data-dir: "data"
+
+  # How often each Mirror is Refreshed by the scheduler (hours).
+  refresh-hours: 24
+
+  # A fetch of a Mirror Feed also triggers an asynchronous Refresh, at most
+  # once per this cooldown (minutes). The feed response is never delayed.
+  fetch-cooldown-minutes: 15
+
+  ytdlp:
+    # Pinned yt-dlp release. Copycast downloads exactly this version at
+    # startup (cached in <data-dir>/bin). To upgrade: change it, restart.
+    # Releases: https://github.com/yt-dlp/yt-dlp/releases
+    version: "2026.06.09"
+    # Set to false if you provision the binary yourself at
+    # <data-dir>/bin/yt-dlp-<version>.
+    auto-download: true
+
+#server:
+#  port: 8080

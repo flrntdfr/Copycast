@@ -1,0 +1,24 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: copycast
+
+vaadin:
+  launch-browser: false
+
+copycast:
+  # Public base URL used for enclosure links in Mirror Feeds.
+  base-url: "http://localhost:8080"
+  # Where all state lives (filesystem-as-state, see docs/adr/0001).
+  data-dir: "data"
+  # Scheduled Refresh cadence per Mirror.
+  refresh-hours: 24
+  # Cooldown for Refreshes triggered by a fetch of the Mirror Feed.
+  fetch-cooldown-minutes: 15
+  ytdlp:
+    # Pinned yt-dlp release (see docs/adr/0002). Bump here, then restart.
+    version: "2026.06.09"
+    # Download the pinned binary at startup when missing from the data dir.
+    auto-download: true
