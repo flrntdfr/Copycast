@@ -32,20 +32,19 @@ architectural decisions are recorded in [docs/adr/](docs/adr/).
 ## Quick start (Docker)
 
 Prebuilt multi-arch images (amd64, arm64) are published to the GitHub
-container registry by CI on every push to `main`:
+container registry by CI on every push to `main`, and docker-compose.yml
+uses them directly:
 
 ```bash
-docker run -d -p 8080:8080 -v ./data:/data -v ./config:/config \
-  ghcr.io/flrntdfr/copycast:latest
-```
-
-Or build locally:
-
-```bash
-docker compose up --build
+docker compose up -d
 # UI:    http://localhost:8080
 # Feeds: http://localhost:8080/feed/{mirror-id}/feed.xml
 ```
+
+While the repository is private, pulling requires a one-time
+`docker login ghcr.io` with a token that has `read:packages` (or make the
+package public in its settings). To build the image locally instead, use
+`make docker-build`.
 
 Mounts:
 

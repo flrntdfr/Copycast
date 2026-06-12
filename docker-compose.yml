@@ -1,6 +1,8 @@
 services:
   copycast:
-    build: .
+    # Multi-arch image published by CI from main; pin a version tag
+    # (e.g. :0.0.1) instead of :latest if you prefer.
+    image: ghcr.io/flrntdfr/copycast:latest
     ports:
       - "8080:8080"
     volumes:

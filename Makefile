@@ -23,8 +23,9 @@ clean: ## Remove build artifacts
 docker-build: ## Build the Docker image
 	docker build -t copycast .
 
-docker-up: ## Build and start via docker compose
-	docker compose up --build -d
+docker-up: ## Pull the published image and start via docker compose
+	docker compose pull
+	docker compose up -d
 
 docker-down: ## Stop the docker compose stack
 	docker compose down
