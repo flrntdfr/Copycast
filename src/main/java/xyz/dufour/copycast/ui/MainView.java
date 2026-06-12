@@ -36,7 +36,6 @@ import xyz.dufour.copycast.source.ProbeService;
 import xyz.dufour.copycast.ytdlp.YtDlp;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 @Route("")
@@ -56,9 +55,6 @@ public class MainView extends VerticalLayout {
             this.color = color;
         }
     }
-
-    private static final String APP_VERSION =
-            Optional.ofNullable(MainView.class.getPackage().getImplementationVersion()).orElse("dev");
 
     private final MirrorStore store;
     private final ProbeService probe;
@@ -115,9 +111,13 @@ public class MainView extends VerticalLayout {
         add(grid);
         expand(grid);
 
-        stats.addClassName("copycast-stats");
-        add(stats);
-        setHorizontalComponentAlignment(FlexComponent.Alignment.CENTER, stats);
+        RouterLink about = new RouterLink("Copycast v" + UiSupport.APP_VERSION, AboutView.class);
+        HorizontalLayout footer = new HorizontalLayout(about, stats);
+        footer.addClassName("copycast-stats");
+        footer.setSpacing(false);
+        footer.setAlignItems(FlexComponent.Alignment.BASELINE);
+        add(footer);
+        setHorizontalComponentAlignment(FlexComponent.Alignment.CENTER, footer);
         reload();
     }
 
@@ -354,8 +354,8 @@ public class MainView extends VerticalLayout {
 
         int episodes = mirrors.stream().mapToInt(m -> store.episodes(m).size()).sum();
         long bytes = mirrors.stream().mapToLong(m -> store.sizeOnDiskBytes(m.getId())).sum();
-        String text = "v" + APP_VERSION + " (yt-dlp " + ytDlp.version() + ") · "
-                + mirrors.size() + (mirrors.size() == 1 ? " Mirror · " : " Mirrors · ")
+        // Non-breaking space: a normal leading space would be collapsed away.
+        String text = " · " + mirrors.size() + (mirrors.size() == 1 ? " Mirror · " : " Mirrors · ")
                 + episodes + (episodes == 1 ? " Episode · " : " Episodes · ")
                 + UiSupport.gigabytes(bytes);
         if (!ytDlp.isReady()) {
