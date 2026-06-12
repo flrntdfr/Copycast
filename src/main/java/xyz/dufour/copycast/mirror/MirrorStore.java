@@ -123,6 +123,7 @@ public class MirrorStore {
         mirror.setId(Ids.mirrorId(sourceUrl));
         mirror.setSourceUrl(sourceUrl.trim());
         mirror.setType(probe.type());
+        mirror.setService(probe.service());
         mirror.setTitle(probe.title());
         mirror.setDescription(probe.description());
         mirror.setImageUrl(probe.imageUrl());
@@ -296,15 +297,10 @@ public class MirrorStore {
             }
             JsonNode root = mapper.readTree(listing.toFile());
             Set<String> keys = new HashSet<>();
-            if (root.has("entries")) {
-                root.path("entries").forEach(entry -> {
-                    String id = entry.path("id").asText(null);
-                    if (id != null) {
-                        keys.add(id);
-                    }
-                });
-            } else if (root.hasNonNull("id")) {
-                keys.add(root.path("id").asText());
+            // Channels nest videos inside tab playlists; flatten before
+            // collecting ids or everything looks Delisted.
+            for (JsonNode entry : xyz.dufour.copycast.source.YtListing.leafEntries(root)) {
+                keys.add(entry.path("id").asText());
             }
             return keys;
         } catch (IOException e) {

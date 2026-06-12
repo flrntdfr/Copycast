@@ -15,6 +15,7 @@ public class Mirror {
     private String id;
     private String sourceUrl;
     private SourceType type;
+    private String service;
     private String title;
     private String description;
     private String imageUrl;
@@ -48,6 +49,22 @@ public class Mirror {
 
     public void setType(SourceType type) {
         this.type = type;
+    }
+
+    public String getService() {
+        return service;
+    }
+
+    public void setService(String service) {
+        this.service = service;
+    }
+
+    /** Service name for display, e.g. "RSS" or "YouTube". */
+    public String displayService() {
+        if (service != null && !service.isBlank()) {
+            return service;
+        }
+        return type == null ? "" : type.name();
     }
 
     public String getTitle() {
