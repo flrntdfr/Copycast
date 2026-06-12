@@ -2,6 +2,7 @@ package xyz.dufour.copycast.ui;
 
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.DetachEvent;
+import com.vaadin.flow.component.Text;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dialog.Dialog;
@@ -11,6 +12,8 @@ import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Paragraph;
 import com.vaadin.flow.component.html.Span;
+import com.vaadin.flow.component.icon.Icon;
+import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -45,6 +48,7 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
     private String mirrorId;
     private final Grid<Episode> grid = new Grid<>();
     private final VerticalLayout header = new VerticalLayout();
+    private final AudioPlayer player = new AudioPlayer();
     private Registration pollRegistration;
 
     public MirrorDetailView(MirrorStore store, RefreshService refresh, FeedGenerator feeds) {
@@ -59,6 +63,7 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         configureGrid();
         add(grid);
         expand(grid);
+        add(player);
     }
 
     @Override
@@ -89,10 +94,12 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
             if (mirror == null) {
                 return new Span();
             }
-            Anchor listen = new Anchor(feeds.mediaUrl(mirror, episode.fileName()), "Listen");
-            listen.setTarget("_blank");
-            return listen;
-        })).setHeader("").setFlexGrow(0).setWidth("100px");
+            Button play = new Button(new Icon(VaadinIcon.PLAY), e ->
+                    player.play(feeds.mediaUrl(mirror, episode.fileName()), episode.title()));
+            play.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+            play.setTooltipText("Play");
+            return play;
+        })).setHeader("").setFlexGrow(0).setWidth("80px");
     }
 
     private void reload() {
@@ -122,7 +129,15 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         }
         header.add(titleRow);
 
-        header.add(new Paragraph("Source: " + mirror.getSourceUrl()));
+        Paragraph description = new Paragraph();
+        String about = mirror.getDescription();
+        if (about != null && !about.isBlank()) {
+            description.add(new Text(about.length() > 300 ? about.substring(0, 300) + "… " : about + " "));
+        }
+        Anchor source = new Anchor(mirror.getSourceUrl(), "Source ↗");
+        source.setTarget("_blank");
+        description.add(source);
+        header.add(description);
 
         TextField feedUrl = new TextField("Mirror Feed (subscribe to this)");
         feedUrl.setValue(feeds.feedUrl(mirror));
