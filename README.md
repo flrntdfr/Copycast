@@ -91,8 +91,8 @@ the UI without ever moving feed URLs your clients are subscribed to.
 ## Versioning and releases
 
 The project version lives in one place: the `<version>` element of
-[`pom.xml`](pom.xml) (currently `0.0.1`). Bump it there as development
-progresses. On every push to `main`, CI runs the test suite and publishes
+[`pom.xml`](pom.xml). Bump it there as development progresses. On every
+push to `main`, CI runs the test suite and publishes
 `ghcr.io/flrntdfr/copycast:<version>` and `:latest` for `linux/amd64` and
 `linux/arm64`. Pull requests run the tests only.
 
