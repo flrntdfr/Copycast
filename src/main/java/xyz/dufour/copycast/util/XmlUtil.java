@@ -5,7 +5,12 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
+import org.xml.sax.ErrorHandler;
+import org.xml.sax.SAXException;
+import org.xml.sax.SAXParseException;
+
 import javax.xml.XMLConstants;
+import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.transform.OutputKeys;
@@ -45,7 +50,26 @@ public final class XmlUtil {
 
     public static Document parse(byte[] bytes) throws IOException {
         try {
-            return safeFactory().newDocumentBuilder().parse(new ByteArrayInputStream(bytes));
+            DocumentBuilder builder = safeFactory().newDocumentBuilder();
+            // The default handler prints "[Fatal Error] ..." to stderr; we
+            // routinely probe non-XML content (HTML pages), so stay quiet
+            // and let the thrown exception carry the diagnosis.
+            builder.setErrorHandler(new ErrorHandler() {
+                @Override
+                public void warning(SAXParseException e) {
+                }
+
+                @Override
+                public void error(SAXParseException e) throws SAXException {
+                    throw e;
+                }
+
+                @Override
+                public void fatalError(SAXParseException e) throws SAXException {
+                    throw e;
+                }
+            });
+            return builder.parse(new ByteArrayInputStream(bytes));
         } catch (Exception e) {
             throw new IOException("Invalid XML: " + e.getMessage(), e);
         }

@@ -42,7 +42,7 @@ public final class YtListing {
 
     /** Human-readable service name from the yt-dlp extractor, e.g. "YouTube". */
     public static String serviceName(JsonNode root) {
-        String extractor = root.path("extractor").asText(null);
+        String extractor = root.path("extractor").asString(null);
         if (extractor == null || extractor.isBlank()) {
             return null;
         }
