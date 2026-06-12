@@ -31,6 +31,16 @@ architectural decisions are recorded in [docs/adr/](docs/adr/).
 
 ## Quick start (Docker)
 
+Prebuilt multi-arch images (amd64, arm64) are published to the GitHub
+container registry by CI on every push to `main`:
+
+```bash
+docker run -d -p 8080:8080 -v ./data:/data -v ./config:/config \
+  ghcr.io/flrntdfr/copycast:latest
+```
+
+Or build locally:
+
 ```bash
 docker compose up --build
 # UI:    http://localhost:8080
@@ -75,6 +85,14 @@ There is no built-in authentication yet. Run Copycast on a private network
 podcast client needs is isolated under `/feed/**`; everything else is UI.
 This split is deliberate so authentication can later be added in front of
 the UI without ever moving feed URLs your clients are subscribed to.
+
+## Versioning and releases
+
+The project version lives in one place: the `<version>` element of
+[`pom.xml`](pom.xml) (currently `0.0.1`). Bump it there as development
+progresses. On every push to `main`, CI runs the test suite and publishes
+`ghcr.io/flrntdfr/copycast:<version>` and `:latest` for `linux/amd64` and
+`linux/arm64`. Pull requests run the tests only.
 
 ## Development
 

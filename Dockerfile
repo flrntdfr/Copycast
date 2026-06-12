@@ -1,5 +1,7 @@
 # ---- Build stage ----------------------------------------------------------
-FROM maven:3.9-eclipse-temurin-21 AS build
+# Runs on the build host's architecture: the jar is arch-independent, so
+# multi-arch image builds don't need to run Maven under emulation.
+FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /build
 COPY pom.xml ./
 # Warm the dependency cache; tolerate partial resolution offline quirks.
@@ -11,7 +13,8 @@ RUN mvn -q -Pproduction -DskipTests package
 # Bakes the pinned yt-dlp binary into the image. The version is NOT declared
 # here: it is grepped from application.yaml, the single source of truth
 # (see docs/adr/0002).
-FROM eclipse-temurin:21-jre AS ytdlp
+# Runs on the build host too — it only downloads; TARGETARCH picks the asset.
+FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jre AS ytdlp
 ARG TARGETARCH
 COPY src/main/resources/application.yaml /tmp/application.yaml
 RUN apt-get update \

@@ -1,7 +1,5 @@
 .DEFAULT_GOAL := help
 
-JAR := target/copycast-0.1.0.jar
-
 .PHONY: help build serve serve-prod test clean docker-build docker-up docker-down
 
 help: ## Show this help
@@ -14,7 +12,7 @@ serve: ## Run in dev mode with hot reload (http://localhost:8080)
 	mvn spring-boot:run
 
 serve-prod: build ## Build and run the production jar
-	java -jar $(JAR)
+	java -jar target/copycast-*.jar
 
 test: ## Run unit tests
 	mvn test
