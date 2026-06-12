@@ -1,0 +1,28 @@
+# Dependabot version updates. Documentation:
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # Maven dependencies (Spring Boot, Vaadin, plugins) from pom.xml
+  - package-ecosystem: "maven"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      # One PR for routine minor/patch bumps; majors stay separate.
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Actions used in .github/workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Base images in the Dockerfile (maven, eclipse-temurin)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
