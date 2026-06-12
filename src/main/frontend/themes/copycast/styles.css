@@ -31,6 +31,7 @@ h2.copycast-title {
 .copycast-stats {
   color: var(--lumo-secondary-text-color);
   font-size: var(--lumo-font-size-s);
+  text-align: center;
 }
 
 .copycast-description {
@@ -42,6 +43,9 @@ vaadin-grid.copycast-grid {
   border: none;
   border-radius: var(--lumo-border-radius-l);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07), 0 4px 16px rgba(0, 0, 0, 0.05);
+  /* Allow the grid to shrink inside the flex column so rows scroll
+     within the grid instead of overflowing the page. */
+  min-height: 0;
 }
 
 .copycast-health-dot {

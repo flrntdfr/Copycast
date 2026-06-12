@@ -86,8 +86,6 @@ public class MainView extends VerticalLayout {
         H1 title = new H1("Copycast");
         title.addClassName("copycast-title");
         add(title);
-        stats.addClassName("copycast-stats");
-        add(stats);
 
         urlField.setPlaceholder("Podcast RSS feed, YouTube channel or playlist URL…");
         urlField.setWidthFull();
@@ -108,6 +106,10 @@ public class MainView extends VerticalLayout {
         configureGrid();
         add(grid);
         expand(grid);
+
+        stats.addClassName("copycast-stats");
+        add(stats);
+        setHorizontalComponentAlignment(FlexComponent.Alignment.CENTER, stats);
         reload();
     }
 
