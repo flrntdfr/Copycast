@@ -25,6 +25,9 @@ architectural decisions are recorded in [docs/adr/](docs/adr/).
   The Mirror Feed is the **union of everything ever archived** with original
   metadata preserved — upstream deletions never propagate. Episodes the
   Source no longer lists are flagged as *Delisted* in the UI only.
+- **Artwork is archived too**: the podcast cover and per-episode images are
+  stored next to the audio and the Mirror Feed points at the local copies,
+  so artwork survives the Source as well.
 - There is **no database** ([ADR 0001](docs/adr/0001-filesystem-as-state.md)).
   Everything lives in plain files under the data directory — one
   self-describing folder per Mirror that you can back up with rsync.

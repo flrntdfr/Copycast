@@ -189,6 +189,19 @@ public class MirrorStore {
         return Optional.empty();
     }
 
+    /** Total bytes a Mirror occupies on disk (audio, artwork, metadata). */
+    public long sizeOnDiskBytes(String id) {
+        Path root = dir(id);
+        if (!Files.isDirectory(root)) {
+            return 0;
+        }
+        try (Stream<Path> walk = Files.walk(root)) {
+            return walk.filter(Files::isRegularFile).mapToLong(f -> f.toFile().length()).sum();
+        } catch (IOException e) {
+            return 0;
+        }
+    }
+
     /** All archived Episodes, newest first, with Delisted state computed. */
     public List<Episode> episodes(Mirror mirror) {
         Path episodesDir = episodesDir(mirror.getId());

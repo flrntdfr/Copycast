@@ -2,6 +2,7 @@ package xyz.dufour.copycast.ui;
 
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.DetachEvent;
+import com.vaadin.flow.component.Key;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
@@ -16,10 +17,11 @@ import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.notification.NotificationVariant;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
-import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.progressbar.ProgressBar;
+import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.textfield.IntegerField;
 import com.vaadin.flow.component.textfield.TextField;
+import com.vaadin.flow.data.renderer.ComponentRenderer;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
@@ -32,11 +34,30 @@ import xyz.dufour.copycast.source.ProbeResult;
 import xyz.dufour.copycast.source.ProbeService;
 import xyz.dufour.copycast.ytdlp.YtDlp;
 
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 @Route("")
 @PageTitle("Copycast")
 public class MainView extends VerticalLayout {
+
+    /** Traffic-light health of a Mirror, derived from its last Refresh. */
+    private enum Health {
+        OK("var(--lumo-success-color)"),
+        WARN("#f59e0b"),
+        ERROR("var(--lumo-error-color)"),
+        PAUSED("var(--lumo-contrast-40pct)");
+
+        final String color;
+
+        Health(String color) {
+            this.color = color;
+        }
+    }
+
+    private static final String APP_VERSION =
+            Optional.ofNullable(MainView.class.getPackage().getImplementationVersion()).orElse("dev");
 
     private final MirrorStore store;
     private final ProbeService probe;
@@ -47,7 +68,7 @@ public class MainView extends VerticalLayout {
     private final TextField urlField = new TextField();
     private final Button mirrorButton = new Button("Mirror");
     private final ProgressBar probing = new ProgressBar();
-    private final Span ytDlpStatus = new Span();
+    private final Span stats = new Span();
     private final Grid<Mirror> grid = new Grid<>();
     private Registration pollRegistration;
 
@@ -60,15 +81,20 @@ public class MainView extends VerticalLayout {
         this.ytDlp = ytDlp;
 
         setSizeFull();
-        add(new H1("Copycast"));
-        add(ytDlpStatus);
+        addClassName("copycast-view");
+
+        H1 title = new H1("Copycast");
+        title.addClassName("copycast-title");
+        add(title);
+        stats.addClassName("copycast-stats");
+        add(stats);
 
         urlField.setPlaceholder("Podcast RSS feed, YouTube channel or playlist URL…");
         urlField.setWidthFull();
         urlField.setClearButtonVisible(true);
         mirrorButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
         mirrorButton.addClickListener(e -> startProbe());
-        urlField.addKeyPressListener(com.vaadin.flow.component.Key.ENTER, e -> startProbe());
+        urlField.addKeyPressListener(Key.ENTER, e -> startProbe());
         HorizontalLayout inputRow = new HorizontalLayout(urlField, mirrorButton);
         inputRow.setWidthFull();
         inputRow.setAlignItems(FlexComponent.Alignment.BASELINE);
@@ -87,32 +113,62 @@ public class MainView extends VerticalLayout {
 
     private void configureGrid() {
         grid.setSizeFull();
-        grid.addColumn(new com.vaadin.flow.data.renderer.ComponentRenderer<>(mirror ->
+        grid.addClassName("copycast-grid");
+        grid.addColumn(new ComponentRenderer<>(mirror ->
                         new RouterLink(mirror.displayTitle(), MirrorDetailView.class, mirror.getId())))
                 .setHeader("Mirror").setFlexGrow(3);
         grid.addColumn(mirror -> mirror.getType() == null ? "" : mirror.getType().name())
                 .setHeader("Type").setFlexGrow(0).setWidth("90px");
         grid.addColumn(mirror -> store.episodes(mirror).size())
                 .setHeader("Episodes").setFlexGrow(0).setWidth("110px");
-        grid.addColumn(this::statusText).setHeader("Status").setFlexGrow(2);
-        grid.addColumn(new com.vaadin.flow.data.renderer.ComponentRenderer<>(this::actions))
+        grid.addColumn(mirror -> UiSupport.gigabytes(store.sizeOnDiskBytes(mirror.getId())))
+                .setHeader("Size").setFlexGrow(0).setWidth("110px");
+        grid.addColumn(new ComponentRenderer<>(this::healthBadge))
+                .setHeader("Health").setFlexGrow(2);
+        grid.addColumn(new ComponentRenderer<>(this::actions))
                 .setHeader("Actions").setFlexGrow(0).setWidth("220px");
     }
 
-    private String statusText(Mirror mirror) {
+    private Health health(Mirror mirror) {
+        if (mirror.isPaused()) {
+            return Health.PAUSED;
+        }
+        if (mirror.getLastAttemptAt() == null) {
+            return Health.WARN;
+        }
+        boolean lastAttemptSucceeded = mirror.getLastSuccessAt() != null
+                && !mirror.getLastSuccessAt().isBefore(mirror.getLastAttemptAt());
+        if (!lastAttemptSucceeded) {
+            return Health.ERROR;
+        }
+        return mirror.getLastError() == null ? Health.OK : Health.WARN;
+    }
+
+    private Span healthBadge(Mirror mirror) {
+        Health health = health(mirror);
+        Span dot = new Span();
+        dot.addClassName("copycast-health-dot");
+        dot.getStyle().set("background-color", health.color);
+        Span badge = new Span(dot, new Span(healthText(mirror, health)));
+        badge.getStyle().set("display", "inline-flex").set("align-items", "center");
+        if (mirror.getLastError() != null) {
+            badge.getElement().setAttribute("title", mirror.getLastError());
+        }
+        return badge;
+    }
+
+    private String healthText(Mirror mirror, Health health) {
         if (refresh.isBusy(mirror.getId())) {
             return "Refreshing…";
         }
-        if (mirror.isPaused()) {
-            return "Paused";
-        }
-        if (mirror.getLastError() != null) {
-            return "Warning (" + UiSupport.relative(mirror.getLastAttemptAt()) + "): " + mirror.getLastError();
-        }
-        if (mirror.getLastSuccessAt() != null) {
-            return "OK, refreshed " + UiSupport.relative(mirror.getLastSuccessAt());
-        }
-        return "Never refreshed";
+        return switch (health) {
+            case PAUSED -> "Paused";
+            case OK -> "OK · refreshed " + UiSupport.relative(mirror.getLastSuccessAt());
+            case WARN -> mirror.getLastAttemptAt() == null
+                    ? "Never refreshed"
+                    : "Warnings · " + mirror.getLastError();
+            case ERROR -> "Failing · " + mirror.getLastError();
+        };
     }
 
     private HorizontalLayout actions(Mirror mirror) {
@@ -140,6 +196,7 @@ public class MainView extends VerticalLayout {
                                 notifyError("Delete failed: " + ex.getMessage());
                             }
                         }));
+        delete.addThemeVariants(ButtonVariant.LUMO_ERROR);
         return new HorizontalLayout(copy, refreshNow, pause, delete);
     }
 
@@ -219,14 +276,20 @@ public class MainView extends VerticalLayout {
     }
 
     private void reload() {
-        grid.setItems(store.list());
-        String release = ytDlp.releaseDate() != null ? ", released " + ytDlp.releaseDate() : "";
-        if (ytDlp.isReady()) {
-            ytDlpStatus.setText("yt-dlp " + ytDlp.version() + release + " — ready");
-        } else {
-            String error = ytDlp.installError() != null ? ": " + ytDlp.installError() : " (installing…)";
-            ytDlpStatus.setText("yt-dlp " + ytDlp.version() + release + " — not available" + error);
+        List<Mirror> mirrors = store.list();
+        grid.setItems(mirrors);
+
+        int episodes = mirrors.stream().mapToInt(m -> store.episodes(m).size()).sum();
+        long bytes = mirrors.stream().mapToLong(m -> store.sizeOnDiskBytes(m.getId())).sum();
+        String text = "v" + APP_VERSION + " (yt-dlp " + ytDlp.version() + ") · "
+                + mirrors.size() + (mirrors.size() == 1 ? " Mirror · " : " Mirrors · ")
+                + episodes + (episodes == 1 ? " Episode · " : " Episodes · ")
+                + UiSupport.gigabytes(bytes);
+        if (!ytDlp.isReady()) {
+            text += " — yt-dlp unavailable"
+                    + (ytDlp.installError() != null ? ": " + ytDlp.installError() : " (installing…)");
         }
+        stats.setText(text);
     }
 
     private static void notifyError(String message) {
