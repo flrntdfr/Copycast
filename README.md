@@ -77,10 +77,15 @@ the UI without ever moving feed URLs your clients are subscribed to.
 
 ## Development
 
-Requires Java 21, Maven and `ffmpeg` on the PATH.
+Requires Java 21, Maven and `ffmpeg` on the PATH. With [Nix](https://nixos.org)
+and [direnv](https://direnv.net), `direnv allow` (or `nix develop`) drops you
+into a shell with everything installed.
 
 ```bash
-mvn spring-boot:run        # dev mode at http://localhost:8080
-mvn test                   # unit tests
-mvn -Pproduction package   # production jar (builds the frontend bundle)
+make serve        # dev mode with hot reload at http://localhost:8080
+make test         # unit tests
+make build        # production jar (builds the frontend bundle)
+make serve-prod   # build and run the production jar
+make docker-up    # build and start via docker compose
+make help         # all targets
 ```

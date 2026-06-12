@@ -17,3 +17,7 @@ vite.generated.ts
 .idea/
 *.iml
 .vscode/
+
+# direnv / nix
+.direnv/
+result
