@@ -18,7 +18,11 @@ copycast:
   # Cooldown for Refreshes triggered by a fetch of the Mirror Feed.
   fetch-cooldown-minutes: 15
   ytdlp:
-    # Pinned yt-dlp release (see docs/adr/0002). Bump here, then restart.
+    # Pinned yt-dlp release (see docs/adr/0002). The Docker build greps this
+    # value and bakes the matching binary into the image. Bump + rebuild, or
+    # bump + restart (the runtime falls back to downloading the new pin).
     version: "2026.06.09"
-    # Download the pinned binary at startup when missing from the data dir.
+    # Where the Docker image ships the bundled binary.
+    bundled-dir: "/opt/copycast/bin"
+    # Fallback: download the pinned binary when no bundled/cached one matches.
     auto-download: true

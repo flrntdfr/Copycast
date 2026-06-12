@@ -21,12 +21,16 @@ copycast:
   fetch-cooldown-minutes: 15
 
   ytdlp:
-    # Pinned yt-dlp release. Copycast downloads exactly this version at
-    # startup (cached in <data-dir>/bin). To upgrade: change it, restart.
+    # Pinned yt-dlp release. The Docker image ships the binary matching the
+    # pin in src/main/resources/application.yaml (baked in at build time).
+    # If you change the pin here without rebuilding the image, the runtime
+    # falls back to downloading the new version into <data-dir>/bin.
     # Releases: https://github.com/yt-dlp/yt-dlp/releases
     version: "2026.06.09"
-    # Set to false if you provision the binary yourself at
-    # <data-dir>/bin/yt-dlp-<version>.
+    # Where the image ships the bundled binary (no need to change this).
+    #bundled-dir: "/opt/copycast/bin"
+    # Set to false to forbid the download fallback; the pinned binary must
+    # then exist in bundled-dir or <data-dir>/bin.
     auto-download: true
 
 #server:

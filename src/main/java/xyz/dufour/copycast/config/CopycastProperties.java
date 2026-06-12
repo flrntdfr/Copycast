@@ -12,7 +12,7 @@ public record CopycastProperties(
         int fetchCooldownMinutes,
         YtDlpProperties ytdlp) {
 
-    public record YtDlpProperties(String version, boolean autoDownload) {
+    public record YtDlpProperties(String version, Path bundledDir, boolean autoDownload) {
     }
 
     /** Base URL without trailing slash, for building public links. */

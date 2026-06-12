@@ -60,12 +60,13 @@ All options are consolidated in one file: [`config/application.yaml`](config/app
 | `copycast.ytdlp.version`          | pinned release          | Exact yt-dlp version to run               |
 | `copycast.ytdlp.auto-download`    | `true`                  | Fetch the pinned binary at startup        |
 
-yt-dlp is **not** baked into the image
-([ADR 0002](docs/adr/0002-ytdlp-version-pinned-in-config.md)): the pinned
-version is downloaded once into `/data/bin` at startup, and the active
-version and release date are shown on the main page. When a site change
-breaks the extractor, bump `copycast.ytdlp.version` and restart — no
-rebuild needed.
+The pinned yt-dlp binary is baked into the image at build time — the
+Dockerfile greps the version from `application.yaml`, so the pin lives in
+exactly one place ([ADR 0002](docs/adr/0002-ytdlp-version-pinned-in-config.md)).
+The active version and release date are shown on the main page. When a site
+change breaks the extractor, bump `copycast.ytdlp.version` and either rebuild
+the image or just restart: the runtime falls back to downloading a pin that
+doesn't match the bundled binary into `/data/bin`.
 
 ## Security
 

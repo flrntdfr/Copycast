@@ -66,11 +66,23 @@ public class YtDlp {
         if (binary != null && Files.isExecutable(binary)) {
             return;
         }
+        // The Docker image bundles the binary matching the pinned version
+        // (the build greps it from application.yaml — see docs/adr/0002).
+        Path bundledDir = props.ytdlp().bundledDir();
+        if (bundledDir != null) {
+            Path bundled = bundledDir.resolve("yt-dlp-" + version());
+            if (Files.isExecutable(bundled)) {
+                binary = bundled;
+                return;
+            }
+        }
         Path target = props.dataDir().resolve("bin").resolve("yt-dlp-" + version());
         if (Files.isExecutable(target)) {
             binary = target;
             return;
         }
+        // Fallback for a config pin that differs from the bundled binary
+        // (version bumped without an image rebuild).
         if (!props.ytdlp().autoDownload()) {
             throw new IOException("Binary missing at " + target + " and auto-download is disabled");
         }
