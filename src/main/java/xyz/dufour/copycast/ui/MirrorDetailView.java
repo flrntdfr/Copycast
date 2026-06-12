@@ -102,8 +102,11 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
 
         HorizontalLayout titleRow = new HorizontalLayout();
         titleRow.setAlignItems(FlexComponent.Alignment.CENTER);
-        if (mirror.getImageUrl() != null && !mirror.getImageUrl().isBlank()) {
-            Image image = new Image(mirror.getImageUrl(), "");
+        String imageSrc = store.findArtwork(mirrorId, MirrorStore.COVER)
+                .map(file -> feeds.mediaUrl(mirror, file.getFileName().toString()))
+                .orElse(mirror.getImageUrl());
+        if (imageSrc != null && !imageSrc.isBlank()) {
+            Image image = new Image(imageSrc, "");
             image.setWidth("64px");
             image.setHeight("64px");
             titleRow.add(image);

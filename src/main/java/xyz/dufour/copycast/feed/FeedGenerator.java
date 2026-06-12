@@ -90,6 +90,7 @@ public class FeedGenerator {
         if (!rss.hasAttribute("version")) {
             rss.setAttribute("version", "2.0");
         }
+        rewriteChannelArtwork(channel, mirror);
         appendText(channel, "generator", "Copycast");
 
         List<Episode> episodes = store.episodes(mirror);
@@ -152,7 +153,37 @@ public class FeedGenerator {
         enclosure.setAttribute("url", mediaUrl(mirror, episode.fileName()));
         enclosure.setAttribute("length", String.valueOf(episode.sizeBytes()));
         enclosure.setAttribute("type", episode.mimeType());
+        setItunesImage(item, mirror, episode.key());
         return item;
+    }
+
+    /** Points channel artwork at the archived copy when one exists. */
+    private void rewriteChannelArtwork(Element channel, Mirror mirror) {
+        store.findArtwork(mirror.getId(), MirrorStore.COVER).ifPresent(file -> {
+            String url = mediaUrl(mirror, file.getFileName().toString());
+            XmlUtil.child(channel, "image")
+                    .flatMap(image -> XmlUtil.child(image, "url"))
+                    .ifPresent(element -> element.setTextContent(url));
+            XmlUtil.childNs(channel, XmlUtil.ITUNES_NS, "image")
+                    .ifPresentOrElse(element -> element.setAttribute("href", url),
+                            () -> appendItunesImage(channel, url));
+        });
+    }
+
+    /** Points episode artwork at the archived copy when one exists. */
+    private void setItunesImage(Element item, Mirror mirror, String key) {
+        store.findArtwork(mirror.getId(), key).ifPresent(file -> {
+            String url = mediaUrl(mirror, file.getFileName().toString());
+            XmlUtil.childNs(item, XmlUtil.ITUNES_NS, "image")
+                    .ifPresentOrElse(element -> element.setAttribute("href", url),
+                            () -> appendItunesImage(item, url));
+        });
+    }
+
+    private static void appendItunesImage(Element parent, String href) {
+        Element image = parent.getOwnerDocument().createElementNS(XmlUtil.ITUNES_NS, "itunes:image");
+        image.setAttribute("href", href);
+        parent.appendChild(image);
     }
 
     private void rewriteSelfLink(Element channel, Mirror mirror) {

@@ -100,6 +100,17 @@ class FeedControllerTest {
     }
 
     @Test
+    void mediaServesArtworkWithImageContentType() throws Exception {
+        when(store.find("abc")).thenReturn(Optional.of(mirror));
+        when(store.episodesDir("abc")).thenReturn(episodesDir);
+        Files.writeString(episodesDir.resolve("cover.jpg"), "img");
+
+        mvc.perform(get("/feed/abc/media/cover.jpg"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("image/jpeg"));
+    }
+
+    @Test
     void missingMediaFileIs404() throws Exception {
         when(store.find("abc")).thenReturn(Optional.of(mirror));
         when(store.episodesDir("abc")).thenReturn(episodesDir);

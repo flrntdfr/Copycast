@@ -100,6 +100,18 @@ class MirrorStoreTest {
     }
 
     @Test
+    void findArtworkLocatesCoverAndEpisodeImages() throws IOException {
+        Mirror mirror = store.create("https://pod.example/feed.xml", rssProbe("A"), null);
+        Files.writeString(store.episodesDir(mirror.getId()).resolve("cover.png"), "img");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve("k1.webp"), "img");
+        assertTrue(store.findArtwork(mirror.getId(), MirrorStore.COVER).isPresent());
+        assertTrue(store.findArtwork(mirror.getId(), "k1").isPresent());
+        assertTrue(store.findArtwork(mirror.getId(), "k2").isEmpty());
+        // Artwork files are never mistaken for Episodes.
+        assertTrue(store.episodes(mirror).isEmpty());
+    }
+
+    @Test
     void episodeMetadataComesFromItemXmlSidecar() throws IOException {
         Mirror mirror = store.create("https://pod.example/feed.xml", rssProbe("A"), null);
         String key = Ids.episodeKey("ep-1");
