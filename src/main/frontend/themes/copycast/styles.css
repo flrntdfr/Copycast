@@ -66,6 +66,13 @@ vaadin-grid.copycast-grid {
   animation: copycast-blink 1s ease-in-out infinite;
 }
 
+/* The compact stepper's label must never ellipsize. */
+vaadin-integer-field.copycast-cap::part(label) {
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+
 .copycast-cover {
   border-radius: var(--lumo-border-radius-m);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);

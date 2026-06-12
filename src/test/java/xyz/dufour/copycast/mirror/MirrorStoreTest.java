@@ -10,6 +10,7 @@ import xyz.dufour.copycast.util.Ids;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -17,6 +18,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -220,6 +222,70 @@ class MirrorStoreTest {
         Mirror mirror = store.create("https://yt.example/c/chan", ytdlpProbe(), null);
         assertEquals("YouTube", store.find(mirror.getId()).orElseThrow().getService());
         assertEquals("YouTube", mirror.displayService());
+    }
+
+    @Test
+    void cachedSidecarMetadataIsInvalidatedWhenTheFileChanges() throws IOException {
+        Mirror mirror = store.create("https://pod.example/feed.xml", rssProbe("A"), null);
+        String key = Ids.episodeKey("ep-1");
+        Path itemXml = store.episodesDir(mirror.getId()).resolve(key + ".item.xml");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(key + ".mp3"), "x");
+        Files.writeString(itemXml, "<item><title>Before</title><guid>ep-1</guid></item>");
+
+        assertEquals("Before", store.episodes(mirror).getFirst().title());
+        // Sidecars are immutable in practice; a rewrite must still be seen.
+        Files.writeString(itemXml, "<item><title>After</title><guid>ep-1</guid></item>");
+        Files.setLastModifiedTime(itemXml, FileTime.from(Instant.now().plusSeconds(5)));
+        assertEquals("After", store.episodes(mirror).getFirst().title());
+    }
+
+    @Test
+    void delistedStaysFreshEvenWithCachedMetadata() throws IOException {
+        Mirror mirror = store.create("https://pod.example/feed.xml", rssProbe("A"), null);
+        String key = Ids.episodeKey("g1");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(key + ".mp3"), "x");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(key + ".item.xml"),
+                "<item><title>T</title><guid>g1</guid></item>");
+
+        assertFalse(store.episodes(mirror).getFirst().delisted());
+        // The Source rotates g1 out of its feed; metadata is cached but the
+        // Delisted state must follow the new feed.xml.
+        Files.writeString(store.feedXml(mirror.getId()), """
+                <rss version="2.0"><channel><title>A</title>
+                  <item><guid>other</guid></item>
+                </channel></rss>
+                """);
+        assertTrue(store.episodes(mirror).getFirst().delisted());
+    }
+
+    @Test
+    void sizeOnDiskIsCachedBrieflyAndDropsWithTheCaches() throws IOException {
+        Mirror mirror = store.create("https://pod.example/feed.xml", rssProbe("A"), null);
+        Files.writeString(store.episodesDir(mirror.getId()).resolve("a.mp3"), "12345");
+        long before = store.sizeOnDiskBytes(mirror.getId());
+
+        Files.writeString(store.episodesDir(mirror.getId()).resolve("b.mp3"), "12345");
+        // Within the TTL the cached value is returned…
+        assertEquals(before, store.sizeOnDiskBytes(mirror.getId()));
+        // …and refreshed once the caches are dropped.
+        store.clearRuntimeCaches();
+        assertEquals(before + 5, store.sizeOnDiskBytes(mirror.getId()));
+    }
+
+    @Test
+    void fingerprintChangesWhenMirrorDataChanges() throws IOException {
+        Mirror mirror = store.create("https://pod.example/feed.xml", rssProbe("A"), null);
+        MirrorStore.Fingerprint first = store.fingerprint(mirror.getId());
+
+        Files.writeString(store.episodesDir(mirror.getId()).resolve("new.mp3"), "x");
+        Files.setLastModifiedTime(store.episodesDir(mirror.getId()),
+                FileTime.from(Instant.now().plusSeconds(5)));
+        MirrorStore.Fingerprint second = store.fingerprint(mirror.getId());
+
+        assertNotEquals(first.token(), second.token());
+        assertTrue(second.lastModified().isAfter(first.lastModified()));
+        // Stable when nothing changed.
+        assertEquals(second.token(), store.fingerprint(mirror.getId()).token());
     }
 
     @Test

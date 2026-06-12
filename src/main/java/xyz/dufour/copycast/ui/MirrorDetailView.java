@@ -46,11 +46,17 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
     private final RefreshService refresh;
     private final FeedGenerator feeds;
 
+    /** Everything the header renders; it only rebuilds when this changes. */
+    private record HeaderSnapshot(String title, boolean paused, String description,
+                                  String sourceUrl, String imageSrc, boolean busy, String lastError) {
+    }
+
     private String mirrorId;
     private final Grid<Episode> grid = new Grid<>();
     private final VerticalLayout header = new VerticalLayout();
     private Registration pollRegistration;
     private List<Episode> lastEpisodes;
+    private HeaderSnapshot lastHeader;
 
     public MirrorDetailView(MirrorStore store, RefreshService refresh, FeedGenerator feeds) {
         this.store = store;
@@ -69,6 +75,9 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
     @Override
     public void setParameter(BeforeEvent event, String parameter) {
         this.mirrorId = parameter;
+        // A different Mirror invalidates the render snapshots.
+        this.lastHeader = null;
+        this.lastEpisodes = null;
         if (store.find(parameter).isEmpty()) {
             event.forwardTo(MainView.class);
             return;
@@ -134,13 +143,33 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         if (mirror == null) {
             return;
         }
+        String imageSrc = store.findArtwork(mirrorId, MirrorStore.COVER)
+                .map(file -> feeds.mediaUrl(mirror, file.getFileName().toString()))
+                .orElse(mirror.getImageUrl());
+        // Rebuilding the header recreates its buttons; skip when unchanged so
+        // the 3s poll doesn't steal focus or flicker.
+        HeaderSnapshot snapshot = new HeaderSnapshot(mirror.displayTitle(), mirror.isPaused(),
+                mirror.getDescription(), mirror.getSourceUrl(), imageSrc,
+                refresh.isBusy(mirrorId), mirror.getLastError());
+        if (!snapshot.equals(lastHeader)) {
+            rebuildHeader(mirror, imageSrc);
+            lastHeader = snapshot;
+        }
+
+        // Only reset the grid when the data changed: resetting collapses the
+        // expanded row and stops an inline player mid-playback.
+        List<Episode> episodes = store.episodes(mirror);
+        if (!episodes.equals(lastEpisodes)) {
+            grid.setItems(episodes);
+            lastEpisodes = episodes;
+        }
+    }
+
+    private void rebuildHeader(Mirror mirror, String imageSrc) {
         header.removeAll();
 
         HorizontalLayout titleRow = new HorizontalLayout();
         titleRow.setAlignItems(FlexComponent.Alignment.CENTER);
-        String imageSrc = store.findArtwork(mirrorId, MirrorStore.COVER)
-                .map(file -> feeds.mediaUrl(mirror, file.getFileName().toString()))
-                .orElse(mirror.getImageUrl());
         if (imageSrc != null && !imageSrc.isBlank()) {
             Image image = new Image(imageSrc, "");
             image.setWidth("64px");
@@ -212,14 +241,6 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
             Paragraph warning = new Paragraph("Last refresh: " + mirror.getLastError());
             warning.getStyle().set("color", "var(--lumo-error-text-color)");
             header.add(warning);
-        }
-
-        // Only reset the grid when the data changed: resetting collapses the
-        // expanded row and stops an inline player mid-playback.
-        List<Episode> episodes = store.episodes(mirror);
-        if (!episodes.equals(lastEpisodes)) {
-            grid.setItems(episodes);
-            lastEpisodes = episodes;
         }
     }
 

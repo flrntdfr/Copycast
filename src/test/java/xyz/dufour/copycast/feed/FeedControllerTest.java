@@ -13,11 +13,13 @@ import xyz.dufour.copycast.refresh.RefreshService;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -49,14 +51,64 @@ class FeedControllerTest {
     @Test
     void feedIsServedAndTriggersAnAsyncRefresh() throws Exception {
         when(store.find("abc")).thenReturn(Optional.of(mirror));
+        when(store.fingerprint("abc")).thenReturn(new MirrorStore.Fingerprint(1L, Instant.parse("2026-06-01T00:00:00Z")));
         when(generator.generate(mirror)).thenReturn("<rss/>");
 
         mvc.perform(get("/feed/abc/feed.xml"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(MediaType.parseMediaType("application/rss+xml;charset=UTF-8")))
+                .andExpect(header().exists(HttpHeaders.ETAG))
+                .andExpect(header().exists(HttpHeaders.LAST_MODIFIED))
                 .andExpect(content().string("<rss/>"));
 
         verify(refresh).request("abc", RefreshService.Trigger.FEED_FETCH);
+    }
+
+    @Test
+    void feedIsGeneratedOnceWhileTheFingerprintIsStable() throws Exception {
+        when(store.find("abc")).thenReturn(Optional.of(mirror));
+        when(store.fingerprint("abc")).thenReturn(new MirrorStore.Fingerprint(1L, Instant.parse("2026-06-01T00:00:00Z")));
+        when(generator.generate(mirror)).thenReturn("<rss/>");
+
+        mvc.perform(get("/feed/abc/feed.xml")).andExpect(status().isOk());
+        mvc.perform(get("/feed/abc/feed.xml")).andExpect(status().isOk());
+        mvc.perform(get("/feed/abc/feed.xml")).andExpect(status().isOk());
+
+        verify(generator, times(1)).generate(mirror);
+        // Every fetch still triggers the poll-driven refresh.
+        verify(refresh, times(3)).request("abc", RefreshService.Trigger.FEED_FETCH);
+    }
+
+    @Test
+    void matchingIfNoneMatchGetsA304() throws Exception {
+        when(store.find("abc")).thenReturn(Optional.of(mirror));
+        when(store.fingerprint("abc")).thenReturn(new MirrorStore.Fingerprint(1L, Instant.parse("2026-06-01T00:00:00Z")));
+        when(generator.generate(mirror)).thenReturn("<rss/>");
+
+        String etag = mvc.perform(get("/feed/abc/feed.xml"))
+                .andReturn().getResponse().getHeader(HttpHeaders.ETAG);
+
+        mvc.perform(get("/feed/abc/feed.xml").header(HttpHeaders.IF_NONE_MATCH, etag))
+                .andExpect(status().isNotModified())
+                .andExpect(header().string(HttpHeaders.ETAG, etag));
+    }
+
+    @Test
+    void feedIsRegeneratedWhenTheFingerprintChanges() throws Exception {
+        when(store.find("abc")).thenReturn(Optional.of(mirror));
+        when(store.fingerprint("abc"))
+                .thenReturn(new MirrorStore.Fingerprint(1L, Instant.parse("2026-06-01T00:00:00Z")))
+                .thenReturn(new MirrorStore.Fingerprint(2L, Instant.parse("2026-06-01T00:01:00Z")));
+        when(generator.generate(mirror)).thenReturn("<rss/>", "<rss><channel/></rss>");
+
+        String firstEtag = mvc.perform(get("/feed/abc/feed.xml"))
+                .andReturn().getResponse().getHeader(HttpHeaders.ETAG);
+
+        // Stale ETag after a data change: full body, new ETag.
+        mvc.perform(get("/feed/abc/feed.xml").header(HttpHeaders.IF_NONE_MATCH, firstEtag))
+                .andExpect(status().isOk())
+                .andExpect(content().string("<rss><channel/></rss>"));
+        verify(generator, times(2)).generate(mirror);
     }
 
     @Test
