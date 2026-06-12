@@ -1,8 +1,7 @@
 package xyz.dufour.copycast;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import xyz.dufour.copycast.config.CopycastProperties;
 
 import java.nio.file.Path;
@@ -20,6 +19,7 @@ public final class TestSupport {
     }
 
     public static ObjectMapper mapper() {
-        return JsonMapper.builder().addModule(new JavaTimeModule()).build();
+        // Jackson 3: java.time support is built in, no module registration.
+        return JsonMapper.builder().build();
     }
 }

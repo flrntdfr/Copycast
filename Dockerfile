@@ -1,7 +1,7 @@
 # ---- Build stage ----------------------------------------------------------
 # Runs on the build host's architecture: the jar is arch-independent, so
 # multi-arch image builds don't need to run Maven under emulation.
-FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-21 AS build
+FROM --platform=$BUILDPLATFORM maven:3-eclipse-temurin-26 AS build
 WORKDIR /build
 COPY pom.xml ./
 # Warm the dependency cache; tolerate partial resolution offline quirks.
@@ -14,7 +14,7 @@ RUN mvn -q -Pproduction -DskipTests package
 # here: it is grepped from application.yaml, the single source of truth
 # (see docs/adr/0002).
 # Runs on the build host too — it only downloads; TARGETARCH picks the asset.
-FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jre AS ytdlp
+FROM --platform=$BUILDPLATFORM eclipse-temurin:25-jre AS ytdlp
 ARG TARGETARCH
 COPY src/main/resources/application.yaml /tmp/application.yaml
 RUN apt-get update \
@@ -31,7 +31,7 @@ RUN apt-get update \
     && chmod +x "/opt/copycast/bin/yt-dlp-${YTDLP_VERSION}"
 
 # ---- Runtime stage --------------------------------------------------------
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/*
