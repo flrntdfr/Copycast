@@ -2,6 +2,7 @@ package xyz.dufour.copycast.ui;
 
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.DetachEvent;
+import com.vaadin.flow.component.Text;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dialog.Dialog;
@@ -155,13 +156,16 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         }
         header.add(titleRow);
 
+        Paragraph about = new Paragraph();
+        about.addClassName("copycast-description");
         String description = UiSupport.stripHtml(mirror.getDescription());
         if (!description.isEmpty()) {
-            Paragraph descriptionText = new Paragraph(description);
-            descriptionText.addClassName("copycast-description");
-            header.add(descriptionText);
+            about.add(new Text(description + " "));
         }
-        header.add(new Paragraph("Source: " + mirror.getSourceUrl()));
+        Anchor source = new Anchor(mirror.getSourceUrl(), "Source ↗");
+        source.setTarget("_blank");
+        about.add(source);
+        header.add(about);
 
         TextField feedUrl = new TextField("Mirror Feed (subscribe to this)");
         feedUrl.setValue(feeds.feedUrl(mirror));
