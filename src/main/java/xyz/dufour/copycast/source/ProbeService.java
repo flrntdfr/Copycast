@@ -1,25 +1,28 @@
 package xyz.dufour.copycast.source;
 
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.w3c.dom.Document;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import xyz.dufour.copycast.config.CopycastProperties;
 import xyz.dufour.copycast.mirror.SourceType;
 import xyz.dufour.copycast.util.Http;
 import xyz.dufour.copycast.util.XmlUtil;
 import xyz.dufour.copycast.ytdlp.YtDlp;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
- * Validates a pasted URL before a Mirror is created: RSS feeds are detected
- * by fetching and parsing them directly; everything else is checked against
- * yt-dlp's extractors via a flat-playlist listing.
+ * Validates a pasted URL before a Mirror is created, as forgivingly as
+ * possible: a missing scheme is inferred (https preferred), a pasted web
+ * page is checked for an advertised RSS feed, and everything else is
+ * checked against yt-dlp's extractors.
  */
 @Service
 public class ProbeService {
@@ -36,24 +39,66 @@ public class ProbeService {
         this.props = props;
     }
 
-    public ProbeResult probe(String url) {
-        Optional<ProbeResult> rss = probeRss(url);
-        if (rss.isPresent()) {
-            return rss.get();
+    public ProbeResult probe(String input) {
+        List<String> candidates = candidateUrls(input);
+        if (candidates.isEmpty()) {
+            return ProbeResult.unsupported("Please enter a URL");
         }
-        return probeYtDlp(url);
+        for (String candidate : candidates) {
+            Http.Content content;
+            try {
+                content = Http.getContent(candidate, Duration.ofSeconds(60));
+            } catch (Exception e) {
+                log.debug("Unreachable candidate {}: {}", candidate, e.toString());
+                continue;
+            }
+            // Pasted the feed itself?
+            Optional<ProbeResult> rss = parseRss(content.finalUrl(), content.bytes());
+            if (rss.isPresent()) {
+                return rss.get();
+            }
+            // Pasted the podcast's site? Follow its advertised feed. A page
+            // whose advertised feed isn't RSS 2.0 (e.g. YouTube's Atom feed)
+            // falls through to yt-dlp on the page itself.
+            String feedUrl = FeedLink.discover(
+                    new String(content.bytes(), StandardCharsets.UTF_8), content.finalUrl());
+            if (feedUrl != null) {
+                try {
+                    Http.Content feed = Http.getContent(feedUrl, Duration.ofSeconds(60));
+                    Optional<ProbeResult> discovered = parseRss(feed.finalUrl(), feed.bytes());
+                    if (discovered.isPresent()) {
+                        return discovered.get();
+                    }
+                } catch (Exception e) {
+                    log.debug("Advertised feed {} not usable: {}", feedUrl, e.toString());
+                }
+            }
+            return probeYtDlp(candidate);
+        }
+        // Nothing reachable over plain HTTP; yt-dlp has its own networking.
+        return probeYtDlp(candidates.getFirst());
     }
 
-    private Optional<ProbeResult> probeRss(String url) {
+    /** Scheme-inferred fetch candidates, https before http. */
+    static List<String> candidateUrls(String input) {
+        String trimmed = input == null ? "" : input.trim();
+        if (trimmed.isEmpty()) {
+            return List.of();
+        }
+        if (trimmed.toLowerCase(Locale.ROOT).matches("^https?://.*")) {
+            return List.of(trimmed);
+        }
+        return List.of("https://" + trimmed, "http://" + trimmed);
+    }
+
+    private Optional<ProbeResult> parseRss(String canonicalUrl, byte[] body) {
         try {
-            byte[] body = Http.get(url, Duration.ofSeconds(60));
             Document doc = XmlUtil.parse(body);
             return Rss.parse(doc).map(channel -> new ProbeResult(
-                    true, SourceType.RSS, "RSS",
+                    true, canonicalUrl, SourceType.RSS, "RSS",
                     channel.title(), channel.description(), channel.imageUrl(), channel.author(),
                     channel.items().size(), null));
         } catch (Exception e) {
-            log.debug("Not an RSS feed ({}): {}", url, e.getMessage());
             return Optional.empty();
         }
     }
@@ -66,7 +111,7 @@ public class ProbeService {
                 return ProbeResult.unsupported("yt-dlp does not support this URL: " + result.stderrTail());
             }
             JsonNode root = mapper.readTree(result.stdout());
-            return new ProbeResult(true, SourceType.YTDLP,
+            return new ProbeResult(true, url, SourceType.YTDLP,
                     YtListing.serviceName(root),
                     root.path("title").asText(null),
                     root.path("description").asText(null),

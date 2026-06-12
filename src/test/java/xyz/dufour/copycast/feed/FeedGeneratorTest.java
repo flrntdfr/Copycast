@@ -42,7 +42,7 @@ class FeedGeneratorTest {
 
     private Mirror rssMirror() throws IOException {
         return store.create("https://pod.example/feed.xml",
-                new ProbeResult(true, SourceType.RSS, "RSS", "My Pod", "About things",
+                new ProbeResult(true, "https://pod.example/feed.xml", SourceType.RSS, "RSS", "My Pod", "About things",
                         "https://img.example/c.png", "Jane", 1, null), null);
     }
 
@@ -142,7 +142,7 @@ class FeedGeneratorTest {
     @Test
     void ytdlpMirrorSynthesizesChannelAndItemsFromInfoJson() throws IOException {
         Mirror mirror = store.create("https://yt.example/c/chan",
-                new ProbeResult(true, SourceType.YTDLP, "YouTube", "Chan", "A channel",
+                new ProbeResult(true, "https://yt.example/c/chan", SourceType.YTDLP, "YouTube", "Chan", "A channel",
                         "https://img.example/chan.png", "Up", 1, null), null);
         Files.writeString(store.episodesDir(mirror.getId()).resolve("vid1.m4a"), "abcd");
         Files.writeString(store.episodesDir(mirror.getId()).resolve("vid1.webp"), "img");

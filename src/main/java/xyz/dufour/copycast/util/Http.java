@@ -19,7 +19,8 @@ public final class Http {
     private Http() {
     }
 
-    public record Content(byte[] bytes, String contentType) {
+    /** A fetched body, its content type, and the final URL after redirects. */
+    public record Content(byte[] bytes, String contentType, String finalUrl) {
     }
 
     public static byte[] get(String url, Duration timeout) throws IOException, InterruptedException {
@@ -36,6 +37,8 @@ public final class Http {
         if (response.statusCode() / 100 != 2) {
             throw new IOException("HTTP " + response.statusCode() + " fetching " + url);
         }
-        return new Content(response.body(), response.headers().firstValue("Content-Type").orElse(""));
+        return new Content(response.body(),
+                response.headers().firstValue("Content-Type").orElse(""),
+                response.uri().toString());
     }
 }
