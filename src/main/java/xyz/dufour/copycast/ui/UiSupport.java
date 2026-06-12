@@ -12,6 +12,11 @@ import java.time.Instant;
 
 final class UiSupport {
 
+    /** From the jar manifest; "dev" when running unpackaged. */
+    static final String APP_VERSION = java.util.Optional
+            .ofNullable(UiSupport.class.getPackage().getImplementationVersion())
+            .orElse("dev");
+
     private UiSupport() {
     }
 
