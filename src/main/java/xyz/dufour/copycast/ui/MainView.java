@@ -22,6 +22,7 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.textfield.IntegerField;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.data.renderer.ComponentRenderer;
+import com.vaadin.flow.data.value.ValueChangeMode;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
@@ -272,9 +273,17 @@ public class MainView extends VerticalLayout {
             cap.setMax(result.episodeCount());
             cap.setValue(result.episodeCount());
         }
-        cap.setHelperText("The latest N Episodes are kept; the full backlog at the maximum.");
-        cap.setWidthFull();
-        content.add(cap);
+        // Compact: just wide enough for the number and the stepper buttons.
+        cap.setWidth("9em");
+        cap.setValueChangeMode(ValueChangeMode.EAGER);
+        // The explanation sits outside the field so it can use the full
+        // dialog width instead of wrapping in a 9em column.
+        Span capHelper = new Span();
+        capHelper.addClassName("copycast-stats");
+        Runnable updateCapHelper = () -> capHelper.setText(capText(cap.getValue(), result.episodeCount()));
+        cap.addValueChangeListener(e -> updateCapHelper.run());
+        updateCapHelper.run();
+        content.add(cap, capHelper);
         dialog.add(content);
         Button cancel = new Button("Cancel", e -> dialog.close());
         Button create = new Button("Create Mirror", e -> {
@@ -298,6 +307,14 @@ public class MainView extends VerticalLayout {
         create.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
         dialog.getFooter().add(cancel, create);
         dialog.open();
+    }
+
+    private static String capText(Integer value, int episodeCount) {
+        String tail = " and will keep adding new episodes as they are released, unless paused.";
+        if (value == null || (episodeCount > 0 && value >= episodeCount)) {
+            return "Will archive the full backlog" + tail;
+        }
+        return "Will archive the last " + value + (value == 1 ? " episode" : " episodes") + tail;
     }
 
     private void reload() {
