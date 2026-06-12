@@ -265,9 +265,14 @@ public class MainView extends VerticalLayout {
                     : result.description();
             content.add(new Paragraph(snippet));
         }
-        IntegerField cap = new IntegerField("Archive only the latest N episodes");
-        cap.setPlaceholder("empty = full backlog");
+        IntegerField cap = new IntegerField("Episodes to archive");
+        cap.setStepButtonsVisible(true);
         cap.setMin(1);
+        if (result.episodeCount() > 0) {
+            cap.setMax(result.episodeCount());
+            cap.setValue(result.episodeCount());
+        }
+        cap.setHelperText("The latest N Episodes are kept; the full backlog at the maximum.");
         cap.setWidthFull();
         content.add(cap);
         dialog.add(content);
@@ -275,7 +280,11 @@ public class MainView extends VerticalLayout {
         Button create = new Button("Create Mirror", e -> {
             dialog.close();
             try {
-                Mirror mirror = store.create(url, result, cap.getValue());
+                // Choosing the maximum means the full backlog: store no cap so
+                // future Episodes are archived too instead of rolling a window.
+                Integer chosenCap = cap.getValue() != null && cap.getValue() == result.episodeCount()
+                        ? null : cap.getValue();
+                Mirror mirror = store.create(url, result, chosenCap);
                 refresh.request(mirror.getId(), RefreshService.Trigger.MANUAL);
                 urlField.clear();
                 reload();
