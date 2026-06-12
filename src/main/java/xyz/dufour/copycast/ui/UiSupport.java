@@ -72,6 +72,25 @@ final class UiSupport {
         return ago.toDays() + " d ago";
     }
 
+    /**
+     * Feed descriptions often contain HTML; rendering it raw would be an XSS
+     * vector (it comes from external Sources), so reduce it to plain text.
+     */
+    static String stripHtml(String html) {
+        if (html == null) {
+            return "";
+        }
+        return html.replaceAll("<[^>]*>", " ")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&nbsp;", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
     static String humanSize(long bytes) {
         if (bytes < 1024) {
             return bytes + " B";

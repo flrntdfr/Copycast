@@ -2,18 +2,17 @@ package xyz.dufour.copycast.ui;
 
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.DetachEvent;
-import com.vaadin.flow.component.Text;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Anchor;
+import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Paragraph;
 import com.vaadin.flow.component.html.Span;
-import com.vaadin.flow.component.icon.Icon;
-import com.vaadin.flow.component.icon.VaadinIcon;
+import com.vaadin.flow.dom.Element;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -33,6 +32,7 @@ import xyz.dufour.copycast.refresh.RefreshService;
 
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 
 @Route("mirror")
 @PageTitle("Mirror — Copycast")
@@ -48,8 +48,8 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
     private String mirrorId;
     private final Grid<Episode> grid = new Grid<>();
     private final VerticalLayout header = new VerticalLayout();
-    private final AudioPlayer player = new AudioPlayer();
     private Registration pollRegistration;
+    private List<Episode> lastEpisodes;
 
     public MirrorDetailView(MirrorStore store, RefreshService refresh, FeedGenerator feeds) {
         this.store = store;
@@ -63,7 +63,6 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         configureGrid();
         add(grid);
         expand(grid);
-        add(player);
     }
 
     @Override
@@ -94,12 +93,39 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
             if (mirror == null) {
                 return new Span();
             }
-            Button play = new Button(new Icon(VaadinIcon.PLAY), e ->
-                    player.play(feeds.mediaUrl(mirror, episode.fileName()), episode.title()));
-            play.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
-            play.setTooltipText("Play");
-            return play;
-        })).setHeader("").setFlexGrow(0).setWidth("80px");
+            Anchor listen = new Anchor(feeds.mediaUrl(mirror, episode.fileName()), "Download");
+            listen.setTarget("_blank");
+            return listen;
+        })).setHeader("").setFlexGrow(0).setWidth("110px");
+
+        // Clicking a row expands it: description plus an inline audio player.
+        grid.setItemDetailsRenderer(new ComponentRenderer<>(this::episodeDetails));
+        grid.setDetailsVisibleOnClick(true);
+    }
+
+    private VerticalLayout episodeDetails(Episode episode) {
+        VerticalLayout details = new VerticalLayout();
+        details.setPadding(false);
+        details.setSpacing(false);
+        String description = UiSupport.stripHtml(episode.description());
+        if (!description.isEmpty()) {
+            Paragraph text = new Paragraph(description);
+            text.addClassName("copycast-description");
+            details.add(text);
+        }
+        Mirror mirror = store.find(mirrorId).orElse(null);
+        if (mirror != null) {
+            Div playerWrapper = new Div();
+            playerWrapper.setWidthFull();
+            Element audio = new Element("audio");
+            audio.setAttribute("controls", true);
+            audio.setAttribute("preload", "none");
+            audio.setAttribute("src", feeds.mediaUrl(mirror, episode.fileName()));
+            audio.getStyle().set("width", "100%");
+            playerWrapper.getElement().appendChild(audio);
+            details.add(playerWrapper);
+        }
+        return details;
     }
 
     private void reload() {
@@ -129,15 +155,13 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         }
         header.add(titleRow);
 
-        Paragraph description = new Paragraph();
-        String about = mirror.getDescription();
-        if (about != null && !about.isBlank()) {
-            description.add(new Text(about.length() > 300 ? about.substring(0, 300) + "… " : about + " "));
+        String description = UiSupport.stripHtml(mirror.getDescription());
+        if (!description.isEmpty()) {
+            Paragraph descriptionText = new Paragraph(description);
+            descriptionText.addClassName("copycast-description");
+            header.add(descriptionText);
         }
-        Anchor source = new Anchor(mirror.getSourceUrl(), "Source ↗");
-        source.setTarget("_blank");
-        description.add(source);
-        header.add(description);
+        header.add(new Paragraph("Source: " + mirror.getSourceUrl()));
 
         TextField feedUrl = new TextField("Mirror Feed (subscribe to this)");
         feedUrl.setValue(feeds.feedUrl(mirror));
@@ -159,6 +183,11 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         Button pause = new Button(mirror.isPaused() ? "Resume" : "Pause", e -> {
             mirror.setPaused(!mirror.isPaused());
             store.save(mirror);
+            if (mirror.isPaused()) {
+                refresh.cancel(mirrorId);
+            } else {
+                refresh.request(mirrorId, RefreshService.Trigger.MANUAL);
+            }
             reload();
         });
         Button retarget = new Button("Change Source URL…", e -> openRetargetDialog(mirror));
@@ -181,7 +210,13 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
             header.add(warning);
         }
 
-        grid.setItems(store.episodes(mirror));
+        // Only reset the grid when the data changed: resetting collapses the
+        // expanded row and stops an inline player mid-playback.
+        List<Episode> episodes = store.episodes(mirror);
+        if (!episodes.equals(lastEpisodes)) {
+            grid.setItems(episodes);
+            lastEpisodes = episodes;
+        }
     }
 
     private void openRetargetDialog(Mirror mirror) {

@@ -63,6 +63,7 @@ class RefreshServiceTest {
               prev="$a"
             done
             [ -n "$TEMPLATE" ] || exit 1
+            if [ -f "$DIR/slow" ]; then sleep 10; fi
             case "$TEMPLATE" in
               *'%(id)s'*)
                 while IFS= read -r id; do
@@ -148,7 +149,7 @@ class RefreshServiceTest {
     }
 
     private Mirror createRssMirror(String url, Integer cap) throws IOException {
-        return store.create(url, new ProbeResult(true, SourceType.RSS, "Stale Title",
+        return store.create(url, new ProbeResult(true, SourceType.RSS, "RSS", "Stale Title",
                 null, null, null, 0, null), cap);
     }
 
@@ -256,6 +257,35 @@ class RefreshServiceTest {
     }
 
     @Test
+    void pausingCancelsTheRunningRefreshAndKillsYtDlp() throws Exception {
+        // The fake yt-dlp sleeps 10s per download when this marker exists.
+        Files.writeString(dataDir.resolve("bin").resolve("slow"), "");
+        String url = serveFeed(rssFeed("Live Pod", "ep-1"), 200);
+        Mirror mirror = createRssMirror(url, null);
+
+        long start = System.currentTimeMillis();
+        service.request(mirror.getId(), RefreshService.Trigger.MANUAL);
+        while (!service.isBusy(mirror.getId()) && System.currentTimeMillis() - start < 2000) {
+            Thread.sleep(20);
+        }
+        Thread.sleep(300);
+
+        Mirror paused = store.find(mirror.getId()).orElseThrow();
+        paused.setPaused(true);
+        store.save(paused);
+        service.cancel(mirror.getId());
+
+        Mirror after = awaitRefresh(mirror.getId(), null);
+        long elapsed = System.currentTimeMillis() - start;
+        // Well under the fake download's 10s sleep: the process was killed.
+        assertTrue(elapsed < 8000, "refresh should end quickly after cancel, took " + elapsed + " ms");
+        assertTrue(store.findAudio(mirror.getId(), Ids.episodeKey("ep-1")).isEmpty());
+        assertNull(after.getLastSuccessAt());
+        assertNotNull(after.getLastError());
+        assertTrue(after.getLastError().contains("Paused"));
+    }
+
+    @Test
     void scheduledScanSkipsPausedMirrors() throws Exception {
         Mirror mirror = createRssMirror("http://127.0.0.1:1/feed.xml", null);
         mirror.setPaused(true);
@@ -276,7 +306,7 @@ class RefreshServiceTest {
                         + "\"entries\":[{\"id\":\"vid1\"},{\"id\":\"vid2\"}]}");
         Files.writeString(bin.resolve("ids.txt"), "vid1\nvid2\n");
         Mirror mirror = store.create("https://yt.example/c/chan",
-                new ProbeResult(true, SourceType.YTDLP, "Old", null, null, null, 2, null), null);
+                new ProbeResult(true, SourceType.YTDLP, "YouTube", "Old", null, null, null, 2, null), null);
 
         service.request(mirror.getId(), RefreshService.Trigger.MANUAL);
         Mirror after = awaitRefresh(mirror.getId(), null);
