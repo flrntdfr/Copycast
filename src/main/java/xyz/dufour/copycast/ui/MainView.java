@@ -232,32 +232,39 @@ public class MainView extends VerticalLayout {
     }
 
     private void startProbe() {
-        String url = urlField.getValue() == null ? "" : urlField.getValue().trim();
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            notifyError("Please enter an http(s) URL");
+        String input = urlField.getValue() == null ? "" : urlField.getValue().trim();
+        if (input.isEmpty()) {
+            notifyError("Please enter a URL");
             return;
         }
-        var existing = store.findBySourceUrl(url);
-        if (existing.isPresent()) {
-            Notification.show("Already mirrored as \"" + existing.get().displayTitle() + "\"",
-                    4000, Notification.Position.BOTTOM_START);
+        // Cheap exact-match dedup before probing; the authoritative check
+        // runs afterwards against the resolved canonical URL.
+        if (notifyIfAlreadyMirrored(input)) {
             return;
         }
         mirrorButton.setEnabled(false);
         probing.setVisible(true);
         UI ui = UI.getCurrent();
         CompletableFuture.runAsync(() -> {
-            ProbeResult result = probe.probe(url);
+            ProbeResult result = probe.probe(input);
             ui.access(() -> {
                 mirrorButton.setEnabled(true);
                 probing.setVisible(false);
-                if (result.supported()) {
-                    openCreateDialog(url, result);
-                } else {
+                if (!result.supported()) {
                     notifyError(result.error());
+                } else if (!notifyIfAlreadyMirrored(result.url())) {
+                    openCreateDialog(result.url(), result);
                 }
             });
         });
+    }
+
+    private boolean notifyIfAlreadyMirrored(String sourceUrl) {
+        var existing = store.findBySourceUrl(sourceUrl);
+        existing.ifPresent(mirror -> Notification.show(
+                "Already mirrored as \"" + mirror.displayTitle() + "\"",
+                4000, Notification.Position.BOTTOM_START));
+        return existing.isPresent();
     }
 
     private void openCreateDialog(String url, ProbeResult result) {

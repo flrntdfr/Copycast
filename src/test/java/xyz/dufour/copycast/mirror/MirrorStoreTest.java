@@ -36,7 +36,7 @@ class MirrorStoreTest {
     }
 
     private static ProbeResult rssProbe(String title) {
-        return new ProbeResult(true, SourceType.RSS, "RSS", title, "Desc",
+        return new ProbeResult(true, "https://pod.example/feed.xml", SourceType.RSS, "RSS", title, "Desc",
                 "https://img.example/c.png", "Jane", 3, null);
     }
 
@@ -301,7 +301,7 @@ class MirrorStoreTest {
     }
 
     private static ProbeResult ytdlpProbe() {
-        return new ProbeResult(true, SourceType.YTDLP, "YouTube", "Chan", "d", null, "Up", 2, null);
+        return new ProbeResult(true, "https://yt.example/c/chan", SourceType.YTDLP, "YouTube", "Chan", "d", null, "Up", 2, null);
     }
 
     private static Episode byKey(List<Episode> episodes, String key) {

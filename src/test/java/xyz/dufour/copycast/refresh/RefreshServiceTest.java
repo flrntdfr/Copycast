@@ -149,7 +149,7 @@ class RefreshServiceTest {
     }
 
     private Mirror createRssMirror(String url, Integer cap) throws IOException {
-        return store.create(url, new ProbeResult(true, SourceType.RSS, "RSS", "Stale Title",
+        return store.create(url, new ProbeResult(true, url, SourceType.RSS, "RSS", "Stale Title",
                 null, null, null, 0, null), cap);
     }
 
@@ -306,7 +306,7 @@ class RefreshServiceTest {
                         + "\"entries\":[{\"id\":\"vid1\"},{\"id\":\"vid2\"}]}");
         Files.writeString(bin.resolve("ids.txt"), "vid1\nvid2\n");
         Mirror mirror = store.create("https://yt.example/c/chan",
-                new ProbeResult(true, SourceType.YTDLP, "YouTube", "Old", null, null, null, 2, null), null);
+                new ProbeResult(true, "https://yt.example/c/chan", SourceType.YTDLP, "YouTube", "Old", null, null, null, 2, null), null);
 
         service.request(mirror.getId(), RefreshService.Trigger.MANUAL);
         Mirror after = awaitRefresh(mirror.getId(), null);
