@@ -300,11 +300,69 @@ class MirrorStoreTest {
         assertNull(MirrorStore.infoTimestamp(mapper.readTree("{}")));
     }
 
+    @Test
+    void catalogMergesListedAvailableAndDelisted() throws IOException {
+        Mirror mirror = store.create("https://pod.example/feed.xml", rssProbe("A"), null);
+        // Source advertises g1 and g2; g1 is archived, g2 is not. An archived
+        // gOld is no longer advertised.
+        String k1 = Ids.episodeKey("g1");
+        String kOld = Ids.episodeKey("gOld");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(k1 + ".mp3"), "x");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(k1 + ".item.xml"),
+                "<item><title>One</title><guid>g1</guid>"
+                        + "<pubDate>Wed, 03 Jun 2026 10:00:00 GMT</pubDate></item>");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(kOld + ".mp3"), "x");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(kOld + ".item.xml"),
+                "<item><title>Old</title><guid>gOld</guid>"
+                        + "<pubDate>Wed, 01 Jan 2020 10:00:00 GMT</pubDate></item>");
+        Files.writeString(store.feedXml(mirror.getId()), """
+                <rss version="2.0"><channel><title>A</title>
+                  <item><title>One</title><guid>g1</guid>
+                    <pubDate>Wed, 03 Jun 2026 10:00:00 GMT</pubDate>
+                    <enclosure url="https://pod.example/1.mp3"/></item>
+                  <item><title>Two</title><guid>g2</guid><description>Second</description>
+                    <pubDate>Tue, 02 Jun 2026 10:00:00 GMT</pubDate>
+                    <enclosure url="https://pod.example/2.mp3"/></item>
+                </channel></rss>
+                """);
+
+        List<CatalogItem> catalog = store.catalog(mirror);
+        assertEquals(3, catalog.size());
+        assertEquals(CatalogItem.State.LISTED, catalogByKey(catalog, k1).state());
+        assertEquals(CatalogItem.State.AVAILABLE, catalogByKey(catalog, Ids.episodeKey("g2")).state());
+        assertEquals(CatalogItem.State.DELISTED, catalogByKey(catalog, kOld).state());
+        // Available item carries Source metadata for display.
+        CatalogItem available = catalogByKey(catalog, Ids.episodeKey("g2"));
+        assertEquals("Two", available.title());
+        assertEquals("Second", available.description());
+        assertNull(available.audioFileName());
+        // Newest first.
+        assertEquals(k1, catalog.getFirst().key());
+    }
+
+    @Test
+    void catalogIsArchivedOnlyBeforeAnyFeedIsStored() throws IOException {
+        Mirror mirror = store.create("https://pod.example/feed.xml", rssProbe("A"), null);
+        String k = Ids.episodeKey("g1");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(k + ".mp3"), "x");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(k + ".item.xml"),
+                "<item><title>One</title><guid>g1</guid></item>");
+        List<CatalogItem> catalog = store.catalog(mirror);
+        assertEquals(1, catalog.size());
+        // The Source listing is unknown before the first fetch, so archived
+        // items are treated as Listed rather than wrongly flagged Delisted.
+        assertEquals(CatalogItem.State.LISTED, catalog.getFirst().state());
+    }
+
     private static ProbeResult ytdlpProbe() {
         return new ProbeResult(true, "https://yt.example/c/chan", SourceType.YTDLP, "YouTube", "Chan", "d", null, "Up", 2, null);
     }
 
     private static Episode byKey(List<Episode> episodes, String key) {
         return episodes.stream().filter(e -> e.key().equals(key)).findFirst().orElseThrow();
+    }
+
+    private static CatalogItem catalogByKey(List<CatalogItem> catalog, String key) {
+        return catalog.stream().filter(i -> i.key().equals(key)).findFirst().orElseThrow();
     }
 }

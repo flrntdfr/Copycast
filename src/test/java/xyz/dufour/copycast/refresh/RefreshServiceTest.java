@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import xyz.dufour.copycast.TestSupport;
+import xyz.dufour.copycast.mirror.CatalogItem;
 import xyz.dufour.copycast.mirror.Episode;
 import xyz.dufour.copycast.mirror.Mirror;
 import xyz.dufour.copycast.mirror.MirrorStore;
@@ -207,6 +208,33 @@ class RefreshServiceTest {
 
         assertEquals(1, store.episodes(store.find(mirror.getId()).orElseThrow()).size());
         assertTrue(store.findAudio(mirror.getId(), Ids.episodeKey("ep-1")).isPresent());
+    }
+
+    @Test
+    void requestEpisodeArchivesOneBackCatalogItemBeyondTheCap() throws Exception {
+        String url = serveFeed(rssFeed("Live Pod", "ep-1", "ep-2", "ep-3"), 200);
+        Mirror mirror = createRssMirror(url, 1);
+
+        // Initial capped refresh archives only ep-1.
+        service.request(mirror.getId(), RefreshService.Trigger.MANUAL);
+        Mirror after = awaitRefresh(mirror.getId(), null);
+        assertEquals(CatalogItem.State.AVAILABLE,
+                catalogState(store.catalog(after), Ids.episodeKey("ep-3")));
+
+        // The user adds ep-3 from the back catalog.
+        service.requestEpisode(mirror.getId(), Ids.episodeKey("ep-3"));
+        Mirror added = awaitRefresh(mirror.getId(), after.getLastAttemptAt());
+
+        assertTrue(store.findAudio(mirror.getId(), Ids.episodeKey("ep-3")).isPresent());
+        // ep-3 now Listed; ep-2 still merely Available.
+        List<CatalogItem> catalog = store.catalog(added);
+        assertEquals(CatalogItem.State.LISTED, catalogState(catalog, Ids.episodeKey("ep-3")));
+        assertEquals(CatalogItem.State.AVAILABLE, catalogState(catalog, Ids.episodeKey("ep-2")));
+        assertNull(added.getLastError());
+    }
+
+    private static CatalogItem.State catalogState(List<CatalogItem> catalog, String key) {
+        return catalog.stream().filter(i -> i.key().equals(key)).findFirst().orElseThrow().state();
     }
 
     @Test

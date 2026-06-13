@@ -99,6 +99,101 @@ public class RefreshService {
     }
 
     /**
+     * Archives a single back-catalog Episode on demand, identified by its
+     * key. Queued on the same serial worker as Refreshes and skipped if the
+     * Mirror is already busy. Once archived, the Episode joins the Mirror
+     * Feed and survives future capped Refreshes.
+     */
+    public void requestEpisode(String mirrorId, String episodeKey) {
+        if (store.find(mirrorId).isEmpty() || !busy.add(mirrorId)) {
+            return;
+        }
+        queue.submit(() -> {
+            try {
+                archiveOne(mirrorId, episodeKey);
+            } finally {
+                busy.remove(mirrorId);
+                cancelRequested.remove(mirrorId);
+                runningProcesses.remove(mirrorId);
+            }
+        });
+    }
+
+    private void archiveOne(String mirrorId, String episodeKey) {
+        Mirror mirror = store.find(mirrorId).orElse(null);
+        if (mirror == null) {
+            return;
+        }
+        log.info("Archiving episode {} of {} ({})", episodeKey, mirror.displayTitle(), mirrorId);
+        mirror.setLastAttemptAt(Instant.now());
+        try {
+            String failure = mirror.getType() == SourceType.RSS
+                    ? archiveRssEpisode(mirror, episodeKey)
+                    : archiveYtDlpEpisode(mirror, episodeKey);
+            if (failure == null) {
+                mirror.setLastSuccessAt(Instant.now());
+                mirror.setLastError(null);
+            } else {
+                mirror.setLastError(failure);
+            }
+        } catch (Exception e) {
+            String message = e.getMessage() != null ? e.getMessage() : e.toString();
+            log.warn("Archiving episode {} of {} failed: {}", episodeKey, mirrorId, message);
+            mirror.setLastError(message);
+        }
+        store.save(mirror);
+    }
+
+    /** Re-fetches the Source feed, finds the item by key, and archives it. */
+    private String archiveRssEpisode(Mirror mirror, String episodeKey)
+            throws IOException, InterruptedException {
+        byte[] xml = Http.get(mirror.getSourceUrl(), Duration.ofMinutes(2));
+        Document doc = XmlUtil.parse(xml);
+        Rss.Channel channel = Rss.parse(doc)
+                .orElseThrow(() -> new IOException("Source is not a valid RSS feed anymore"));
+        // Refresh the stored feed so the catalog reflects the Source.
+        writeAtomically(store.feedXml(mirror.getId()), xml);
+        fetchArtworkIfMissing(mirror.getId(), MirrorStore.COVER, channel.imageUrl());
+        for (Element item : channel.items()) {
+            String identity = Rss.itemIdentity(item);
+            if (identity != null && Ids.episodeKey(identity).equals(episodeKey)) {
+                return archiveRssItem(mirror, item);
+            }
+        }
+        return "Episode is no longer listed by the Source";
+    }
+
+    /** Finds the entry's URL in the stored listing and downloads just it. */
+    private String archiveYtDlpEpisode(Mirror mirror, String episodeKey)
+            throws IOException, InterruptedException {
+        Path listing = store.listingJson(mirror.getId());
+        if (!Files.isRegularFile(listing)) {
+            return "No listing available yet; refresh first";
+        }
+        JsonNode root = mapper.readTree(Files.readAllBytes(listing));
+        String url = null;
+        for (JsonNode entry : YtListing.leafEntries(root)) {
+            if (episodeKey.equals(entry.path("id").asString(null))) {
+                url = entry.path("url").asString(entry.path("webpage_url").asString(null));
+                break;
+            }
+        }
+        if (url == null) {
+            return "Episode is no longer listed by the Source";
+        }
+        Path episodesDir = store.episodesDir(mirror.getId());
+        Files.createDirectories(episodesDir);
+        YtDlp.Result download = runCancellable(mirror.getId(), Duration.ofHours(2), List.of(
+                "--no-progress", "--no-warnings", "--ignore-errors",
+                "--download-archive", store.archiveFile(mirror.getId()).toString(),
+                "-f", "bestaudio[ext=m4a]/bestaudio",
+                "-x", "--write-info-json", "--write-thumbnail", "--no-write-playlist-metafiles",
+                "-o", episodesDir.resolve("%(id)s.%(ext)s").toString(),
+                url));
+        return download.ok() ? null : "Download failed: " + download.stderrTail();
+    }
+
+    /**
      * Cancels an in-flight Refresh: the running yt-dlp process is terminated
      * (it leaves .part files and its download archive, so the next Refresh
      * resumes where it stopped). Used when a Mirror is paused mid-download.
@@ -180,47 +275,59 @@ public class RefreshService {
         if (mirror.getCap() != null && items.size() > mirror.getCap()) {
             items = items.subList(0, mirror.getCap());
         }
-        Path episodesDir = store.episodesDir(mirror.getId());
-        Files.createDirectories(episodesDir);
+        Files.createDirectories(store.episodesDir(mirror.getId()));
         int failures = 0;
         String lastFailure = null;
         for (Element item : items) {
             if (isCancelled(mirror.getId())) {
                 break;
             }
-            String identity = Rss.itemIdentity(item);
-            String enclosure = Rss.enclosureUrl(item);
-            if (identity == null || enclosure == null) {
-                continue;
+            String fail = archiveRssItem(mirror, item);
+            if (fail != null) {
+                failures++;
+                lastFailure = fail;
             }
-            String key = Ids.episodeKey(identity);
-            if (store.findAudio(mirror.getId(), key).isEmpty()) {
-                YtDlp.Result result = runCancellable(mirror.getId(), Duration.ofHours(2), List.of(
-                        "--no-progress", "--no-warnings",
-                        "--download-archive", store.archiveFile(mirror.getId()).toString(),
-                        // -x without --audio-format: enclosures that are already
-                        // audio are archived byte-identical, never re-encoded.
-                        "-x",
-                        "-o", episodesDir.resolve(key + ".%(ext)s").toString(),
-                        enclosure));
-                if (isCancelled(mirror.getId())) {
-                    break;
-                }
-                if (!result.ok() || store.findAudio(mirror.getId(), key).isEmpty()) {
-                    failures++;
-                    lastFailure = result.stderrTail();
-                    continue;
-                }
-            }
-            // Capture the item's metadata permanently at archive time so the
-            // Episode survives the Source dropping it (union semantics).
-            Path itemXml = episodesDir.resolve(key + ".item.xml");
-            if (!Files.exists(itemXml)) {
-                writeAtomically(itemXml, XmlUtil.serialize(item, true).getBytes(StandardCharsets.UTF_8));
-            }
-            fetchArtworkIfMissing(mirror.getId(), key, Rss.itemImageUrl(item));
         }
         return failures == 0 ? null : failures + " episode(s) failed, last error: " + lastFailure;
+    }
+
+    /**
+     * Archives one RSS item: downloads its enclosure if not already present,
+     * captures its metadata permanently (item.xml) so it survives the Source
+     * dropping it, and archives its artwork. Returns null on success (or a
+     * skip), else a short failure message.
+     */
+    private String archiveRssItem(Mirror mirror, Element item) throws IOException, InterruptedException {
+        String identity = Rss.itemIdentity(item);
+        String enclosure = Rss.enclosureUrl(item);
+        if (identity == null || enclosure == null) {
+            return null;
+        }
+        String key = Ids.episodeKey(identity);
+        Path episodesDir = store.episodesDir(mirror.getId());
+        Files.createDirectories(episodesDir);
+        if (store.findAudio(mirror.getId(), key).isEmpty()) {
+            YtDlp.Result result = runCancellable(mirror.getId(), Duration.ofHours(2), List.of(
+                    "--no-progress", "--no-warnings",
+                    "--download-archive", store.archiveFile(mirror.getId()).toString(),
+                    // -x without --audio-format: enclosures that are already
+                    // audio are archived byte-identical, never re-encoded.
+                    "-x",
+                    "-o", episodesDir.resolve(key + ".%(ext)s").toString(),
+                    enclosure));
+            if (isCancelled(mirror.getId())) {
+                return null;
+            }
+            if (!result.ok() || store.findAudio(mirror.getId(), key).isEmpty()) {
+                return result.stderrTail();
+            }
+        }
+        Path itemXml = episodesDir.resolve(key + ".item.xml");
+        if (!Files.exists(itemXml)) {
+            writeAtomically(itemXml, XmlUtil.serialize(item, true).getBytes(StandardCharsets.UTF_8));
+        }
+        fetchArtworkIfMissing(mirror.getId(), key, Rss.itemImageUrl(item));
+        return null;
     }
 
     /** Returns a warning summary, or null if everything succeeded. */
