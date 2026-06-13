@@ -3,6 +3,8 @@ package xyz.dufour.copycast.mirror;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * The descriptor of a Mirror, persisted as mirror.json in the Mirror's data
@@ -27,6 +29,7 @@ public class Mirror {
     private Instant lastAttemptAt;
     private Instant lastSuccessAt;
     private String lastError;
+    private Set<String> deletedKeys = new HashSet<>();
 
     public String getId() {
         return id;
@@ -155,6 +158,15 @@ public class Mirror {
 
     public void setLastError(String lastError) {
         this.lastError = lastError;
+    }
+
+    /** Episode keys the user deleted; a Refresh must not silently re-fetch them. */
+    public Set<String> getDeletedKeys() {
+        return deletedKeys;
+    }
+
+    public void setDeletedKeys(Set<String> deletedKeys) {
+        this.deletedKeys = deletedKeys != null ? deletedKeys : new HashSet<>();
     }
 
     public String displayTitle() {
