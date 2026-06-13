@@ -56,10 +56,29 @@ class MirrorStoreTest {
     }
 
     @Test
-    void findBySourceUrlMatchesExactly() throws IOException {
+    void findBySourceMatchesTheSameFeed() throws IOException {
         store.create("https://pod.example/feed.xml", rssProbe("A"), null);
-        assertTrue(store.findBySourceUrl("https://pod.example/feed.xml").isPresent());
-        assertTrue(store.findBySourceUrl("https://pod.example/other.xml").isEmpty());
+        assertTrue(store.findBySource("https://pod.example/feed.xml").isPresent());
+        assertTrue(store.findBySource("https://pod.example/other.xml").isEmpty());
+    }
+
+    @Test
+    void findBySourceIgnoresTrivialUrlVariants() throws IOException {
+        store.create("https://pod.example/feed.xml", rssProbe("A"), null);
+        // Scheme, www, host case, trailing slash and tracking params must not
+        // be treated as different Sources.
+        assertTrue(store.findBySource("http://pod.example/feed.xml").isPresent());
+        assertTrue(store.findBySource("https://www.POD.example/feed.xml").isPresent());
+        assertTrue(store.findBySource("https://pod.example/feed.xml/").isPresent());
+        assertTrue(store.findBySource("https://pod.example/feed.xml?utm_source=x").isPresent());
+        // A genuinely different path is still distinct.
+        assertTrue(store.findBySource("https://pod.example/feed2.xml").isEmpty());
+    }
+
+    @Test
+    void createStoresTheDedupKey() throws IOException {
+        Mirror mirror = store.create("https://WWW.pod.example/feed.xml/", rssProbe("A"), null);
+        assertEquals("pod.example/feed.xml", store.find(mirror.getId()).orElseThrow().getDedupKey());
     }
 
     @Test

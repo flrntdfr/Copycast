@@ -14,6 +14,7 @@ public class Mirror {
 
     private String id;
     private String sourceUrl;
+    private String dedupKey;
     private SourceType type;
     private String service;
     private String title;
@@ -41,6 +42,15 @@ public class Mirror {
 
     public void setSourceUrl(String sourceUrl) {
         this.sourceUrl = sourceUrl;
+    }
+
+    /** Canonical comparison key for duplicate detection (see util.Urls). */
+    public String getDedupKey() {
+        return dedupKey;
+    }
+
+    public void setDedupKey(String dedupKey) {
+        this.dedupKey = dedupKey;
     }
 
     public SourceType getType() {
