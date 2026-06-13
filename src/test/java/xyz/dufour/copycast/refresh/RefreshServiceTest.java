@@ -238,6 +238,34 @@ class RefreshServiceTest {
     }
 
     @Test
+    void deletedEpisodeIsNotResurrectedByRefreshUntilReAdded() throws Exception {
+        String url = serveFeed(rssFeed("Live Pod", "ep-1", "ep-2"), 200);
+        Mirror mirror = createRssMirror(url, null);
+        service.request(mirror.getId(), RefreshService.Trigger.MANUAL);
+        Mirror after = awaitRefresh(mirror.getId(), null);
+        String key = Ids.episodeKey("ep-1");
+        assertTrue(store.findAudio(mirror.getId(), key).isPresent());
+
+        // Delete ep-1; it's still listed by the Source.
+        store.deleteEpisode(after, key);
+        assertTrue(store.findAudio(mirror.getId(), key).isEmpty());
+        assertEquals(CatalogItem.State.AVAILABLE,
+                catalogState(store.catalog(store.find(mirror.getId()).orElseThrow()), key));
+
+        // A refresh must NOT bring it back.
+        service.request(mirror.getId(), RefreshService.Trigger.MANUAL);
+        awaitRefresh(mirror.getId(), after.getLastAttemptAt());
+        assertTrue(store.findAudio(mirror.getId(), key).isEmpty());
+
+        // Re-adding it explicitly does.
+        Mirror beforeAdd = store.find(mirror.getId()).orElseThrow();
+        service.requestEpisode(mirror.getId(), key);
+        awaitRefresh(mirror.getId(), beforeAdd.getLastAttemptAt());
+        assertTrue(store.findAudio(mirror.getId(), key).isPresent());
+        assertFalse(store.find(mirror.getId()).orElseThrow().getDeletedKeys().contains(key));
+    }
+
+    @Test
     void failedRefreshRecordsTheErrorAndNeverDegradesTheArchive() throws Exception {
         // Port 1 on localhost: connection refused immediately.
         Mirror mirror = createRssMirror("http://127.0.0.1:1/feed.xml", null);

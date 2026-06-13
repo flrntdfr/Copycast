@@ -76,6 +76,32 @@ class MirrorStoreTest {
     }
 
     @Test
+    void deleteEpisodeRemovesFilesAndMarksDeletedButKeepsArchive() throws IOException {
+        Mirror mirror = store.create("https://yt.example/c/chan", ytdlpProbe(), null);
+        String key = "vid1";
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(key + ".m4a"), "audio");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(key + ".info.json"),
+                "{\"id\":\"vid1\",\"title\":\"V\"}");
+        Files.writeString(store.episodesDir(mirror.getId()).resolve(key + ".webp"), "img");
+        Files.writeString(store.archiveFile(mirror.getId()), "youtube vid1\nyoutube vid2\n");
+
+        store.deleteEpisode(mirror, key);
+
+        assertTrue(store.findAudio(mirror.getId(), key).isEmpty());
+        assertTrue(store.findArtwork(mirror.getId(), key).isEmpty());
+        assertFalse(Files.exists(store.episodesDir(mirror.getId()).resolve(key + ".info.json")));
+        assertTrue(store.find(mirror.getId()).orElseThrow().getDeletedKeys().contains(key));
+        // The archive entry is kept on delete so a yt-dlp refresh won't
+        // resurrect it; re-adding strips it via forgetInArchive.
+        assertTrue(Files.readString(store.archiveFile(mirror.getId())).contains("vid1"));
+
+        store.forgetInArchive(mirror.getId(), key);
+        String archive = Files.readString(store.archiveFile(mirror.getId()));
+        assertFalse(archive.contains("vid1"));
+        assertTrue(archive.contains("vid2"));
+    }
+
+    @Test
     void createStoresTheDedupKey() throws IOException {
         Mirror mirror = store.create("https://WWW.pod.example/feed.xml/", rssProbe("A"), null);
         assertEquals("pod.example/feed.xml", store.find(mirror.getId()).orElseThrow().getDedupKey());

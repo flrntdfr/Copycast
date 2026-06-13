@@ -13,6 +13,9 @@ import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Paragraph;
 import com.vaadin.flow.component.html.Span;
+import com.vaadin.flow.component.icon.Icon;
+import com.vaadin.flow.component.icon.VaadinIcon;
+import com.vaadin.flow.component.progressbar.ProgressBar;
 import com.vaadin.flow.dom.Element;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
@@ -58,6 +61,7 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
     private Registration pollRegistration;
     private List<CatalogItem> lastCatalog;
     private HeaderSnapshot lastHeader;
+    private String lastDownloadingKey;
 
     public MirrorDetailView(MirrorStore store, RefreshService refresh, FeedGenerator feeds) {
         this.store = store;
@@ -81,6 +85,7 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         // A different Mirror invalidates the render snapshots.
         this.lastHeader = null;
         this.lastCatalog = null;
+        this.lastDownloadingKey = null;
         if (store.find(parameter).isEmpty()) {
             event.forwardTo(MainView.class);
             return;
@@ -93,12 +98,12 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         grid.addColumn(CatalogItem::title).setHeader("Episode").setFlexGrow(3);
         grid.addColumn(i -> i.pubDate() != null ? DATE.format(i.pubDate()) : "")
                 .setHeader("Published").setFlexGrow(0).setWidth("130px");
-        grid.addColumn(i -> i.archived() ? UiSupport.humanSize(i.sizeBytes()) : "")
+        grid.addColumn(new ComponentRenderer<>(this::sizeCell))
                 .setHeader("Size").setFlexGrow(0).setWidth("110px");
         grid.addColumn(new ComponentRenderer<>(this::statusBadge))
                 .setHeader("Status").setFlexGrow(0).setWidth("160px");
         grid.addColumn(new ComponentRenderer<>(this::rowAction))
-                .setHeader("").setFlexGrow(0).setWidth("130px");
+                .setHeader("").setFlexGrow(0).setWidth("160px");
 
         // Clicking a row expands it: description, artwork, and — once
         // archived — an inline audio player.
@@ -122,6 +127,16 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         return badge;
     }
 
+    /** Size, or an indeterminate progress bar while this Episode downloads. */
+    private com.vaadin.flow.component.Component sizeCell(CatalogItem item) {
+        if (refresh.isEpisodeDownloading(mirrorId, item.key())) {
+            ProgressBar bar = new ProgressBar();
+            bar.setIndeterminate(true);
+            return bar;
+        }
+        return new Span(item.archived() ? UiSupport.humanSize(item.sizeBytes()) : "");
+    }
+
     private com.vaadin.flow.component.Component rowAction(CatalogItem item) {
         Mirror mirror = store.find(mirrorId).orElse(null);
         if (mirror == null) {
@@ -130,7 +145,14 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         if (item.archived()) {
             Anchor download = new Anchor(feeds.mediaUrl(mirror, item.audioFileName()), "Download");
             download.setTarget("_blank");
-            return download;
+            Button delete = new Button(new Icon(VaadinIcon.TRASH), e -> confirmDeleteEpisode(mirror, item));
+            delete.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY,
+                    ButtonVariant.LUMO_ERROR);
+            delete.setTooltipText("Delete this episode's files");
+            HorizontalLayout actions = new HorizontalLayout(download, delete);
+            actions.setAlignItems(FlexComponent.Alignment.CENTER);
+            actions.setSpacing(true);
+            return actions;
         }
         Button add = new Button("Add to feed", e -> {
             if (refresh.isBusy(mirrorId)) {
@@ -145,6 +167,19 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         });
         add.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
         return add;
+    }
+
+    private void confirmDeleteEpisode(Mirror mirror, CatalogItem item) {
+        UiSupport.confirm("Delete episode",
+                "Delete the archived files for \"" + item.title() + "\"? It leaves the "
+                        + "Mirror Feed. If the Source still lists it, it stays available to re-add "
+                        + "and won't be re-downloaded automatically.",
+                "Delete", () -> {
+                    store.deleteEpisode(mirror, item.key());
+                    Notification.show("Deleted \"" + item.title() + "\"",
+                            3000, Notification.Position.BOTTOM_START);
+                    reload();
+                });
     }
 
     private VerticalLayout itemDetails(CatalogItem item) {
@@ -220,6 +255,24 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
             lastCatalog = catalog;
             updateCatalogStats(catalog);
         }
+
+        // When the on-demand download starts or finishes without otherwise
+        // changing the catalog, refresh just the affected rows so the Size
+        // cell flips between its progress bar and the size.
+        String downloading = refresh.downloadingEpisodeKey(mirrorId);
+        if (!java.util.Objects.equals(downloading, lastDownloadingKey)) {
+            refreshRow(lastDownloadingKey);
+            refreshRow(downloading);
+            lastDownloadingKey = downloading;
+        }
+    }
+
+    private void refreshRow(String key) {
+        if (key == null || lastCatalog == null) {
+            return;
+        }
+        lastCatalog.stream().filter(i -> i.key().equals(key)).findFirst()
+                .ifPresent(item -> grid.getDataProvider().refreshItem(item));
     }
 
     private void updateCatalogStats(List<CatalogItem> catalog) {

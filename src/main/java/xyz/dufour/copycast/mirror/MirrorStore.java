@@ -199,6 +199,52 @@ public class MirrorStore {
     }
 
     /**
+     * Removes a single archived Episode's files (audio, sidecars, artwork)
+     * and records the key as deleted so a Refresh won't silently re-download
+     * it while it is still listed by the Source. Re-adding it clears that.
+     */
+    public void deleteEpisode(Mirror mirror, String key) {
+        Path episodes = episodesDir(mirror.getId());
+        if (Files.isDirectory(episodes)) {
+            try (Stream<Path> files = Files.list(episodes)) {
+                for (Path file : files.toList()) {
+                    String name = file.getFileName().toString();
+                    int dot = name.indexOf('.');
+                    String base = dot < 0 ? name : name.substring(0, dot);
+                    if (base.equals(key)) {
+                        Files.deleteIfExists(file);
+                    }
+                }
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        mirror.getDeletedKeys().add(key);
+        save(mirror);
+        clearRuntimeCaches();
+    }
+
+    /** Removes the download-archive entry for a yt-dlp id so it can be re-fetched. */
+    public void forgetInArchive(String id, String key) {
+        Path archive = archiveFile(id);
+        if (!Files.isRegularFile(archive)) {
+            return;
+        }
+        try {
+            List<String> kept = new ArrayList<>();
+            for (String line : Files.readAllLines(archive)) {
+                String[] parts = line.trim().split("\\s+");
+                if (parts.length == 0 || !parts[parts.length - 1].equals(key)) {
+                    kept.add(line);
+                }
+            }
+            Files.write(archive, kept);
+        } catch (IOException e) {
+            log.warn("Could not rewrite archive for {}: {}", id, e.getMessage());
+        }
+    }
+
+    /**
      * Basename of the archived channel artwork. Cannot collide with episode
      * keys (16-hex digests or yt-dlp video ids).
      */

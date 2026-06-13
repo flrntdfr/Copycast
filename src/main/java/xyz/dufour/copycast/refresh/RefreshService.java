@@ -61,6 +61,8 @@ public class RefreshService {
     private final Set<String> busy = ConcurrentHashMap.newKeySet();
     private final Set<String> cancelRequested = ConcurrentHashMap.newKeySet();
     private final java.util.Map<String, Process> runningProcesses = new ConcurrentHashMap<>();
+    // mirrorId -> the single Episode key currently being archived on demand.
+    private final java.util.Map<String, String> downloadingEpisode = new ConcurrentHashMap<>();
 
     public RefreshService(MirrorStore store, YtDlp ytDlp, ObjectMapper mapper, CopycastProperties props) {
         this.store = store;
@@ -71,6 +73,15 @@ public class RefreshService {
 
     public boolean isBusy(String mirrorId) {
         return busy.contains(mirrorId);
+    }
+
+    /** The Episode key currently downloading on demand for this Mirror, if any. */
+    public boolean isEpisodeDownloading(String mirrorId, String episodeKey) {
+        return episodeKey.equals(downloadingEpisode.get(mirrorId));
+    }
+
+    public String downloadingEpisodeKey(String mirrorId) {
+        return downloadingEpisode.get(mirrorId);
     }
 
     public void request(String mirrorId, Trigger trigger) {
@@ -108,10 +119,13 @@ public class RefreshService {
         if (store.find(mirrorId).isEmpty() || !busy.add(mirrorId)) {
             return;
         }
+        // Registered synchronously so the UI can show the row's progress at once.
+        downloadingEpisode.put(mirrorId, episodeKey);
         queue.submit(() -> {
             try {
                 archiveOne(mirrorId, episodeKey);
             } finally {
+                downloadingEpisode.remove(mirrorId);
                 busy.remove(mirrorId);
                 cancelRequested.remove(mirrorId);
                 runningProcesses.remove(mirrorId);
@@ -125,6 +139,11 @@ public class RefreshService {
             return;
         }
         log.info("Archiving episode {} of {} ({})", episodeKey, mirror.displayTitle(), mirrorId);
+        // Re-adding clears any prior deletion and lets yt-dlp re-fetch it.
+        if (mirror.getDeletedKeys().remove(episodeKey)) {
+            store.save(mirror);
+        }
+        store.forgetInArchive(mirrorId, episodeKey);
         mirror.setLastAttemptAt(Instant.now());
         try {
             String failure = mirror.getType() == SourceType.RSS
@@ -304,12 +323,19 @@ public class RefreshService {
             return null;
         }
         String key = Ids.episodeKey(identity);
+        // The user deleted this Episode; don't silently re-fetch it while it
+        // is still listed. Re-adding clears the marker first.
+        if (mirror.getDeletedKeys().contains(key)) {
+            return null;
+        }
         Path episodesDir = store.episodesDir(mirror.getId());
         Files.createDirectories(episodesDir);
         if (store.findAudio(mirror.getId(), key).isEmpty()) {
+            // No --download-archive here: the audio file's presence is the
+            // dedup check, which keeps delete-then-re-add working (the
+            // archive can't be keyed by our episode key for RSS enclosures).
             YtDlp.Result result = runCancellable(mirror.getId(), Duration.ofHours(2), List.of(
                     "--no-progress", "--no-warnings",
-                    "--download-archive", store.archiveFile(mirror.getId()).toString(),
                     // -x without --audio-format: enclosures that are already
                     // audio are archived byte-identical, never re-encoded.
                     "-x",
