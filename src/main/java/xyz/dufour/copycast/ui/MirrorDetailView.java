@@ -15,7 +15,6 @@ import com.vaadin.flow.component.html.Paragraph;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.Icon;
 import com.vaadin.flow.component.icon.VaadinIcon;
-import com.vaadin.flow.component.progressbar.ProgressBar;
 import com.vaadin.flow.dom.Element;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
@@ -127,12 +126,13 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         return badge;
     }
 
-    /** Size, or an indeterminate progress bar while this Episode downloads. */
+    /** Size, or a spinner while this Episode downloads. */
     private com.vaadin.flow.component.Component sizeCell(CatalogItem item) {
         if (refresh.isEpisodeDownloading(mirrorId, item.key())) {
-            ProgressBar bar = new ProgressBar();
-            bar.setIndeterminate(true);
-            return bar;
+            Div spinner = new Div();
+            spinner.addClassName("copycast-spinner");
+            spinner.getElement().setAttribute("title", "Downloading…");
+            return spinner;
         }
         return new Span(item.archived() ? UiSupport.humanSize(item.sizeBytes()) : "");
     }
@@ -188,15 +188,6 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         details.setSpacing(false);
 
         Mirror mirror = store.find(mirrorId).orElse(null);
-        String image = rowImage(mirror, item);
-        if (image != null && !image.isBlank()) {
-            Image cover = new Image(image, "");
-            cover.setWidth("96px");
-            cover.setHeight("96px");
-            cover.addClassName("copycast-cover");
-            details.add(cover);
-        }
-
         String description = UiSupport.stripHtml(item.description());
         if (!description.isEmpty()) {
             Paragraph text = new Paragraph(description);
@@ -220,13 +211,6 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
             details.add(note);
         }
         return details;
-    }
-
-    private String rowImage(Mirror mirror, CatalogItem item) {
-        if (mirror != null && item.artworkFileName() != null) {
-            return feeds.mediaUrl(mirror, item.artworkFileName());
-        }
-        return item.remoteImageUrl();
     }
 
     private void reload() {

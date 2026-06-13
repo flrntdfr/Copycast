@@ -77,3 +77,20 @@ vaadin-integer-field.copycast-cap::part(label) {
   border-radius: var(--lumo-border-radius-m);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
+
+/* Spinner shown in the Size cell while an episode is downloading. */
+.copycast-spinner {
+  display: inline-block;
+  width: 1.1em;
+  height: 1.1em;
+  border: 2px solid var(--lumo-contrast-20pct);
+  border-top-color: var(--lumo-primary-color);
+  border-radius: 50%;
+  animation: copycast-spin 0.7s linear infinite;
+}
+
+@keyframes copycast-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
