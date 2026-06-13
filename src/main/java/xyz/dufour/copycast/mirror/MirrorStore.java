@@ -62,6 +62,7 @@ public class MirrorStore {
     // read path (UI polls, feed generation) into stat calls instead of parses.
     private final FileCache<SidecarMeta> sidecarCache = new FileCache<>();
     private final FileCache<Set<String>> currentKeysCache = new FileCache<>();
+    private final FileCache<List<SourceItem>> sourceItemsCache = new FileCache<>();
     private final Map<String, SizeEntry> sizeCache = new ConcurrentHashMap<>();
 
     public MirrorStore(CopycastProperties props, ObjectMapper mapper) {
@@ -73,6 +74,7 @@ public class MirrorStore {
     void clearRuntimeCaches() {
         sidecarCache.clear();
         currentKeysCache.clear();
+        sourceItemsCache.clear();
         sizeCache.clear();
     }
 
@@ -299,6 +301,96 @@ public class MirrorStore {
         }
         Instant mtime = Instant.ofEpochMilli(audio.toFile().lastModified());
         return new Episode(key, key, null, mtime, audio, size, mime, null, key, delisted);
+    }
+
+    /** A Source-advertised item, parsed from feed.xml or listing.json. */
+    private record SourceItem(String key, String title, String description, Instant pubDate,
+                              String imageUrl) {
+    }
+
+    /**
+     * The Mirror's full catalog for the detail page: every Episode the Source
+     * advertises (archived or not) plus anything archived that the Source has
+     * since dropped. Archived items are LISTED or DELISTED; advertised items
+     * that are not archived are AVAILABLE.
+     */
+    public List<CatalogItem> catalog(Mirror mirror) {
+        List<Episode> archived = episodes(mirror);
+        Set<String> archivedKeys = new HashSet<>();
+        List<CatalogItem> out = new ArrayList<>();
+        for (Episode e : archived) {
+            archivedKeys.add(e.key());
+            CatalogItem.State state = e.delisted() ? CatalogItem.State.DELISTED : CatalogItem.State.LISTED;
+            String artwork = findArtwork(mirror.getId(), e.key())
+                    .map(p -> p.getFileName().toString()).orElse(null);
+            out.add(new CatalogItem(e.key(), e.title(), e.description(), e.pubDate(),
+                    state, e.sizeBytes(), e.fileName(), artwork, null));
+        }
+        for (SourceItem s : sourceItems(mirror)) {
+            if (!archivedKeys.contains(s.key())) {
+                out.add(new CatalogItem(s.key(), s.title(), s.description(), s.pubDate(),
+                        CatalogItem.State.AVAILABLE, 0, null, null, s.imageUrl()));
+            }
+        }
+        out.sort(java.util.Comparator.comparing(CatalogItem::pubDate,
+                java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder())));
+        return out;
+    }
+
+    /** Source-advertised items, parsed (and cached) from feed.xml/listing.json. */
+    private List<SourceItem> sourceItems(Mirror mirror) {
+        if (mirror.getType() == SourceType.RSS) {
+            Path feed = feedXml(mirror.getId());
+            return Files.isRegularFile(feed)
+                    ? sourceItemsCache.get(feed, this::loadRssSourceItems) : List.of();
+        }
+        Path listing = listingJson(mirror.getId());
+        return Files.isRegularFile(listing)
+                ? sourceItemsCache.get(listing, this::loadListingSourceItems) : List.of();
+    }
+
+    private List<SourceItem> loadRssSourceItems(Path feed) {
+        try {
+            List<SourceItem> items = new ArrayList<>();
+            Rss.parse(XmlUtil.parse(Files.readAllBytes(feed))).ifPresent(channel -> {
+                for (Element item : channel.items()) {
+                    String identity = Rss.itemIdentity(item);
+                    if (identity == null) {
+                        continue;
+                    }
+                    String image = Rss.itemImageUrl(item);
+                    items.add(new SourceItem(
+                            Ids.episodeKey(identity),
+                            firstNonBlank(XmlUtil.childText(item, "title"), "Untitled"),
+                            XmlUtil.childText(item, "description"),
+                            Rss.pubDate(item),
+                            image != null ? image : channel.imageUrl()));
+                }
+            });
+            return items;
+        } catch (Exception e) {
+            log.warn("Could not parse source items from {}: {}", feed, e.getMessage());
+            return List.of();
+        }
+    }
+
+    private List<SourceItem> loadListingSourceItems(Path listing) {
+        try {
+            JsonNode root = mapper.readTree(Files.readAllBytes(listing));
+            List<SourceItem> items = new ArrayList<>();
+            for (JsonNode entry : xyz.dufour.copycast.source.YtListing.leafEntries(root)) {
+                items.add(new SourceItem(
+                        entry.path("id").asString(),
+                        firstNonBlank(entry.path("title").asString(null), "Untitled"),
+                        entry.path("description").asString(null),
+                        null,
+                        entry.path("thumbnail").asString(null)));
+            }
+            return items;
+        } catch (Exception e) {
+            log.warn("Could not parse source items from {}: {}", listing, e.getMessage());
+            return List.of();
+        }
     }
 
     /** Episode keys the Source currently lists; empty when undeterminable. */

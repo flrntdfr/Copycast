@@ -24,6 +24,14 @@ _Avoid_: Item, entry, track, video
 The cover image of a Mirror and the images of its Episodes, archived alongside the audio and served from the Mirror like any other asset.
 _Avoid_: Thumbnail, image
 
+**Catalog**:
+Everything a Mirror's detail page shows: every item the Source advertises (whether archived or not) plus anything archived the Source has since dropped. Each item is Listed, Available, or Delisted.
+_Avoid_: Backlog, list, index
+
+**Available**:
+The state of a Catalog item the Source advertises but that has not been archived. It is shown with its Source metadata and can be added to the feed on demand; until then it is absent from the Mirror Feed.
+_Avoid_: Pending, unarchived, missing
+
 **Delisted**:
 The state of an Episode that the Source no longer lists. A Delisted Episode remains in the Mirror Feed unchanged; its state is visible only in the Copycast UI.
 _Avoid_: Removed, deleted, orphaned

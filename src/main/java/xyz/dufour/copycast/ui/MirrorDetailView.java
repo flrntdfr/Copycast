@@ -26,7 +26,7 @@ import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.shared.Registration;
 import xyz.dufour.copycast.feed.FeedGenerator;
-import xyz.dufour.copycast.mirror.Episode;
+import xyz.dufour.copycast.mirror.CatalogItem;
 import xyz.dufour.copycast.mirror.Mirror;
 import xyz.dufour.copycast.mirror.MirrorStore;
 import xyz.dufour.copycast.refresh.RefreshService;
@@ -52,10 +52,11 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
     }
 
     private String mirrorId;
-    private final Grid<Episode> grid = new Grid<>();
+    private final Grid<CatalogItem> grid = new Grid<>();
     private final VerticalLayout header = new VerticalLayout();
+    private final Span catalogStats = new Span();
     private Registration pollRegistration;
-    private List<Episode> lastEpisodes;
+    private List<CatalogItem> lastCatalog;
     private HeaderSnapshot lastHeader;
 
     public MirrorDetailView(MirrorStore store, RefreshService refresh, FeedGenerator feeds) {
@@ -67,6 +68,8 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         grid.addClassName("copycast-grid");
         header.setPadding(false);
         add(header);
+        catalogStats.addClassName("copycast-stats");
+        add(catalogStats);
         configureGrid();
         add(grid);
         expand(grid);
@@ -77,7 +80,7 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
         this.mirrorId = parameter;
         // A different Mirror invalidates the render snapshots.
         this.lastHeader = null;
-        this.lastEpisodes = null;
+        this.lastCatalog = null;
         if (store.find(parameter).isEmpty()) {
             event.forwardTo(MainView.class);
             return;
@@ -87,55 +90,108 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
 
     private void configureGrid() {
         grid.setSizeFull();
-        grid.addColumn(Episode::title).setHeader("Episode").setFlexGrow(3);
-        grid.addColumn(e -> e.pubDate() != null ? DATE.format(e.pubDate()) : "")
+        grid.addColumn(CatalogItem::title).setHeader("Episode").setFlexGrow(3);
+        grid.addColumn(i -> i.pubDate() != null ? DATE.format(i.pubDate()) : "")
                 .setHeader("Published").setFlexGrow(0).setWidth("130px");
-        grid.addColumn(e -> UiSupport.humanSize(e.sizeBytes()))
+        grid.addColumn(i -> i.archived() ? UiSupport.humanSize(i.sizeBytes()) : "")
                 .setHeader("Size").setFlexGrow(0).setWidth("110px");
-        grid.addColumn(new ComponentRenderer<>(episode -> {
-            Span badge = new Span(episode.delisted() ? "Delisted by Source" : "Listed");
-            badge.getElement().getStyle().set("color", episode.delisted() ? "var(--lumo-error-text-color)"
-                    : "var(--lumo-success-text-color)");
-            return badge;
-        })).setHeader("Source status").setFlexGrow(0).setWidth("170px");
-        grid.addColumn(new ComponentRenderer<>(episode -> {
-            Mirror mirror = store.find(mirrorId).orElse(null);
-            if (mirror == null) {
-                return new Span();
-            }
-            Anchor listen = new Anchor(feeds.mediaUrl(mirror, episode.fileName()), "Download");
-            listen.setTarget("_blank");
-            return listen;
-        })).setHeader("").setFlexGrow(0).setWidth("110px");
+        grid.addColumn(new ComponentRenderer<>(this::statusBadge))
+                .setHeader("Status").setFlexGrow(0).setWidth("160px");
+        grid.addColumn(new ComponentRenderer<>(this::rowAction))
+                .setHeader("").setFlexGrow(0).setWidth("130px");
 
-        // Clicking a row expands it: description plus an inline audio player.
-        grid.setItemDetailsRenderer(new ComponentRenderer<>(this::episodeDetails));
+        // Clicking a row expands it: description, artwork, and — once
+        // archived — an inline audio player.
+        grid.setItemDetailsRenderer(new ComponentRenderer<>(this::itemDetails));
         grid.setDetailsVisibleOnClick(true);
     }
 
-    private VerticalLayout episodeDetails(Episode episode) {
+    private Span statusBadge(CatalogItem item) {
+        String text = switch (item.state()) {
+            case LISTED -> "Listed";
+            case DELISTED -> "Delisted by Source";
+            case AVAILABLE -> "Available";
+        };
+        String color = switch (item.state()) {
+            case LISTED -> "var(--lumo-success-text-color)";
+            case DELISTED -> "var(--lumo-error-text-color)";
+            case AVAILABLE -> "var(--lumo-secondary-text-color)";
+        };
+        Span badge = new Span(text);
+        badge.getElement().getStyle().set("color", color);
+        return badge;
+    }
+
+    private com.vaadin.flow.component.Component rowAction(CatalogItem item) {
+        Mirror mirror = store.find(mirrorId).orElse(null);
+        if (mirror == null) {
+            return new Span();
+        }
+        if (item.archived()) {
+            Anchor download = new Anchor(feeds.mediaUrl(mirror, item.audioFileName()), "Download");
+            download.setTarget("_blank");
+            return download;
+        }
+        Button add = new Button("Add to feed", e -> {
+            if (refresh.isBusy(mirrorId)) {
+                Notification.show("Busy — try again once the current download finishes",
+                        3000, Notification.Position.BOTTOM_START);
+                return;
+            }
+            refresh.requestEpisode(mirrorId, item.key());
+            Notification.show("Downloading \"" + item.title() + "\"…",
+                    3000, Notification.Position.BOTTOM_START);
+            reload();
+        });
+        add.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+        return add;
+    }
+
+    private VerticalLayout itemDetails(CatalogItem item) {
         VerticalLayout details = new VerticalLayout();
         details.setPadding(false);
         details.setSpacing(false);
-        String description = UiSupport.stripHtml(episode.description());
+
+        Mirror mirror = store.find(mirrorId).orElse(null);
+        String image = rowImage(mirror, item);
+        if (image != null && !image.isBlank()) {
+            Image cover = new Image(image, "");
+            cover.setWidth("96px");
+            cover.setHeight("96px");
+            cover.addClassName("copycast-cover");
+            details.add(cover);
+        }
+
+        String description = UiSupport.stripHtml(item.description());
         if (!description.isEmpty()) {
             Paragraph text = new Paragraph(description);
             text.addClassName("copycast-description");
             details.add(text);
         }
-        Mirror mirror = store.find(mirrorId).orElse(null);
-        if (mirror != null) {
+
+        if (mirror != null && item.archived()) {
             Div playerWrapper = new Div();
             playerWrapper.setWidthFull();
             Element audio = new Element("audio");
             audio.setAttribute("controls", true);
             audio.setAttribute("preload", "none");
-            audio.setAttribute("src", feeds.mediaUrl(mirror, episode.fileName()));
+            audio.setAttribute("src", feeds.mediaUrl(mirror, item.audioFileName()));
             audio.getStyle().set("width", "100%");
             playerWrapper.getElement().appendChild(audio);
             details.add(playerWrapper);
+        } else if (item.state() == CatalogItem.State.AVAILABLE) {
+            Span note = new Span("Not yet archived. Use \"Add to feed\" to download it.");
+            note.addClassName("copycast-stats");
+            details.add(note);
         }
         return details;
+    }
+
+    private String rowImage(Mirror mirror, CatalogItem item) {
+        if (mirror != null && item.artworkFileName() != null) {
+            return feeds.mediaUrl(mirror, item.artworkFileName());
+        }
+        return item.remoteImageUrl();
     }
 
     private void reload() {
@@ -158,11 +214,26 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
 
         // Only reset the grid when the data changed: resetting collapses the
         // expanded row and stops an inline player mid-playback.
-        List<Episode> episodes = store.episodes(mirror);
-        if (!episodes.equals(lastEpisodes)) {
-            grid.setItems(episodes);
-            lastEpisodes = episodes;
+        List<CatalogItem> catalog = store.catalog(mirror);
+        if (!catalog.equals(lastCatalog)) {
+            grid.setItems(catalog);
+            lastCatalog = catalog;
+            updateCatalogStats(catalog);
         }
+    }
+
+    private void updateCatalogStats(List<CatalogItem> catalog) {
+        long listed = catalog.stream().filter(i -> i.state() == CatalogItem.State.LISTED).count();
+        long available = catalog.stream().filter(i -> i.state() == CatalogItem.State.AVAILABLE).count();
+        long delisted = catalog.stream().filter(i -> i.state() == CatalogItem.State.DELISTED).count();
+        StringBuilder text = new StringBuilder(listed + " in feed");
+        if (available > 0) {
+            text.append(" · ").append(available).append(" available to add");
+        }
+        if (delisted > 0) {
+            text.append(" · ").append(delisted).append(" delisted");
+        }
+        catalogStats.setText(text.toString());
     }
 
     private void rebuildHeader(Mirror mirror, String imageSrc) {
