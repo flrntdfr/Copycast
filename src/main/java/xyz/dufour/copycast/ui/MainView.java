@@ -261,10 +261,12 @@ public class MainView extends VerticalLayout {
     }
 
     private boolean notifyIfAlreadyMirrored(String sourceUrl) {
-        var existing = store.findBySourceUrl(sourceUrl);
-        existing.ifPresent(mirror -> Notification.show(
-                "Already mirrored as \"" + mirror.displayTitle() + "\"",
-                4000, Notification.Position.BOTTOM_START));
+        var existing = store.findBySource(sourceUrl);
+        existing.ifPresent(mirror -> {
+            Notification.show("Already mirrored as \"" + mirror.displayTitle() + "\" — opening it",
+                    4000, Notification.Position.BOTTOM_START);
+            getUI().ifPresent(ui -> ui.navigate(MirrorDetailView.class, mirror.getId()));
+        });
         return existing.isPresent();
     }
 

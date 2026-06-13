@@ -13,6 +13,7 @@ import xyz.dufour.copycast.source.Rss;
 import xyz.dufour.copycast.util.FileCache;
 import xyz.dufour.copycast.util.Ids;
 import xyz.dufour.copycast.util.Mime;
+import xyz.dufour.copycast.util.Urls;
 import xyz.dufour.copycast.util.XmlUtil;
 
 import java.io.IOException;
@@ -134,15 +135,28 @@ public class MirrorStore {
         }
     }
 
-    public Optional<Mirror> findBySourceUrl(String sourceUrl) {
-        String wanted = sourceUrl.trim();
-        return list().stream().filter(m -> wanted.equals(m.getSourceUrl())).findFirst();
+    /**
+     * Finds an existing Mirror of the same Source, comparing canonical dedup
+     * keys (see util.Urls) so scheme, www, trailing slash, host case and
+     * tracking parameters don't create accidental duplicates.
+     */
+    public Optional<Mirror> findBySource(String sourceUrl) {
+        String wanted = Urls.dedupKey(sourceUrl);
+        return list().stream().filter(m -> wanted.equals(dedupKeyOf(m))).findFirst();
+    }
+
+    /** A Mirror's stored key, or one computed on the fly for pre-existing Mirrors. */
+    private String dedupKeyOf(Mirror mirror) {
+        return mirror.getDedupKey() != null && !mirror.getDedupKey().isBlank()
+                ? mirror.getDedupKey()
+                : Urls.dedupKey(mirror.getSourceUrl());
     }
 
     public Mirror create(String sourceUrl, ProbeResult probe, Integer cap) throws IOException {
         Mirror mirror = new Mirror();
         mirror.setId(Ids.mirrorId(sourceUrl));
         mirror.setSourceUrl(sourceUrl.trim());
+        mirror.setDedupKey(Urls.dedupKey(sourceUrl));
         mirror.setType(probe.type());
         mirror.setService(probe.service());
         mirror.setTitle(probe.title());

@@ -332,7 +332,16 @@ public class MirrorDetailView extends VerticalLayout implements HasUrlParameter<
                 Notification.show("Please enter an http(s) URL");
                 return;
             }
+            // Don't let a retarget collide with another Mirror's Source.
+            var clash = store.findBySource(value)
+                    .filter(other -> !other.getId().equals(mirror.getId()));
+            if (clash.isPresent()) {
+                Notification.show("That Source is already mirrored as \""
+                        + clash.get().displayTitle() + "\"");
+                return;
+            }
             mirror.setSourceUrl(value);
+            mirror.setDedupKey(xyz.dufour.copycast.util.Urls.dedupKey(value));
             store.save(mirror);
             dialog.close();
             reload();
