@@ -1,4 +1,4 @@
-"""Feeds: list (plus the ``/mirrors`` and ``/inboxes`` aliases), get, delete."""
+"""Feeds: list (plus the ``/mirrors`` and ``/inboxes`` aliases), get, rotate credentials, delete."""
 
 from __future__ import annotations
 
@@ -71,6 +71,19 @@ async def list_inboxes(
 )
 async def get_feed(services: ServicesDep, feed_id: str) -> FeedRead:
     return await services.get_feed(feed_id)
+
+
+@router.post(
+    "/feeds/{feed_id}/credentials/rotate",
+    operation_id="rotate_feed_credentials",
+    openapi_extra={"x-capability": "rotate_feed_credentials"},
+    response_model=FeedRead,
+    dependencies=[RebuildGuard],
+    responses=problem_responses(404, 409),
+    summary="Mint a new Basic auth pair for a Feed (every subscribed client must be updated)",
+)
+async def rotate_feed_credentials(services: ServicesDep, feed_id: str) -> FeedRead:
+    return await services.rotate_feed_credentials(feed_id)
 
 
 @router.delete(

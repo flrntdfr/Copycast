@@ -1,0 +1,19 @@
+# Optional: switch authentication on (docs/adr/0011) from a Secret you create yourself:
+#   kubectl -n copycast create secret generic copycast-auth --from-literal=password='...'
+# `optional: true` keeps the Deployment valid while the Secret does not exist (auth stays off).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: copycast-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          env:
+            - name: COPYCAST__AUTH__PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: copycast-auth
+                  key: password
+                  optional: true

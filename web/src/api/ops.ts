@@ -18,6 +18,7 @@ export const OPS = {
   list_feeds: ["get", "/api/feeds"],
   get_feed: ["get", "/api/feeds/{feed_id}"],
   delete_feed: ["delete", "/api/feeds/{feed_id}"],
+  rotate_feed_credentials: ["post", "/api/feeds/{feed_id}/credentials/rotate"],
   list_items: ["get", "/api/feeds/{feed_id}/items"],
   get_item: ["get", "/api/feeds/{feed_id}/items/{item_id}"],
   archive_item: ["post", "/api/feeds/{feed_id}/items/{item_id}/archive"],
@@ -41,6 +42,9 @@ export const OPS = {
   subscribe_events: ["get", "/api/events"],
   about: ["get", "/api/about"],
   rebuild: ["post", "/api/admin/rebuild"],
+  list_api_keys: ["get", "/api/keys"],
+  create_api_key: ["post", "/api/keys"],
+  revoke_api_key: ["delete", "/api/keys/{key_id}"],
 } as const satisfies Record<string, Op>;
 
 export type Capability = keyof typeof OPS;

@@ -104,11 +104,27 @@ _Avoid_: Blacklist, ignore list, ban
 yt-dlp as used by Copycast: imported as a library, lockfile-pinned to one version (nightly channel by default), bumped by automation. Every download goes through it, RSS enclosures included; its version is recorded on every archived item and shown on the About page.
 _Avoid_: Downloader, backend, scraper, yt-dlp binary
 
+**Operator password**:
+The one credential from the environment (`COPYCAST__AUTH__PASSWORD`, username `copycast` unless `COPYCAST__AUTH__USERNAME` says otherwise) that opens the web UI, the API and every feed over HTTP Basic. Setting it switches authentication on; unset, Copycast is open and the network is the boundary (ADR 0004, ADR 0011).
+_Avoid_: Admin password, login, account, session
+
+**Feed credentials**:
+A Feed's own random username and password, minted at creation, kept in Postgres and in `feed.json`, and rotated on demand. While authentication is on they open that Feed's RSS, media and assets and nothing else; the feed URL carries them as `user:pass@` and the UI shows them separately for apps such as Overcast.
+_Avoid_: Feed token, feed secret, private URL, feed password (say the pair)
+
+**API key**:
+A bearer secret minted from the UI for one MCP client, shown once, stored as a digest, revocable on its own. The only credential the MCP mount accepts while authentication is on.
+_Avoid_: Token, PAT, MCP password, service account
+
+**Scope**:
+What an API key may do over MCP: `read` (read-only tools), `write` (everything but deletions) or `full` (everything). Every tool checks it before running.
+_Avoid_: Role, permission, level, grant
+
 ## Conventions for agents
 
 ### Stack
 
-Python 3.13, uv lockfile, FastAPI, Pydantic v2, pydantic-settings (`config/copycast.toml` plus `COPYCAST__SECTION__KEY` environment variables), SQLAlchemy 2 async with psycopg 3, Alembic, structlog, httpx, lxml, sse-starlette, fastmcp, click; `yt-dlp[default]` from the lockfile; ffmpeg from the OS image; Postgres 17. Frontend: React 19, TypeScript, Vite 7, Tailwind v4, shadcn/ui, TanStack Router/Query/Table, openapi-typescript + openapi-fetch, vitest + MSW, Playwright; package manager pnpm 11 via corepack (never npm or yarn). Delivery: one image, Docker Compose (Tailscale sidecar or direct port), Kubernetes kustomize base, GitHub Actions.
+Python 3.13, uv lockfile, FastAPI, Pydantic v2, pydantic-settings (`config/copycast.toml` plus `COPYCAST__SECTION__KEY` environment variables; `COPYCAST__AUTH__PASSWORD` switches authentication on), SQLAlchemy 2 async with psycopg 3, Alembic, structlog, httpx, lxml, sse-starlette, fastmcp, click; `yt-dlp[default]` from the lockfile; ffmpeg from the OS image; Postgres 17. Frontend: React 19, TypeScript, Vite 7, Tailwind v4, shadcn/ui, TanStack Router/Query/Table, openapi-typescript + openapi-fetch, vitest + MSW, Playwright; package manager pnpm 11 via corepack (never npm or yarn). Delivery: one image, Docker Compose (Tailscale sidecar or direct port), Kubernetes kustomize base, GitHub Actions.
 
 ### Repository map
 
@@ -182,3 +198,4 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0008](docs/adr/0008-ordinals-source-numbering-selections.md) | Ordinals, Source numbering and selections |
 | [0009](docs/adr/0009-never-delete-tombstones.md) | Copycast never deletes from a Mirror; user deletions leave Tombstones |
 | [0010](docs/adr/0010-download-counting-rule.md) | What counts as a download |
+| [0011](docs/adr/0011-optional-authentication-for-direct-deployments.md) | Optional authentication: operator password, feed credentials, MCP API keys |

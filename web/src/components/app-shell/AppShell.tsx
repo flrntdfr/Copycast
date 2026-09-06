@@ -15,13 +15,14 @@ import { usePlayer } from "@/stores/player";
 import { cn } from "@/lib/utils";
 
 const NAV: {
-  to: "/mirrors" | "/inboxes" | "/jobs" | "/about";
+  to: "/mirrors" | "/inboxes" | "/jobs" | "/keys" | "/about";
   label: string;
   extra?: ReactNode;
 }[] = [
   { to: "/mirrors", label: "Mirrors" },
   { to: "/inboxes", label: "Inboxes" },
   { to: "/jobs", label: "Jobs", extra: <JobsIndicator /> },
+  { to: "/keys", label: "API keys" },
   { to: "/about", label: "About" },
 ];
 

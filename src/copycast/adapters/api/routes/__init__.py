@@ -12,6 +12,7 @@ from copycast.adapters.api.routes import (
     inboxes,
     items,
     jobs,
+    keys,
     mirrors,
     sources,
 )
@@ -19,7 +20,7 @@ from copycast.adapters.api.routes import (
 
 def create_api_router() -> APIRouter:
     router = APIRouter()
-    for module in (feeds, items, sources, mirrors, inboxes, jobs, events, about, admin):
+    for module in (feeds, items, sources, mirrors, inboxes, jobs, events, about, admin, keys):
         router.include_router(module.router)
     return router
 

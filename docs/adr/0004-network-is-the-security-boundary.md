@@ -1,6 +1,6 @@
 # 0004 No authentication: the network is the security boundary
 
-Status: accepted (v1); carries the v0 stance forward
+Status: accepted (v1); carries the v0 stance forward; narrowed by ADR 0011 for direct deployments
 
 ## Context
 
@@ -24,5 +24,6 @@ operator-managed reverse proxy. Tailscale Funnel is explicitly disabled in the s
 - Destructive operations rely on intent, not identity: `delete_feed` over MCP requires
   `confirm=true` and warns that it may delete the only copy.
 - Feed URLs contain no secrets; a leaked URL is a network problem, not an application one.
-- If a future need for authentication arises it belongs in front of Copycast (Tailscale
-  ACLs, a proxy), not inside it.
+- Inside a tailnet, authentication belongs in front of Copycast (Tailscale ACLs, a proxy),
+  not inside it. For direct deployments ADR 0011 adds an optional operator password, per-feed
+  credentials and MCP API keys, off unless `COPYCAST__AUTH__PASSWORD` is set.

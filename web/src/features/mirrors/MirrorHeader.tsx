@@ -13,6 +13,7 @@ import { useState } from "react";
 
 import type { MirrorRead } from "@/api/types";
 import { Artwork } from "@/components/common/Artwork";
+import { FeedCredentials } from "@/components/common/FeedCredentials";
 import { FeedUrlField } from "@/components/common/FeedUrlField";
 import { HealthDot } from "@/components/common/HealthDot";
 import { ServiceBadge } from "@/components/common/ServiceBadge";
@@ -122,6 +123,7 @@ export function MirrorHeader({ mirror, refreshing }: { mirror: MirrorRead; refre
         </Alert>
       ) : null}
       <FeedUrlField url={mirror.feed_url} label="Mirror Feed URL" className="max-w-2xl" />
+      <FeedCredentials feed={mirror} className="max-w-2xl" />
       <DeleteFeedDialog feed={mirror} open={deleting} onOpenChange={setDeleting} />
     </header>
   );

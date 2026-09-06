@@ -67,6 +67,8 @@ class DescriptorFeed(_Strict):
     source_dedup_key: str | None = None
     source_kind: SourceKind | None = None
     service: str | None = None
+    auth_username: str | None = None
+    auth_password: str | None = None
     created_at: datetime
 
 

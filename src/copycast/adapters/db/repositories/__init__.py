@@ -12,6 +12,7 @@ from copycast.adapters.db.repositories.jobs import (
     JobRepository,
     dedup_key,
 )
+from copycast.adapters.db.repositories.keys import ApiKeyRepository
 from copycast.adapters.db.repositories.requests import RequestRepository
 from copycast.adapters.db.repositories.telemetry import TelemetryRepository
 
@@ -20,6 +21,7 @@ __all__ = [
     "PRIORITY_BACKFILL",
     "PRIORITY_FOLLOW",
     "PRIORITY_MANUAL",
+    "ApiKeyRepository",
     "AssetRepository",
     "CatalogRepository",
     "FeedRepository",

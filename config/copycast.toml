@@ -16,3 +16,7 @@ concurrency            = 2
 channel = "nightly"          # informational: nightly | stable
 
 [engine.options]             # raw yt-dlp defaults; ENGINE_OWNED_OPTIONS rejected at startup
+
+# [auth]                     # prefer COPYCAST__AUTH__PASSWORD in the environment (docs/adr/0011)
+# username = "copycast"
+# password = ""              # set (8+ characters) to switch authentication on

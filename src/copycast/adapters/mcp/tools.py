@@ -3,9 +3,12 @@
 Every tool sets ``meta={"capability": name}`` and takes the capability's
 request model as one argument (plus path identifiers), so the convergence
 test can hold the UI, the API and MCP to the same contract. Destructive tools
-carry the MCP destructive hint.
+carry the MCP destructive hint, and every tool checks the calling key's scope
+first (read-only tools need ``read``, destructive ones ``full``, the rest
+``write``; no key means authentication is off).
 """
 
+import functools
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -13,6 +16,7 @@ from typing import Any
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from copycast.adapters.mcp.auth import check_scope
 from copycast.adapters.mcp.container import ServicesProvider
 from copycast.adapters.mcp.errors import guarded, refuse
 from copycast.application.capabilities import DESTRUCTIVE
@@ -40,12 +44,14 @@ from copycast.application.models import (
     SelectionRequest,
     SelectionResult,
 )
+from copycast.domain.credentials import required_scope
 from copycast.domain.enums import (
     ArchiveState,
     FeedKind,
     JobKind,
     JobStatus,
     JobTrigger,
+    KeyScope,
     RequestedVia,
 )
 
@@ -66,6 +72,17 @@ def _annotations(capability: str, *, read_only: bool = False) -> ToolAnnotations
 
 
 ToolFn = Callable[..., Awaitable[Any]]
+
+
+def with_scope(fn: ToolFn, name: str, scope: KeyScope) -> ToolFn:
+    """Check the calling key's scope before the tool body runs (signature preserved)."""
+
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        check_scope(scope, name)
+        return await fn(*args, **kwargs)
+
+    return wrapper
 
 
 def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
@@ -240,12 +257,13 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         (get_about, "get_about", "about", True),
     ]
     for fn, name, capability, read_only in registrations:
+        scope = required_scope(destructive=capability in DESTRUCTIVE, read_only=read_only)
         mcp.tool(
-            guarded(fn),
+            guarded(with_scope(fn, name, scope)),
             name=name,
-            meta={"capability": capability},
+            meta={"capability": capability, "scope": scope.value},
             annotations=_annotations(capability, read_only=read_only),
         )
 
 
-__all__ = ["DEFAULT_INBOX", "DELETE_FEED_WARNING", "ToolFn", "register_tools"]
+__all__ = ["DEFAULT_INBOX", "DELETE_FEED_WARNING", "ToolFn", "register_tools", "with_scope"]

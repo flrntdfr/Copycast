@@ -26,6 +26,7 @@ from copycast.domain.enums import (
     JobKind,
     JobStatus,
     JobTrigger,
+    KeyScope,
     Numbering,
     ProgressPhase,
     RequestedVia,
@@ -35,6 +36,7 @@ from copycast.domain.enums import (
 
 INBOX_NAME_MAX_LEN = 80
 SELECTION_MAX_LEN = 4096
+API_KEY_NAME_MAX_LEN = 80
 
 
 class ReadModel(BaseModel):
@@ -79,12 +81,20 @@ class SelectionSummary(ReadModel):
     applied_at: datetime | None = None
 
 
+class FeedCredentials(ReadModel):
+    """The feed's own HTTP Basic pair; present only while authentication is on."""
+
+    username: str
+    password: str
+
+
 class _FeedReadBase(ReadModel):
     id: str
     title: str
     description: str | None = None
     artwork_url: str | None = None
-    feed_url: str
+    feed_url: str = Field(description="Carries user:pass@ while authentication is on")
+    feed_credentials: FeedCredentials | None = None
     episode_count: int = 0
     storage_bytes: int = 0
     revision: int = 1
@@ -458,6 +468,42 @@ class PruneResult(ReadModel):
     dry_run: bool
 
 
+# --------------------------------------------------------------------------- api keys
+
+
+class ApiKeyCreate(RequestModel):
+    name: str = Field(min_length=1, max_length=API_KEY_NAME_MAX_LEN, description="Who holds it")
+    scope: KeyScope = Field(
+        default=KeyScope.write,
+        description="read: read-only tools; write: everything but deletions; full: everything",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        return _clean_name(value)
+
+
+class ApiKeyRead(ReadModel):
+    id: UUID
+    name: str
+    scope: KeyScope
+    prefix: str = Field(description="The displayable head of the key (cck_XXXXXXXX)")
+    created_at: datetime
+    last_used_at: datetime | None = None
+
+
+class ApiKeyCreated(ReadModel):
+    """The new key and its secret, shown exactly once."""
+
+    key: ApiKeyRead
+    secret: str
+
+
+class ApiKeyList(ReadModel):
+    keys: list[ApiKeyRead] = Field(default_factory=list[ApiKeyRead])
+
+
 # --------------------------------------------------------------------------- about, health, admin
 
 
@@ -482,6 +528,9 @@ class AboutRead(ReadModel):
     base_url: str
     layout_version: str
     totals: Totals = Field(default_factory=Totals)
+    auth_enabled: bool = Field(
+        default=False, description="Whether an operator password gates the UI, API and MCP"
+    )
 
 
 class ReadyCheck(ReadModel):
@@ -516,11 +565,16 @@ class Problem(BaseModel):
 
 __all__ = [
     "AboutRead",
+    "ApiKeyCreate",
+    "ApiKeyCreated",
+    "ApiKeyList",
+    "ApiKeyRead",
     "AssetRead",
     "BackfillPolicy",
     "BackfillRequest",
     "CatalogCounts",
     "EngineRead",
+    "FeedCredentials",
     "FeedHealth",
     "FeedList",
     "FeedRead",

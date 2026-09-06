@@ -92,6 +92,14 @@ class RequestedVia(StrEnum):
     mcp = "mcp"
 
 
+class KeyScope(StrEnum):
+    """What an API key may do over MCP: read < write < full (destructive tools included)."""
+
+    read = "read"
+    write = "write"
+    full = "full"
+
+
 class RequestStatus(StrEnum):
     queued = "queued"
     expanded = "expanded"

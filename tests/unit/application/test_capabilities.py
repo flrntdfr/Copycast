@@ -31,22 +31,37 @@ PLAN_TOOLS = {
     "about",
 }
 
-PLAN_ROUTES = PLAN_TOOLS | {
-    "archive_item",
-    "list_requests",
-    "get_request",
-    "subscribe_events",
-    "rebuild",
+OPERATOR_ONLY = {
+    "rotate_feed_credentials",
+    "list_api_keys",
+    "create_api_key",
+    "revoke_api_key",
 }
+"""Routed for the UI, never tools: keys must not mint keys, agents must not rotate feeds."""
+
+PLAN_ROUTES = (
+    PLAN_TOOLS
+    | {
+        "archive_item",
+        "list_requests",
+        "get_request",
+        "subscribe_events",
+        "rebuild",
+    }
+    | OPERATOR_ONLY
+)
 
 
 def test_sets_are_consistent_with_the_plan() -> None:
-    assert {"rebuild", "archive_item", "get_request", "list_requests"} == caps.TOOL_EXEMPT
+    assert {"rebuild", "archive_item", "get_request", "list_requests"} | OPERATOR_ONLY == (
+        caps.TOOL_EXEMPT
+    )
     assert {
         "record_download",
         "subscribe_events",
         "ensure_default_inbox",
         "resolve_inbox",
+        "authenticate_api_key",
     } == caps.INTERNAL
     assert caps.TOOL_EXEMPT <= caps.CAPABILITY_NAMES
     assert caps.INTERNAL <= caps.CAPABILITY_NAMES

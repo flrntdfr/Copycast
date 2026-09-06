@@ -29,16 +29,39 @@ full environment-variable table, backups and rebuilds.
 
 ### Two ways to reach it
 
-Copycast has **no authentication**. The network is the boundary
-([ADR 0004](docs/adr/0004-network-is-the-security-boundary.md)); pick one profile in `.env`:
+By default Copycast has **no authentication**: the network is the boundary
+([ADR 0004](docs/adr/0004-network-is-the-security-boundary.md)). Pick one profile in `.env`:
 
 - `COMPOSE_PROFILES=tailscale` (recommended): the api shares the network namespace of a
   Tailscale sidecar and is reachable only inside your tailnet, as
   `https://copycast.<your-tailnet>.ts.net`, with a certificate issued by Tailscale. Set
   `TS_AUTHKEY` and `COPYCAST_BASE_URL=https://copycast.<your-tailnet>.ts.net`.
-- `COMPOSE_PROFILES=direct`: the api publishes port 8080 on the host. Only for a trusted LAN
-  or behind your own reverse proxy. Set `COPYCAST_BASE_URL` to the address your podcast app
+- `COMPOSE_PROFILES=direct`: the api publishes port 8080 on the host, for a trusted LAN or
+  behind your own reverse proxy. Set `COPYCAST_BASE_URL` to the address your podcast app
   will use — it is embedded in every feed and media link.
+
+### Switching authentication on
+
+For a direct deployment that is not on a trusted network, set `COPYCAST_AUTH_PASSWORD` in
+`.env` ([ADR 0011](docs/adr/0011-optional-authentication-for-direct-deployments.md)). Put
+TLS in front first: HTTP Basic without it is not a gate. With a password set:
+
+- The **web UI and the API** ask for the operator pair (username `copycast` unless
+  `COPYCAST_AUTH_USERNAME` says otherwise); the browser remembers it for the session.
+- Every **feed gets its own username and password**, minted when it is created and shown
+  next to its URL. The feed URL you copy already carries them
+  (`https://user:pass@host/feeds/….xml`), which Overcast, Pocket Casts and AntennaPod
+  accept for the feed and its episodes. Apple Podcasts fetches such a feed but not its audio.
+  A pair opens that one feed; **Rotate** mints a new one and cuts off every client holding
+  the old one.
+- **MCP takes API keys** minted on the *API keys* page, each with a scope (`read`, `write`
+  or `full`) that caps what the agent may do. The key is shown once. For Claude Code:
+
+  ```bash
+  claude mcp add --transport http copycast https://copycast.example/mcp --header "Authorization: Bearer $COPYCAST_MCP_KEY"
+  ```
+
+  Claude Desktop and claude.ai custom connectors need OAuth and cannot use a key.
 
 ## Use it
 
@@ -67,7 +90,8 @@ the Inbox feed. Inboxes can prune themselves N days after an episode's first dow
 ### MCP
 
 The MCP server is served at `<base_url>/mcp` (Streamable HTTP, stateless). Add it to a client
-such as Claude Desktop or Claude Code:
+such as Claude Desktop or Claude Code (with authentication on, only clients that send a
+static header work; see above):
 
 ```json
 {

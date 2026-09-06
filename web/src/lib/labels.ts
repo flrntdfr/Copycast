@@ -8,6 +8,7 @@ import type {
   JobKind,
   JobStatus,
   JobTrigger,
+  KeyScope,
   ProgressPhase,
   RequestStatus,
   RequestedVia,
@@ -111,6 +112,19 @@ export const assetKindLabel = label<AssetKind>({
   chapters: "Chapters",
   transcript: "Transcript",
 });
+
+export const keyScopeLabel = label<KeyScope>({
+  read: "Read",
+  write: "Write",
+  full: "Full",
+});
+
+/** What each API key scope lets an agent do over MCP. */
+export const keyScopeHint: Record<KeyScope, string> = {
+  read: "Read-only tools: list feeds and items, search, probe, read jobs.",
+  write: "Everything except deletions: mirror, archive, push into Inboxes, pause, refresh.",
+  full: "Everything, including delete_feed, delete_item and prune_inbox.",
+};
 
 export const healthStatusLabel = label<HealthStatus>({
   ok: "Healthy",

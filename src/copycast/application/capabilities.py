@@ -23,6 +23,7 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "list_feeds",
         "get_feed",
         "delete_feed",
+        "rotate_feed_credentials",
         # items
         "list_items",
         "get_item",
@@ -52,20 +53,42 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "subscribe_events",
         "about",
         "rebuild",
+        # api keys
+        "list_api_keys",
+        "create_api_key",
+        "revoke_api_key",
         # internal
         "record_download",
         "ensure_default_inbox",
         "resolve_inbox",
+        "authenticate_api_key",
     }
 )
 
 TOOL_EXEMPT: Final[frozenset[str]] = frozenset(
-    {"rebuild", "archive_item", "get_request", "list_requests"}
+    {
+        "rebuild",
+        "archive_item",
+        "get_request",
+        "list_requests",
+        # Operator actions: a key must not mint keys (privilege escalation) and a rotation
+        # silently breaks every podcast client subscribed to the feed.
+        "rotate_feed_credentials",
+        "list_api_keys",
+        "create_api_key",
+        "revoke_api_key",
+    }
 )
 """Capabilities with a route but deliberately no MCP tool."""
 
 INTERNAL: Final[frozenset[str]] = frozenset(
-    {"record_download", "subscribe_events", "ensure_default_inbox", "resolve_inbox"}
+    {
+        "record_download",
+        "subscribe_events",
+        "ensure_default_inbox",
+        "resolve_inbox",
+        "authenticate_api_key",
+    }
 )
 """Capabilities never exposed as tools; only ``subscribe_events`` has a route (SSE)."""
 

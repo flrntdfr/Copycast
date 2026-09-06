@@ -22,6 +22,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from copycast.adapters.api.auth import OperatorAuthMiddleware
 from copycast.adapters.api.cache import FeedCache
 from copycast.adapters.api.container import ApiContainer
 from copycast.adapters.api.events import EventHub, psycopg_conninfo
@@ -173,6 +174,8 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
     app.state.feed_cache = FeedCache()
 
     install_exception_handlers(app)
+    # Innermost: runs right before routing, inside the request-id and gzip layers.
+    app.add_middleware(OperatorAuthMiddleware, auth=settings.auth)
     app.add_middleware(NoStoreJsonMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(

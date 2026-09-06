@@ -17,8 +17,15 @@ NOW = datetime(2025, 6, 1, tzinfo=UTC)
 
 
 class Urls:
-    def feed_url(self, feed_id: str) -> str:
+    """Authentication off: bare feed URLs and no credentials in the read models."""
+
+    def feed_url(
+        self, feed_id: str, *, username: str | None = None, password: str | None = None
+    ) -> str:
         return f"http://t/feeds/{feed_id}.xml"
+
+    def feed_credentials(self, username: str, password: str) -> None:
+        return None
 
     def media_url(self, feed_id: str, item_id: str, ext: str) -> str:
         return f"http://t/feeds/{feed_id}/media/{item_id}.{ext}"
@@ -37,6 +44,8 @@ def mirror_row(**overrides: Any) -> Any:
         "author": None,
         "artwork_url": None,
         "language": "en",
+        "auth_username": "k7mpq2xz",
+        "auth_password": "p" * 24,
         "created_at": NOW,
         "storage_bytes": 10,
         "revision": 3,

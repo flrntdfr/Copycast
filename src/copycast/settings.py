@@ -62,6 +62,45 @@ class EngineSettings(BaseModel):
         return EngineOptions.validate(value, scope="global")
 
 
+AUTH_PASSWORD_MIN_LEN = 8
+DEFAULT_AUTH_USERNAME = "copycast"
+
+
+class AuthSettings(BaseModel):
+    """The operator credential; setting ``password`` switches authentication on.
+
+    With a password set, the web UI and the API require this pair (HTTP Basic),
+    the published feeds accept it or the feed's own pair, and MCP requires an
+    API key minted from the UI. Unset, Copycast is open (ADR 0004).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    username: str = DEFAULT_AUTH_USERNAME
+    password: str | None = None
+
+    @field_validator("username")
+    @classmethod
+    def _username(cls, value: str) -> str:
+        value = value.strip()
+        if not value or ":" in value:
+            raise ValueError("auth.username must not be blank or contain ':'")
+        return value
+
+    @field_validator("password")
+    @classmethod
+    def _password(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
+        if len(value) < AUTH_PASSWORD_MIN_LEN:
+            raise ValueError(f"auth.password must be at least {AUTH_PASSWORD_MIN_LEN} characters")
+        return value
+
+    @property
+    def enabled(self) -> bool:
+        return self.password is not None
+
+
 def config_path() -> Path:
     return Path(os.environ.get(CONFIG_ENV) or DEFAULT_CONFIG_PATH)
 
@@ -81,6 +120,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://copycast:copycast@localhost:5432/copycast"
     refresh: RefreshSettings = Field(default_factory=RefreshSettings)
     engine: EngineSettings = Field(default_factory=EngineSettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
 
     # Environment-only knobs (flat COPYCAST_<NAME>, never read from the TOML file).
     bind: str = Field(default="0.0.0.0", validation_alias="COPYCAST_BIND")
@@ -182,6 +222,8 @@ class Settings(BaseSettings):
         """A JSON-safe dump with the database password masked."""
         data = self.model_dump(mode="json")
         data["database_url"] = redact_url(self.database_url)
+        if self.auth.password is not None:
+            data["auth"]["password"] = "***"
         return data
 
 

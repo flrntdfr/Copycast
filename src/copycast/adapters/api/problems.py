@@ -20,8 +20,12 @@ from copycast.domain.exceptions import DomainError
 from copycast.logging import get_logger
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
+BASIC_REALM = "Copycast"
+WWW_AUTHENTICATE = f'Basic realm="{BASIC_REALM}", charset="UTF-8"'
+"""The challenge every 401 carries so browsers and podcast clients prompt for the pair."""
 
 TITLES: dict[str, str] = {
+    "unauthorized": "Authentication required",
     "not-found": "Not found",
     "validation": "Validation failed",
     "feed-exists": "Mirror already exists",
@@ -38,6 +42,7 @@ TITLES: dict[str, str] = {
 }
 
 STATUS_SLUGS: dict[int, str] = {
+    401: "unauthorized",
     404: "not-found",
     405: "method-not-allowed",
     409: "conflict",
@@ -94,8 +99,9 @@ def problem_response(
 
 async def domain_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, DomainError)
+    headers = {"WWW-Authenticate": WWW_AUTHENTICATE} if exc.status == 401 else None
     return problem_response(
-        request, status=exc.status, slug=exc.slug, detail=str(exc), **exc.extras
+        request, status=exc.status, slug=exc.slug, detail=str(exc), headers=headers, **exc.extras
     )
 
 
@@ -187,9 +193,11 @@ def relabel_problem_content(document: dict[str, Any]) -> dict[str, Any]:
 
 
 __all__ = [
+    "BASIC_REALM",
     "PROBLEM_MEDIA_TYPE",
     "STATUS_SLUGS",
     "TITLES",
+    "WWW_AUTHENTICATE",
     "build_problem",
     "install_exception_handlers",
     "problem_response",

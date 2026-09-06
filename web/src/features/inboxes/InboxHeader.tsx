@@ -3,6 +3,7 @@ import { Inbox, MoreHorizontal, Scissors, Settings2, Trash2 } from "lucide-react
 import { useState } from "react";
 
 import type { InboxRead } from "@/api/types";
+import { FeedCredentials } from "@/components/common/FeedCredentials";
 import { FeedUrlField } from "@/components/common/FeedUrlField";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -78,7 +79,10 @@ export function InboxHeader({ inbox, initialUrl = "" }: { inbox: InboxRead; init
         </div>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
-        <FeedUrlField url={inbox.feed_url} label="Inbox Feed URL" />
+        <div className="space-y-4">
+          <FeedUrlField url={inbox.feed_url} label="Inbox Feed URL" />
+          <FeedCredentials feed={inbox} />
+        </div>
         <AddRequestForm inboxId={inbox.id} initialUrl={initialUrl} />
       </div>
       <PruneDialog inboxId={inbox.id} open={pruning} onOpenChange={setPruning} />

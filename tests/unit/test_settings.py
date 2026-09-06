@@ -123,3 +123,36 @@ def test_check_data_dir_creates_and_reports_unwritable(tmp_path: Path) -> None:
             unwritable.check_data_dir()
     finally:
         blocked.chmod(0o700)
+
+
+def test_auth_is_off_by_default_and_on_with_a_password(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    off = get_settings(data_dir=tmp_path)
+    assert off.auth.enabled is False and off.auth.username == "copycast"
+    assert off.redacted()["auth"] == {"username": "copycast", "password": None}
+
+    monkeypatch.setenv("COPYCAST__AUTH__PASSWORD", "correct-horse")
+    monkeypatch.setenv("COPYCAST__AUTH__USERNAME", " florent ")
+    on = get_settings(data_dir=tmp_path)
+    assert on.auth.enabled is True
+    assert (on.auth.username, on.auth.password) == ("florent", "correct-horse")
+    assert on.redacted()["auth"] == {"username": "florent", "password": "***"}
+
+    # An empty password is "unset", not a weak password.
+    assert get_settings(data_dir=tmp_path, auth={"password": ""}).auth.enabled is False
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"auth": {"password": "short"}}, "at least 8 characters"),
+        ({"auth": {"username": "a:b", "password": "correct-horse"}}, "contain ':'"),
+        ({"auth": {"username": "  ", "password": "correct-horse"}}, "blank"),
+    ],
+)
+def test_auth_settings_are_validated(
+    tmp_path: Path, overrides: dict[str, object], message: str
+) -> None:
+    with pytest.raises(SettingsError, match=message):
+        get_settings(data_dir=tmp_path, **overrides)

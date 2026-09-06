@@ -3,6 +3,7 @@ import { CheckCircle2 } from "lucide-react";
 
 import { $api } from "@/api/client";
 import type { MirrorRead } from "@/api/types";
+import { FeedCredentials } from "@/components/common/FeedCredentials";
 import { FeedUrlField } from "@/components/common/FeedUrlField";
 import { Button } from "@/components/ui/button";
 import { JobProgress } from "@/features/jobs/JobProgress";
@@ -36,6 +37,7 @@ export function CreatedStep({ mirror }: { mirror: MirrorRead }) {
         In your podcast app choose “Add by URL” (sometimes “Add a show by URL” or “Subscribe to
         feed”) and paste this address. Episodes appear there as they are archived.
       </p>
+      <FeedCredentials feed={mirror} />
       <div className="rounded-lg border bg-card p-3">
         {selection ? (
           <p className="text-sm">

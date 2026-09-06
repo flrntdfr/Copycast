@@ -7,7 +7,9 @@ background task (the service applies the follow / Paused / cooldown rules).
 ``/feeds/{id}/media/{item_id}.{ext}`` is a ``FileResponse`` (Range 206/416,
 strong ETag) counted as a download only on a GET without Range or with a
 Range starting at byte 0. ``/feeds/{id}/assets/{basename}`` is matched
-against the feed's archived asset rows and never counted.
+against the feed's archived asset rows and never counted. While authentication
+is on, every route here takes the operator pair or the feed's own pair
+(``adapters.api.auth.require_feed_access``).
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
+from copycast.adapters.api.auth import FeedAccess
 from copycast.adapters.api.cache import CachedFeed, FeedCache
 from copycast.adapters.api.container import ApiContainer
 from copycast.adapters.api.deps import ContainerDep, FeedCacheDep, ServicesDep
@@ -32,7 +35,7 @@ from copycast.application.services import Services
 from copycast.domain.enums import FeedKind, JobTrigger
 from copycast.logging import get_logger
 
-router = APIRouter(tags=["public"])
+router = APIRouter(tags=["public"], dependencies=[FeedAccess])
 log = get_logger(__name__)
 
 FEED_CACHE_CONTROL = "no-cache"

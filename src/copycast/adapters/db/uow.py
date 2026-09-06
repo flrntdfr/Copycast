@@ -19,6 +19,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from copycast.adapters.db.repositories import (
+    ApiKeyRepository,
     AssetRepository,
     CatalogRepository,
     FeedRepository,
@@ -75,6 +76,7 @@ class UnitOfWork:
         self.requests = RequestRepository(session)
         self.jobs = JobRepository(session)
         self.telemetry = TelemetryRepository(session)
+        self.api_keys = ApiKeyRepository(session)
 
     # ------------------------------------------------------------------ hooks
 
