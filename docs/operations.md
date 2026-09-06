@@ -122,7 +122,8 @@ Apple Podcasts fetches the feed but not the audio.
 
 **API keys.** Minted and revoked on the *API keys* page (`/api/keys`), shown once, stored as a
 SHA-256 digest, with a scope: `read` (read-only tools), `write` (everything but deletions) or
-`full` (everything, including `delete_feed`, `delete_item` and `prune_inbox`). Every tool
+`full` (everything, including `delete_feed`, `delete_item`, `prune_inbox`, and setting an
+Inbox's Retention through `create_inbox` or `update_inbox`, since autoprune deletes). Every tool
 checks the scope before running and refuses with a `ToolError` naming the scope it needs.
 `last_used_at` is updated at most once a minute per key. Keys cannot mint keys: the key
 capabilities have no MCP tools. For Claude Code:
@@ -132,9 +133,21 @@ export COPYCAST_MCP_KEY=cck_...
 claude mcp add --transport http copycast https://copycast.example/mcp --header "Authorization: Bearer $COPYCAST_MCP_KEY"
 ```
 
-or in `.mcp.json`: `{"copycast": {"type": "http", "url": "https://copycast.example/mcp",
-"headers": {"Authorization": "Bearer ${COPYCAST_MCP_KEY}"}}}`. Claude Desktop and claude.ai
-custom connectors accept OAuth only and cannot use a key.
+or in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "copycast": {
+      "type": "http",
+      "url": "https://copycast.example/mcp",
+      "headers": { "Authorization": "Bearer ${COPYCAST_MCP_KEY}" }
+    }
+  }
+}
+```
+
+Claude Desktop and claude.ai custom connectors accept OAuth only and cannot use a key.
 
 **Turning it on later** breaks every existing subscription until each podcast app is given
 its feed's pair; agents need a key. Turning it off makes everything open again; the pairs

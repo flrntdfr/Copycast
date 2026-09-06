@@ -167,6 +167,27 @@ async def test_tools_are_gated_by_the_key_scope(
         assert inbox["name"] == "Later"
         with pytest.raises(ToolError, match="delete_feed needs an API key with scope 'full'"):
             await mcp.call_tool("delete_feed", {"feed_id": inbox["id"], "confirm": True})
+        # Retention deletes, so switching it on is a full-key action; renaming is not.
+        with pytest.raises(ToolError, match=r"update_inbox \(autoprune_days\) needs .* 'full'"):
+            await mcp.call_tool(
+                "update_inbox", {"inbox_id": inbox["id"], "patch": {"autoprune_days": 7}}
+            )
+        with pytest.raises(ToolError, match=r"create_inbox \(autoprune_days\) needs .* 'full'"):
+            await mcp.call_tool("create_inbox", {"inbox": {"name": "Pruned", "autoprune_days": 7}})
+        renamed = structured(
+            await mcp.call_tool(
+                "update_inbox", {"inbox_id": inbox["id"], "patch": {"name": "Soon"}}
+            )
+        )
+        assert renamed["name"] == "Soon" and renamed["autoprune_days"] is None
+
+    async with _Session(mcp_over_http(full)) as mcp:
+        pruned = structured(
+            await mcp.call_tool(
+                "update_inbox", {"inbox_id": inbox["id"], "patch": {"autoprune_days": 7}}
+            )
+        )
+        assert pruned["autoprune_days"] == 7
 
     async with _Session(mcp_over_http(full)) as mcp:
         deleted = structured(

@@ -418,3 +418,42 @@ async def test_rebuild_keeps_the_feed_pair_and_mints_one_for_old_descriptors(
         assert mirror is not None and inbox is not None
         assert (mirror.auth_username, mirror.auth_password) == pair
         assert len(inbox.auth_username) == 8 and len(inbox.auth_password) == 24
+        minted = (inbox.auth_username, inbox.auth_password)
+    # The minted pair is written back, so the next rebuild finds it instead of minting again.
+    on_disk = json.loads(inbox_descriptor.read_text(encoding="utf-8"))["feed"]
+    assert (on_disk["auth_username"], on_disk["auth_password"]) == minted
+    await rebuild(settings, yes=False, db_engine=db_engine)
+    async with sessionmaker() as session:
+        inbox = await session.get(Feed, inbox_id)
+        assert inbox is not None and (inbox.auth_username, inbox.auth_password) == minted
+
+
+async def test_rebuild_never_replaces_the_pair_of_a_row_that_still_exists(
+    uow_factory: UnitOfWorkFactory,
+    layout: Layout,
+    settings: Settings,
+    db_engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """After an upgrade the rows carry pairs (migration 0002) while feed.json does not yet."""
+    mirror_id, inbox_id = await _populate(uow_factory, layout)
+    pairs: dict[str, tuple[str, str]] = {}
+    async with sessionmaker() as session:
+        for feed_id in (mirror_id, inbox_id):
+            row = await session.get(Feed, feed_id)
+            assert row is not None
+            pairs[feed_id] = (row.auth_username, row.auth_password)
+        path = layout.descriptor_path(feed_id)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        del data["feed"]["auth_username"], data["feed"]["auth_password"]
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    report = await rebuild(settings, yes=False, db_engine=db_engine)
+    assert report.feeds_upserted == 3 and report.deleted_feeds == []
+    async with sessionmaker() as session:
+        for feed_id, pair in pairs.items():
+            row = await session.get(Feed, feed_id)
+            assert row is not None
+            assert (row.auth_username, row.auth_password) == pair, feed_id
+    on_disk = json.loads(layout.descriptor_path(inbox_id).read_text(encoding="utf-8"))["feed"]
+    assert (on_disk["auth_username"], on_disk["auth_password"]) == pairs[inbox_id]

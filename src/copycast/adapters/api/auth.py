@@ -32,7 +32,7 @@ from copycast.domain.credentials import constant_time_equals
 from copycast.domain.exceptions import Unauthorized
 from copycast.settings import AuthSettings
 
-OPEN_PREFIXES: tuple[str, ...] = ("/healthz",)
+HEALTH_PATH = "/healthz"
 """Never gated: compose healthchecks and Kubernetes probes send no credentials."""
 FEEDS_PREFIX = "/feeds/"
 MCP_PATH = "/mcp"
@@ -70,13 +70,15 @@ def is_operator(auth: AuthSettings, credentials: BasicCredentials | None) -> boo
     return user_ok and pass_ok
 
 
+def _under(path: str, prefix: str) -> bool:
+    return path == prefix or path.startswith(prefix + "/")
+
+
 def is_gated(path: str) -> bool:
     """Paths the operator middleware challenges (everything but health, feeds and MCP)."""
-    if path.startswith(OPEN_PREFIXES):
+    if _under(path, HEALTH_PATH) or _under(path, MCP_PATH):
         return False
-    if path.startswith(FEEDS_PREFIX):
-        return False
-    return not (path == MCP_PATH or path.startswith(MCP_PATH + "/"))
+    return not path.startswith(FEEDS_PREFIX)
 
 
 def unauthorized_response(path: str | None, detail: str) -> JSONResponse:
@@ -151,8 +153,8 @@ FeedAccess = Depends(require_feed_access)
 
 __all__ = [
     "FEEDS_PREFIX",
+    "HEALTH_PATH",
     "MCP_PATH",
-    "OPEN_PREFIXES",
     "BasicCredentials",
     "FeedAccess",
     "OperatorAuthMiddleware",

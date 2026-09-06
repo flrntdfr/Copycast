@@ -34,11 +34,17 @@ export function NewApiKeyDialog({ mcpUrl }: { mcpUrl: string }) {
   const [created, setCreated] = useState<ApiKeyCreated | null>(null);
   const create = useCreateApiKey();
 
-  const reset = () => {
-    setName("");
-    setScope("write");
-    setCreated(null);
+  // Every way out goes through here, so the secret is gone from state before the next open.
+  const setOpenAndReset = (next: boolean) => {
+    setOpen(next);
+    if (!next) {
+      setName("");
+      setScope("write");
+      setCreated(null);
+      create.reset();
+    }
   };
+  const close = () => setOpenAndReset(false);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const trimmed = name.trim();
@@ -47,13 +53,7 @@ export function NewApiKeyDialog({ mcpUrl }: { mcpUrl: string }) {
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) reset();
-      }}
-    >
+    <Dialog open={open} onOpenChange={setOpenAndReset}>
       <DialogTrigger asChild>
         <Button>
           <Plus /> New key
@@ -77,7 +77,7 @@ export function NewApiKeyDialog({ mcpUrl }: { mcpUrl: string }) {
               <CopyField label="Claude Code command" value={claudeCodeCommand(mcpUrl)} hideLabel />
             </div>
             <DialogFooter>
-              <Button type="button" onClick={() => setOpen(false)}>
+              <Button type="button" onClick={close}>
                 Done
               </Button>
             </DialogFooter>
@@ -125,7 +125,7 @@ export function NewApiKeyDialog({ mcpUrl }: { mcpUrl: string }) {
               </RadioGroup>
             </fieldset>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              <Button type="button" variant="outline" onClick={close}>
                 Cancel
               </Button>
               <Button type="submit" disabled={!name.trim() || create.isPending}>

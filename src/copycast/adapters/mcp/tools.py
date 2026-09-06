@@ -188,11 +188,21 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
     # ------------------------------------------------------------------ inboxes
 
     async def create_inbox(inbox: InboxCreate) -> InboxRead:
-        """Create an Inbox: a feed fed by Requests, prunable on demand or automatically."""
+        """Create an Inbox: a feed fed by Requests, prunable on demand or automatically.
+
+        Setting ``autoprune_days`` schedules deletions, so it needs a ``full`` key.
+        """
+        if inbox.autoprune_days is not None:
+            check_scope(KeyScope.full, "create_inbox (autoprune_days)")
         return await container.services.create_inbox(inbox)
 
     async def update_inbox(inbox_id: str, patch: InboxUpdate) -> InboxRead:
-        """Rename an Inbox or change ``autoprune_days`` (null switches autoprune off)."""
+        """Rename an Inbox or change ``autoprune_days`` (null switches autoprune off).
+
+        Switching Retention on schedules deletions, so it needs a ``full`` key.
+        """
+        if patch.autoprune_days is not None:
+            check_scope(KeyScope.full, "update_inbox (autoprune_days)")
         return await container.services.update_inbox(inbox_id, patch)
 
     async def add_to_inbox(request: RequestCreate, inbox: str = DEFAULT_INBOX) -> RequestRead:

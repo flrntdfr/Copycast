@@ -99,6 +99,14 @@ describe("API keys page", () => {
     );
     await user.click(within(shown).getByRole("button", { name: "Done" }));
 
+    // Exactly once: reopening the dialog starts a fresh form, the secret is gone.
+    await user.click(screen.getByRole("button", { name: "New key" }));
+    const again = await screen.findByRole("dialog", { name: "New API key" });
+    expect(within(again).getByLabelText("Name")).toHaveValue("");
+    expect(within(again).queryByLabelText("Secret")).not.toBeInTheDocument();
+    await user.click(within(again).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
     const row = await screen.findByTestId("key-row");
     expect(row).toHaveTextContent("Laptop");
     expect(row).toHaveTextContent("Full");
