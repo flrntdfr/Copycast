@@ -7,7 +7,7 @@
 
 services:
   fixtures:
-    image: python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e
+    image: python:3.14.7-slim-bookworm@sha256:9ab8d9c8514b44f90cf0029dd42fdd7e9e211e639c8b995304cc04568dee900f
     command: ["python", "-m", "http.server", "8000", "--bind", "0.0.0.0", "--directory", "/fixtures"]
     volumes:
       - ./tests/fixtures:/fixtures:ro
