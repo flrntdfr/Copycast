@@ -15,20 +15,23 @@
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [
-            jdk21
-            maven
-            # yt-dlp -x needs ffmpeg; the yt-dlp binary itself is managed by
-            # the app (pinned in config/application.yaml, see ADR 0002).
-            ffmpeg
-            # Optional: lets the Vaadin build use a system node instead of
-            # downloading its own.
+            python313
+            uv
             nodejs_22
+            ffmpeg
+            postgresql_17
+            ruff
+            pyright
+            jq
+            gnumake
           ];
 
-          JAVA_HOME = pkgs.jdk21.home;
+          # uv must use the Nix-provided interpreter, never download one.
+          UV_PYTHON = "${pkgs.python313}/bin/python3.13";
+          UV_PYTHON_DOWNLOADS = "never";
 
           shellHook = ''
-            echo "Copycast dev shell — Java $(java -version 2>&1 | head -1 | cut -d'\"' -f2), Maven $(mvn -v 2>/dev/null | head -1 | cut -d' ' -f3)"
+            echo "Copycast dev shell — $(python3.13 --version), uv $(uv --version | cut -d' ' -f2), node $(node --version)"
             echo "Run 'make help' for available targets."
           '';
         };

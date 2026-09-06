@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Example overlay: copy this directory, then change base_url in copycast.toml, the volume
+# size, the resource sizes and the image tag to taste.
+#   kubectl apply -k deploy/kubernetes/overlays/example
+
+resources:
+  - ../../base
+
+namespace: copycast
+
+configMapGenerator:
+  - name: copycast-config
+    behavior: replace
+    files:
+      - copycast.toml
+
+images:
+  - name: ghcr.io/flrntdfr/copycast
+    # Immutable tag: app version + engine version. `1.0.0` alone moves on every engine bump.
+    newTag: "1.0.0-yt2026.8.19"
+
+patches:
+  - path: data-pvc-size.yaml
+  - path: worker-resources.yaml

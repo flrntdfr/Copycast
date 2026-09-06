@@ -1,0 +1,36 @@
+<rss version="2.0">
+  <channel>
+    <title>Copycast Test Podcast</title>
+    <link>https://podcast.example/</link>
+    <description>A &lt;b&gt;fixture&lt;/b&gt; podcast exercising iTunes and Podcasting 2.0 tags.</description>
+    <language>en-us</language>
+    <copyright>© 2024 Fixture Media</copyright>
+    <itunes:author xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Fixture Media</itunes:author>
+    <itunes:owner xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+      <itunes:name>Fixture Media</itunes:name>
+      <itunes:email>podcast@podcast.example</itunes:email>
+    </itunes:owner>
+    <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="https://podcast.example/artwork.jpg"/>
+    <itunes:category xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" text="Technology"/>
+    <itunes:explicit xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">false</itunes:explicit>
+    <itunes:type xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">episodic</itunes:type>
+    <podcast:guid xmlns:podcast="https://podcastindex.org/namespace/1.0">7e9c6b2a-4c0f-4b3a-9a8c-2f1d0e5b6c7d</podcast:guid>
+    <podcast:locked xmlns:podcast="https://podcastindex.org/namespace/1.0" owner="podcast@podcast.example">no</podcast:locked>
+    <podcast:funding xmlns:podcast="https://podcastindex.org/namespace/1.0" url="https://podcast.example/support">Support the show</podcast:funding>
+    <podcast:person xmlns:podcast="https://podcastindex.org/namespace/1.0" href="https://podcast.example/host" img="https://podcast.example/host.jpg" role="host">Alex Host</podcast:person>
+    <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="http://testserver/feeds/0123456789abcdef.xml" rel="self" type="application/rss+xml"/>
+    <generator>Copycast 1.0.0</generator>
+    <lastBuildDate/>
+    <item>
+      <title>Episode 3: Guid is the permalink</title>
+      <link>https://podcast.example/episodes/3</link>
+      <guid isPermaLink="true">https://podcast.example/episodes/3</guid>
+      <pubDate/>
+      <description>The guid is a permalink that differs from the enclosure URL; identity follows the guid.</description>
+      <enclosure length="987654" type="audio/mp4" url="http://testserver/feeds/0123456789abcdef/media/i4.m4a"/>
+      <itunes:duration xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">12:34</itunes:duration>
+      <itunes:episode xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">3</itunes:episode>
+      <itunes:season xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">1</itunes:season>
+    </item>
+  </channel>
+</rss>

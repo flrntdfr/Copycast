@@ -1,0 +1,18 @@
+# Copycast configuration. Every key can be overridden with an environment
+# variable named COPYCAST__<SECTION>__<KEY> (double underscores), for example
+# COPYCAST__BASE_URL or COPYCAST__REFRESH__INTERVAL_HOURS. A missing file is
+# tolerated: the defaults below are also the built-in defaults.
+
+base_url     = "http://localhost:8080"
+data_dir     = "./data"
+database_url = "postgresql+psycopg://copycast:copycast@localhost:5432/copycast"   # postgresql:// is rewritten
+
+[refresh]
+interval_hours         = 24
+fetch_cooldown_minutes = 15
+concurrency            = 2
+
+[engine]
+channel = "nightly"          # informational: nightly | stable
+
+[engine.options]             # raw yt-dlp defaults; ENGINE_OWNED_OPTIONS rejected at startup

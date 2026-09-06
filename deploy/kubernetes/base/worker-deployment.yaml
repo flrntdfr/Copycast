@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: copycast-worker
+  labels:
+    app.kubernetes.io/name: copycast
+    app.kubernetes.io/component: worker
+spec:
+  # Exactly one worker: it holds a session-level advisory lock and a second one exits.
+  # Recreate stops the old pod (SIGTERM, jobs re-queued) before the new one starts.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: copycast
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: copycast
+        app.kubernetes.io/component: worker
+    spec:
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      # The data volume is ReadWriteOnce: the worker must land on the api's node.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: copycast
+                  app.kubernetes.io/component: api
+      containers:
+        - name: worker
+          image: ghcr.io/flrntdfr/copycast
+          args: ["worker"]
+          ports:
+            - name: health
+              containerPort: 8081
+          env:
+            # The api migrates; the worker waits up to five minutes for the schema head.
+            - name: COPYCAST_AUTO_MIGRATE
+              value: "false"
+            - name: COPYCAST__DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: copycast-db-app
+                  key: uri
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /healthz/ready
+              port: health
+            periodSeconds: 5
+            failureThreshold: 72
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: health
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz/live
+              port: health
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: copycast-data
+        - name: config
+          configMap:
+            name: copycast-config

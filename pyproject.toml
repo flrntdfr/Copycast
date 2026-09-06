@@ -1,0 +1,168 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "copycast"
+version = "1.0.0"
+description = "Self-hosted podcast mirroring and archiving service"
+requires-python = ">=3.13,<3.14"
+license = "MIT"
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.4",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    "sqlalchemy[asyncio]==2.0.52",
+    "psycopg[binary,pool]==3.3.5",
+    "alembic==1.19.2",
+    "structlog==26.1.0",
+    "httpx==0.28.1",
+    "sse-starlette==3.4.11",
+    "fastmcp==4.0.3",
+    "lxml==6.1.3",
+    "yt-dlp[default]==2026.8.19",
+    "click==8.5.0",
+    "packaging==26.3",
+]
+
+[project.scripts]
+copycast = "copycast.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "testcontainers[postgres]==4.15.0",
+    "respx==0.23.1",
+    "ruff==0.16.6",
+    "pyright==1.1.411",
+    "import-linter==2.15",
+    "anyio==4.15.1",
+]
+
+[tool.uv]
+# Every dependency is pinned with == above; Dependabot (uv ecosystem) proposes bumps and
+# engine-bump.yml moves yt-dlp with `uv add "yt-dlp[default]==<version>"`.
+prerelease = "if-necessary-or-explicit"
+required-version = ">=0.11.21,<0.12"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/copycast"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/copycast", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--strict-markers"
+markers = [
+    "integration: needs Postgres (testcontainers or COPYCAST_TEST_DATABASE_URL)",
+    "ffmpeg: needs ffmpeg on PATH",
+    "network: reaches the public internet; skipped unless COPYCAST_TEST_NETWORK=1",
+    "e2e: runs against a full compose stack",
+]
+filterwarnings = ["error::DeprecationWarning:copycast"]
+
+[tool.coverage.run]
+source = ["copycast"]
+branch = true
+concurrency = ["thread", "greenlet"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+    "\\.\\.\\.$",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+extend-exclude = ["web", "stubs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM", "RUF", "T20"]
+ignore = ["RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["T20"]
+"scripts/**" = ["T20"]
+"src/copycast/cli.py" = ["T20"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["copycast"]
+
+[tool.pyright]
+include = ["src"]
+stubPath = "stubs"
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+reportMissingModuleSource = false
+
+[tool.importlinter]
+root_package = "copycast"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Only the engine adapter imports yt_dlp"
+type = "forbidden"
+source_modules = [
+    "copycast.domain",
+    "copycast.application",
+    "copycast.adapters.api",
+    "copycast.adapters.mcp",
+    "copycast.adapters.db",
+    "copycast.adapters.storage",
+    "copycast.adapters.sources",
+    "copycast.adapters.feeds",
+    "copycast.adapters.assets",
+    "copycast.worker",
+    "copycast.cli",
+    "copycast.settings",
+    "copycast.app",
+]
+forbidden_modules = ["yt_dlp"]
+
+[[tool.importlinter.contracts]]
+name = "Domain imports no other copycast package"
+type = "forbidden"
+source_modules = ["copycast.domain"]
+forbidden_modules = [
+    "copycast.application",
+    "copycast.adapters",
+    "copycast.worker",
+    "copycast.settings",
+    "copycast.app",
+    "copycast.cli",
+    "copycast.logging",
+]
+
+[[tool.importlinter.contracts]]
+name = "Application never imports adapters"
+type = "forbidden"
+source_modules = ["copycast.application"]
+forbidden_modules = ["copycast.adapters", "copycast.worker"]
+
+[[tool.importlinter.contracts]]
+name = "API and MCP adapters import application only"
+type = "forbidden"
+source_modules = ["copycast.adapters.api", "copycast.adapters.mcp"]
+forbidden_modules = [
+    "copycast.adapters.db",
+    "copycast.adapters.storage",
+    "copycast.adapters.engine",
+    "copycast.adapters.sources",
+    "copycast.adapters.feeds",
+    "copycast.adapters.assets",
+    "copycast.worker",
+]

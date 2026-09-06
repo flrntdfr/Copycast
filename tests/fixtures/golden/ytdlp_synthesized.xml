@@ -1,0 +1,52 @@
+<rss version="2.0">
+  <channel>
+    <title>Fixture Channel - Videos</title>
+    <link>https://www.youtube.com/@fixturechannel/videos</link>
+    <description>A channel used by the Copycast test suite.</description>
+    <language>en</language>
+    <itunes:author xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Fixture Channel</itunes:author>
+    <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="https://yt3.example/avatar=s900"/>
+    <itunes:type xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">episodic</itunes:type>
+    <itunes:explicit xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">false</itunes:explicit>
+    <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="http://testserver/feeds/0123456789abcdef.xml" rel="self" type="application/rss+xml"/>
+    <generator>Copycast 1.0.0</generator>
+    <lastBuildDate/>
+    <item>
+      <title>Fixture video four</title>
+      <description>The newest upload.</description>
+      <link>https://www.youtube.com/watch?v=vid00000004</link>
+      <guid isPermaLink="false">https://www.youtube.com/watch?v=vid00000004</guid>
+      <pubDate/>
+      <enclosure length="12200000" type="audio/mp4" url="http://testserver/feeds/0123456789abcdef/media/v4.m4a"/>
+      <itunes:duration xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">1830</itunes:duration>
+      <itunes:episode xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">4</itunes:episode>
+      <itunes:episodeType xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">full</itunes:episodeType>
+      <itunes:author xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Fixture Channel</itunes:author>
+      <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="https://i.ytimg.example/vi/vid00000004/hqdefault.jpg"/>
+      <podcast:chapters xmlns:podcast="https://podcastindex.org/namespace/1.0" type="application/json+chapters" url="http://testserver/feeds/0123456789abcdef/assets/v4.chapters.json"/>
+      <podcast:transcript xmlns:podcast="https://podcastindex.org/namespace/1.0" language="en" rel="captions" type="text/vtt" url="http://testserver/feeds/0123456789abcdef/assets/v4.transcript.en.mirrored.vtt"/>
+    </item>
+    <item>
+      <title>Fixture video three (premiere)</title>
+      <link>https://www.youtube.com/watch?v=vid00000003</link>
+      <guid isPermaLink="false">https://www.youtube.com/watch?v=vid00000003</guid>
+      <pubDate/>
+      <enclosure length="5155" type="audio/mp4" url="http://testserver/feeds/0123456789abcdef/media/v3.m4a"/>
+      <itunes:duration xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">600</itunes:duration>
+      <itunes:episode xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">3</itunes:episode>
+      <itunes:episodeType xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">full</itunes:episodeType>
+      <itunes:author xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Fixture Channel</itunes:author>
+      <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/feeds/0123456789abcdef/assets/v3.artwork.jpg"/>
+    </item>
+    <item>
+      <title>Fixture video two</title>
+      <guid isPermaLink="false">urn:copycast:v2</guid>
+      <pubDate/>
+      <enclosure length="5155" type="audio/opus" url="http://testserver/feeds/0123456789abcdef/media/v2.opus"/>
+      <itunes:duration xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">245</itunes:duration>
+      <itunes:episode xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">2</itunes:episode>
+      <itunes:episodeType xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">full</itunes:episodeType>
+      <itunes:author xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Fixture Channel</itunes:author>
+    </item>
+  </channel>
+</rss>

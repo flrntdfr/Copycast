@@ -1,0 +1,81 @@
+{
+  "id": "PLfixture0123456789abcdefghijklmnop",
+  "title": "Fixture Playlist",
+  "description": "An ordered playlist: playlist_index is the Source numbering.",
+  "availability": "public",
+  "modified_date": "20240301",
+  "view_count": 4321,
+  "playlist_count": 3,
+  "channel": "Fixture Channel",
+  "channel_id": "UCfixture0123456789abcdef",
+  "uploader": "Fixture Channel",
+  "uploader_id": "@fixturechannel",
+  "uploader_url": "https://www.youtube.com/@fixturechannel",
+  "channel_url": "https://www.youtube.com/channel/UCfixture0123456789abcdef",
+  "thumbnails": [
+    {"url": "https://i.ytimg.example/vi/vid00000010/hqdefault.jpg", "height": 360, "width": 480}
+  ],
+  "webpage_url": "https://www.youtube.com/playlist?list=PLfixture0123456789abcdefghijklmnop",
+  "original_url": "https://www.youtube.com/playlist?list=PLfixture0123456789abcdefghijklmnop",
+  "webpage_url_basename": "playlist",
+  "extractor": "youtube:tab",
+  "extractor_key": "YoutubeTab",
+  "_type": "playlist",
+  "entries": [
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "vid00000010",
+      "url": "https://www.youtube.com/watch?v=vid00000010",
+      "title": "Part 1: Getting started",
+      "description": "First in the series.",
+      "duration": 900,
+      "channel": "Fixture Channel",
+      "channel_id": "UCfixture0123456789abcdef",
+      "uploader": "Fixture Channel",
+      "thumbnails": [
+        {"url": "https://i.ytimg.example/vi/vid00000010/hqdefault.jpg", "height": 360, "width": 480}
+      ],
+      "timestamp": 1704067200,
+      "webpage_url": "https://www.youtube.com/watch?v=vid00000010",
+      "playlist_index": 1
+    },
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "vid00000011",
+      "url": "https://www.youtube.com/watch?v=vid00000011",
+      "title": "Part 2: Going deeper",
+      "description": null,
+      "duration": 1200,
+      "channel": "Fixture Channel",
+      "channel_id": "UCfixture0123456789abcdef",
+      "uploader": "Fixture Channel",
+      "thumbnails": [
+        {"url": "https://i.ytimg.example/vi/vid00000011/hqdefault.jpg", "height": 360, "width": 480}
+      ],
+      "timestamp": 1704672000,
+      "webpage_url": "https://www.youtube.com/watch?v=vid00000011",
+      "playlist_index": 2
+    },
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "vid00000012",
+      "url": "https://www.youtube.com/watch?v=vid00000012",
+      "title": "Part 3: Wrapping up",
+      "description": "Last in the series.",
+      "duration": 660,
+      "channel": "Fixture Channel",
+      "channel_id": "UCfixture0123456789abcdef",
+      "uploader": "Fixture Channel",
+      "thumbnails": [
+        {"url": "https://i.ytimg.example/vi/vid00000012/hqdefault.jpg", "height": 360, "width": 480}
+      ],
+      "timestamp": 1705276800,
+      "webpage_url": "https://www.youtube.com/watch?v=vid00000012",
+      "playlist_index": 3
+    }
+  ],
+  "epoch": 1710001000
+}

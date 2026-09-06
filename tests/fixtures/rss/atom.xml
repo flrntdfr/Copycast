@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>An Atom feed, not RSS</title>
+  <link href="https://atom.example/"/>
+  <updated>2024-03-01T10:00:00Z</updated>
+  <id>urn:uuid:8f4c1c2e-3a5b-4d6e-9f70-1a2b3c4d5e6f</id>
+  <entry>
+    <title>Entry one</title>
+    <link rel="enclosure" href="https://atom.example/media/1.mp3" type="audio/mpeg" length="1"/>
+    <id>urn:uuid:1</id>
+    <updated>2024-03-01T10:00:00Z</updated>
+  </entry>
+</feed>

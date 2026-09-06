@@ -1,0 +1,19 @@
+# CloudNativePG cluster. The operator creates the secret `copycast-db-app` whose `uri` key
+# holds postgresql://copycast:<password>@copycast-db-rw:5432/copycast; the app rewrites the
+# scheme to postgresql+psycopg itself.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: copycast-db
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11-standard-bookworm@sha256:e8ffaff9d17011fb71f264d857c3b4c54cb86ed0443a4ecb0298cb96be708d4e
+  storage:
+    size: 10Gi
+  bootstrap:
+    initdb:
+      database: copycast
+      owner: copycast
+  postgresql:
+    parameters:
+      max_connections: "100"

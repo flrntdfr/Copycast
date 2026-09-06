@@ -1,0 +1,32 @@
+<rss version="2.0">
+  <channel>
+    <title>Copycast</title>
+    <link>http://testserver/</link>
+    <description>Copycast</description>
+    <language>en</language>
+    <itunes:type xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">episodic</itunes:type>
+    <itunes:explicit xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">false</itunes:explicit>
+    <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="http://testserver/feeds/copycast-abc234.xml" rel="self" type="application/rss+xml"/>
+    <generator>Copycast 1.0.0</generator>
+    <lastBuildDate/>
+    <item>
+      <title>A single fixture video</title>
+      <link>https://www.youtube.com/watch?v=vid00000042</link>
+      <guid isPermaLink="false">https://www.youtube.com/watch?v=vid00000042</guid>
+      <pubDate/>
+      <enclosure length="5155" type="audio/mp4" url="http://testserver/feeds/copycast-abc234/media/r1.m4a"/>
+      <itunes:duration xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">754</itunes:duration>
+      <itunes:episode xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">1</itunes:episode>
+      <itunes:episodeType xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">full</itunes:episodeType>
+    </item>
+    <item>
+      <title>Part 1: Getting started</title>
+      <link>https://www.youtube.com/watch?v=vid00000010</link>
+      <guid isPermaLink="false">https://www.youtube.com/watch?v=vid00000010</guid>
+      <pubDate/>
+      <enclosure length="5155" type="audio/mp4" url="http://testserver/feeds/copycast-abc234/media/r2.m4a"/>
+      <itunes:episode xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">1</itunes:episode>
+      <itunes:episodeType xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">full</itunes:episodeType>
+    </item>
+  </channel>
+</rss>

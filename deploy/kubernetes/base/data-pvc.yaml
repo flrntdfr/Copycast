@@ -1,0 +1,13 @@
+# The data directory: media, sidecars, original Source XML, assets and feed.json descriptors.
+# ReadWriteOnce is enough for one api pod and one worker pod co-located on the same node
+# (see the worker's podAffinity). Switch to ReadWriteMany if you raise api.replicas above 1.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: copycast-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 200Gi

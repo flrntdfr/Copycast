@@ -1,28 +1,50 @@
-# Dependabot version updates. Documentation:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
+# Every dependency in this repository is pinned exactly (pyproject.toml ==, package.json exact,
+# Docker images by tag@digest, GitHub Actions by commit SHA, nixpkgs by flake.lock). Dependabot is
+# the only thing that moves them: it opens a PR whenever a newer release exists, and CI decides.
+# yt-dlp is excluded on purpose: engine-bump.yml re-pins it every six hours and the image tag
+# :<app>-yt<engine> records which build shipped which engine.
 version: 2
 updates:
-  # Maven dependencies (Spring Boot, Vaadin, plugins) from pom.xml
-  - package-ecosystem: "maven"
-    directory: "/"
+  - package-ecosystem: uv
+    directory: /
     schedule:
-      interval: "weekly"
+      interval: daily
+    ignore:
+      - dependency-name: yt-dlp
     groups:
-      # One PR for routine minor/patch bumps; majors stay separate.
-      minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
+      python-minor-and-patch:
+        update-types: ["minor", "patch"]
+    labels: ["dependencies", "python"]
 
-  # Actions used in .github/workflows
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  - package-ecosystem: npm
+    directory: /web
     schedule:
-      interval: "weekly"
+      interval: daily
+    groups:
+      web-minor-and-patch:
+        update-types: ["minor", "patch"]
+    labels: ["dependencies", "web"]
 
-  # Base images in the Dockerfile (maven, eclipse-temurin)
-  - package-ecosystem: "docker"
-    directory: "/"
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
-      interval: "weekly"
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: ["dependencies", "ci"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: ["dependencies", "docker"]
+
+  - package-ecosystem: docker-compose
+    directories: ["/", "/deploy/compose"]
+    schedule:
+      interval: weekly
+      day: monday
+    labels: ["dependencies", "docker"]

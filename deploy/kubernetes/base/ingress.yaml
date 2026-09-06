@@ -1,0 +1,16 @@
+# Exposed by the Tailscale Kubernetes operator as https://copycast.<tailnet>.ts.net.
+# The tailnet is the security boundary: Copycast has no authentication of its own.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: copycast
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: copycast
+      port:
+        name: http
+  tls:
+    - hosts:
+        - copycast

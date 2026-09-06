@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  End-to-end fixture: served by the `fixtures` service of docker-compose.ci.yml as
+  http://fixtures:8000/rss/e2e_feed.xml. Every enclosure and artwork URL points back at that
+  server so the worker inside the compose stack can archive the items for real (yt-dlp +
+  ffmpeg over tests/fixtures/media). Enclosure lengths equal the size of media/tiny.mp3.
+-->
+<rss version="2.0"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0"
+     xmlns:atom="http://www.w3.org/2005/Atom"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Copycast E2E Podcast</title>
+    <link>http://fixtures:8000/</link>
+    <description><![CDATA[A tiny podcast whose media lives on the compose fixtures server.]]></description>
+    <language>en-us</language>
+    <copyright>&#169; 2024 Fixture Media</copyright>
+    <generator>FixtureCast 1.0</generator>
+    <lastBuildDate>Mon, 15 Jan 2024 09:00:00 GMT</lastBuildDate>
+    <atom:link href="http://fixtures:8000/rss/e2e_feed.xml" rel="self" type="application/rss+xml"/>
+    <itunes:author>Fixture Media</itunes:author>
+    <itunes:owner>
+      <itunes:name>Fixture Media</itunes:name>
+      <itunes:email>podcast@podcast.example</itunes:email>
+    </itunes:owner>
+    <itunes:image href="http://fixtures:8000/media/tiny.jpg"/>
+    <itunes:category text="Technology"/>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <podcast:guid>3b1f2c6e-9d4a-4e2b-8f7c-1a5d9e0b6c4f</podcast:guid>
+
+    <item>
+      <title>Episode 3: The newest one</title>
+      <itunes:title>The newest one</itunes:title>
+      <link>http://fixtures:8000/episodes/3</link>
+      <guid isPermaLink="false">urn:e2e:episode:3</guid>
+      <pubDate>Mon, 15 Jan 2024 08:00:00 GMT</pubDate>
+      <description><![CDATA[<p>The <em>third</em> episode, one second of silence.</p>]]></description>
+      <content:encoded><![CDATA[<p>Show notes for episode three.</p>]]></content:encoded>
+      <enclosure url="http://fixtures:8000/media/tiny.mp3?episode=3" length="4407" type="audio/mpeg"/>
+      <itunes:duration>00:00:01</itunes:duration>
+      <itunes:episode>3</itunes:episode>
+      <itunes:season>1</itunes:season>
+      <itunes:episodeType>full</itunes:episodeType>
+      <itunes:explicit>false</itunes:explicit>
+      <itunes:author>Alex Host</itunes:author>
+      <itunes:image href="http://fixtures:8000/media/tiny.jpg"/>
+    </item>
+
+    <item>
+      <title>Episode 2: The middle one</title>
+      <link>http://fixtures:8000/episodes/2</link>
+      <guid isPermaLink="false">urn:e2e:episode:2</guid>
+      <pubDate>Mon, 08 Jan 2024 08:00:00 +0000</pubDate>
+      <description>Plain text description with an ampersand &amp; a dash &#8212; here.</description>
+      <enclosure url="http://fixtures:8000/media/tiny.mp3?episode=2" length="4407" type="audio/mpeg"/>
+      <itunes:duration>1</itunes:duration>
+      <itunes:episode>2</itunes:episode>
+      <itunes:season>1</itunes:season>
+      <itunes:episodeType>full</itunes:episodeType>
+    </item>
+
+    <item>
+      <title>Episode 1: The first one</title>
+      <link>http://fixtures:8000/episodes/1</link>
+      <guid isPermaLink="false">urn:e2e:episode:1</guid>
+      <pubDate>Mon, 01 Jan 2024 08:00:00 GMT</pubDate>
+      <description>Where it all began.</description>
+      <enclosure url="http://fixtures:8000/media/tiny.mp3?episode=1" length="4407" type="audio/mpeg"/>
+      <itunes:duration>00:00:01</itunes:duration>
+      <itunes:episode>1</itunes:episode>
+      <itunes:season>1</itunes:season>
+      <itunes:image href="http://fixtures:8000/media/tiny.jpg"/>
+    </item>
+  </channel>
+</rss>

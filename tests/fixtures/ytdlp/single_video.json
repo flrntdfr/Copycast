@@ -1,0 +1,78 @@
+{
+  "id": "vid00000042",
+  "title": "A single fixture video",
+  "fulltitle": "A single fixture video",
+  "description": "One video pasted into an Inbox.",
+  "duration": 754,
+  "duration_string": "12:34",
+  "timestamp": 1706745600,
+  "upload_date": "20240201",
+  "release_timestamp": null,
+  "channel": "Fixture Channel",
+  "channel_id": "UCfixture0123456789abcdef",
+  "channel_url": "https://www.youtube.com/channel/UCfixture0123456789abcdef",
+  "uploader": "Fixture Channel",
+  "uploader_id": "@fixturechannel",
+  "uploader_url": "https://www.youtube.com/@fixturechannel",
+  "thumbnail": "https://i.ytimg.example/vi/vid00000042/maxresdefault.jpg",
+  "thumbnails": [
+    {"url": "https://i.ytimg.example/vi/vid00000042/hqdefault.jpg", "height": 360, "width": 480, "id": "1"},
+    {"url": "https://i.ytimg.example/vi/vid00000042/maxresdefault.jpg", "height": 720, "width": 1280, "id": "2"}
+  ],
+  "chapters": [
+    {"start_time": 0.0, "end_time": 120.0, "title": "Intro"},
+    {"start_time": 120.0, "end_time": 600.0, "title": "Main topic"},
+    {"start_time": 600.0, "end_time": 754.0, "title": "Outro"}
+  ],
+  "categories": ["Education"],
+  "tags": ["fixture", "copycast"],
+  "language": "en",
+  "availability": "public",
+  "live_status": "not_live",
+  "view_count": 4242,
+  "like_count": 42,
+  "age_limit": 0,
+  "webpage_url": "https://www.youtube.com/watch?v=vid00000042",
+  "original_url": "https://www.youtube.com/watch?v=vid00000042",
+  "webpage_url_basename": "watch",
+  "extractor": "youtube",
+  "extractor_key": "Youtube",
+  "playlist": null,
+  "playlist_index": null,
+  "subtitles": {
+    "en": [
+      {"ext": "vtt", "url": "https://subs.example/vid00000042.en.vtt", "name": "English"}
+    ]
+  },
+  "automatic_captions": {},
+  "formats": [
+    {
+      "format_id": "140",
+      "format_note": "medium",
+      "ext": "m4a",
+      "acodec": "mp4a.40.2",
+      "vcodec": "none",
+      "abr": 129.5,
+      "asr": 44100,
+      "audio_channels": 2,
+      "filesize": 12200000,
+      "url": "https://media.example/vid00000042/140.m4a",
+      "protocol": "https"
+    },
+    {
+      "format_id": "251",
+      "format_note": "medium",
+      "ext": "webm",
+      "acodec": "opus",
+      "vcodec": "none",
+      "abr": 120.0,
+      "asr": 48000,
+      "audio_channels": 2,
+      "filesize": 11300000,
+      "url": "https://media.example/vid00000042/251.webm",
+      "protocol": "https"
+    }
+  ],
+  "_type": "video",
+  "epoch": 1710001000
+}

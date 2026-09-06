@@ -1,17 +1,34 @@
-target/
-data/
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
 
-# Vaadin generated frontend tooling (recreated by prepare-frontend)
+# uv
+.venv/
+
+# Node / web
 node_modules/
-src/main/frontend/generated/
-src/main/bundles/
-src/main/dev-bundle/
-package.json
-package-lock.json
-tsconfig.json
-types.d.ts
-vite.config.ts
-vite.generated.ts
+web/dist/
+web/src/api/schema.d.ts
+web/test-results/
+web/playwright-report/
+web/blob-report/
+
+# Runtime data
+data/
+.env
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # IDE
 .idea/

@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Parser edge cases. Expected outcome per item is stated in its comment. -->
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>  Edge Cases &amp; Oddities  </title>
+    <link>https://edge.example</link>
+    <description></description>
+    <itunes:image href="artwork.png"/>
+
+    <!-- 1. Whitespace around the guid: identity is the trimmed guid text. -->
+    <item>
+      <title>Padded guid</title>
+      <guid>
+        urn:edge:padded
+      </guid>
+      <pubDate>Sun, 03 Mar 2024 10:00:00 GMT</pubDate>
+      <enclosure url="https://edge.example/media/padded.mp3" length="1" type="audio/mpeg"/>
+    </item>
+
+    <!-- 2. Duplicate guid: the second occurrence is dropped. -->
+    <item>
+      <title>Duplicate guid (first)</title>
+      <guid isPermaLink="false">urn:edge:dup</guid>
+      <pubDate>Sat, 02 Mar 2024 10:00:00 GMT</pubDate>
+      <enclosure url="https://edge.example/media/dup-1.mp3" length="1" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>Duplicate guid (second)</title>
+      <guid isPermaLink="false">urn:edge:dup</guid>
+      <pubDate>Sat, 02 Mar 2024 11:00:00 GMT</pubDate>
+      <enclosure url="https://edge.example/media/dup-2.mp3" length="1" type="audio/mpeg"/>
+    </item>
+
+    <!-- 3. No guid: identity is the enclosure URL. -->
+    <item>
+      <title>Enclosure identity</title>
+      <pubDate>Fri, 01 Mar 2024 10:00:00 GMT</pubDate>
+      <enclosure url="https://edge.example/media/noguid.mp3" length="1" type="audio/mpeg"/>
+    </item>
+
+    <!-- 4. Guid but no enclosure: listed, archivable=false. -->
+    <item>
+      <title>No enclosure</title>
+      <guid isPermaLink="false">urn:edge:noenclosure</guid>
+      <pubDate>Thu, 29 Feb 2024 10:00:00 GMT</pubDate>
+      <description>A blog post masquerading as an episode.</description>
+    </item>
+
+    <!-- 5. Neither guid nor enclosure: skipped entirely. -->
+    <item>
+      <title>Nothing to identify</title>
+      <pubDate>Wed, 28 Feb 2024 10:00:00 GMT</pubDate>
+    </item>
+
+    <!-- 6. Empty guid element falls back to the enclosure URL. -->
+    <item>
+      <title>Empty guid</title>
+      <guid></guid>
+      <pubDate>Tue, 27 Feb 2024 10:00:00 GMT</pubDate>
+      <enclosure url="https://edge.example/media/emptyguid.mp3" length="1" type="audio/mpeg"/>
+    </item>
+
+    <!-- 7. Enclosure without length or type; itunes:duration with fractional seconds. -->
+    <item>
+      <title>Bare enclosure</title>
+      <guid isPermaLink="false">urn:edge:bare</guid>
+      <pubDate>Mon, 26 Feb 2024 10:00:00 GMT</pubDate>
+      <enclosure url="https://edge.example/media/bare"/>
+      <itunes:duration>1234.5</itunes:duration>
+    </item>
+
+    <!-- 8. Unparseable and missing dates: published_at is None, item still listed. -->
+    <item>
+      <title>Bad date</title>
+      <guid isPermaLink="false">urn:edge:baddate</guid>
+      <pubDate>yesterday-ish</pubDate>
+      <enclosure url="https://edge.example/media/baddate.mp3" length="1" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>No date</title>
+      <guid isPermaLink="false">urn:edge:nodate</guid>
+      <enclosure url="https://edge.example/media/nodate.mp3" length="1" type="audio/mpeg"/>
+    </item>
+
+    <!-- 9. Empty title: a placeholder title is derived (guid or enclosure basename). -->
+    <item>
+      <title></title>
+      <guid isPermaLink="false">urn:edge:untitled</guid>
+      <pubDate>Sun, 25 Feb 2024 10:00:00 GMT</pubDate>
+      <enclosure url="https://edge.example/media/untitled.mp3" length="1" type="audio/mpeg"/>
+    </item>
+
+    <!-- 10. Relative enclosure and artwork URLs, resolved against the channel link. -->
+    <item>
+      <title>Relative URLs</title>
+      <guid isPermaLink="false">urn:edge:relative</guid>
+      <pubDate>Sat, 24 Feb 2024 10:00:00 GMT</pubDate>
+      <enclosure url="/media/relative.mp3" length="1" type="audio/mpeg"/>
+      <itunes:image href="images/relative.jpg"/>
+    </item>
+
+    <!-- 11. HTML entities and nested markup in the title; itunes:episode with junk. -->
+    <item>
+      <title>Entities &lt;b&gt;bold&lt;/b&gt; &amp; &#8220;quotes&#8221;</title>
+      <guid isPermaLink="false">urn:edge:entities</guid>
+      <pubDate>Fri, 23 Feb 2024 10:00:00 GMT</pubDate>
+      <enclosure url="https://edge.example/media/entities.mp3" length="1" type="audio/mpeg"/>
+      <itunes:episode>#12</itunes:episode>
+      <itunes:season>two</itunes:season>
+    </item>
+
+    <!-- 12. Two enclosures: the first audio one wins. -->
+    <item>
+      <title>Two enclosures</title>
+      <guid isPermaLink="false">urn:edge:two</guid>
+      <pubDate>Thu, 22 Feb 2024 10:00:00 GMT</pubDate>
+      <enclosure url="https://edge.example/media/two.pdf" length="1" type="application/pdf"/>
+      <enclosure url="https://edge.example/media/two.mp3" length="1" type="audio/mpeg"/>
+      <media:content url="https://edge.example/media/two.mp4" type="video/mp4"/>
+    </item>
+
+    <!-- 13. Date with a numeric zone and a two-digit year style (RFC 822 variant). -->
+    <item>
+      <title>Odd date formats</title>
+      <guid isPermaLink="false">urn:edge:odddate</guid>
+      <pubDate>Wed, 21 Feb 24 10:00:00 +0100</pubDate>
+      <enclosure url="https://edge.example/media/odddate.mp3" length="1" type="audio/mpeg"/>
+    </item>
+  </channel>
+</rss>

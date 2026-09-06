@@ -1,0 +1,11 @@
+base_url = "https://copycast.tail1234.ts.net"
+
+[refresh]
+interval_hours         = 12
+fetch_cooldown_minutes = 15
+concurrency            = 3
+
+[engine]
+channel = "nightly"
+
+[engine.options]

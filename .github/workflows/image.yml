@@ -1,0 +1,204 @@
+name: Image
+
+# Builds the multi-arch image natively (amd64 + arm64 runners), pushes it by digest, merges
+# the manifest as :sha-<short>, smoke-tests that, then moves the tags:
+#   :<app>              moves on every push, including engine bumps
+#   :<app>-yt<engine>   immutable: app version + engine version
+#   :latest             the newest successful build
+# and creates the git tag v<app> + a GitHub Release the first time an app version ships.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: image
+  cancel-in-progress: false
+
+env:
+  REGISTRY_IMAGE: ghcr.io/flrntdfr/copycast
+
+jobs:
+  meta:
+    name: Versions
+    runs-on: ubuntu-24.04
+    outputs:
+      app: ${{ steps.versions.outputs.app }}
+      engine: ${{ steps.versions.outputs.engine }}
+      sha: ${{ steps.versions.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: "0.11.21"
+      - id: versions
+        run: |
+          {
+            echo "app=$(uv version --short)"
+            echo "engine=$(python3 scripts/engine_version.py)"
+            echo "sha=${GITHUB_SHA::7}"
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: meta
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Platform slug
+        id: slug
+        run: echo "value=${{ matrix.platform }}" | tr '/' '-' >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        id: meta
+        with:
+          images: ${{ env.REGISTRY_IMAGE }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.meta.outputs.app }}
+            xyz.dufour.copycast.engine-version=${{ needs.meta.outputs.engine }}
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        id: build
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ needs.meta.outputs.app }}
+            ENGINE_VERSION=${{ needs.meta.outputs.engine }}
+          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=image-${{ steps.slug.outputs.value }}
+          cache-to: type=gha,mode=max,scope=image-${{ steps.slug.outputs.value }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: digests-${{ steps.slug.outputs.value }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge manifest
+    needs: [meta, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create :sha-${{ needs.meta.outputs.sha }}
+        working-directory: /tmp/digests
+        run: |
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            --tag "$REGISTRY_IMAGE:sha-${{ needs.meta.outputs.sha }}" \
+            $(printf "$REGISTRY_IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$REGISTRY_IMAGE:sha-${{ needs.meta.outputs.sha }}"
+
+  smoke:
+    name: Smoke test
+    needs: [meta, merge]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull
+        run: docker pull "$REGISTRY_IMAGE:sha-${{ needs.meta.outputs.sha }}"
+
+      - name: Smoke
+        env:
+          SMOKE_APP_VERSION: ${{ needs.meta.outputs.app }}
+          SMOKE_ENGINE_VERSION: ${{ needs.meta.outputs.engine }}
+        run: scripts/smoke.sh "$REGISTRY_IMAGE:sha-${{ needs.meta.outputs.sha }}"
+
+  tag:
+    name: Tag
+    needs: [meta, smoke]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move the tags
+        run: |
+          src="$REGISTRY_IMAGE:sha-${{ needs.meta.outputs.sha }}"
+          docker buildx imagetools create "$src" \
+            --tag "$REGISTRY_IMAGE:${{ needs.meta.outputs.app }}" \
+            --tag "$REGISTRY_IMAGE:${{ needs.meta.outputs.app }}-yt${{ needs.meta.outputs.engine }}" \
+            --tag "$REGISTRY_IMAGE:latest"
+
+  release:
+    name: Release
+    needs: [meta, tag]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Create v${{ needs.meta.outputs.app }} when absent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP: ${{ needs.meta.outputs.app }}
+          ENGINE: ${{ needs.meta.outputs.engine }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v$APP" >/dev/null; then
+            echo "tag v$APP exists; nothing to release"
+            exit 0
+          fi
+          git tag "v$APP" "$GITHUB_SHA"
+          git push origin "refs/tags/v$APP"
+          gh release create "v$APP" \
+            --title "Copycast $APP" \
+            --generate-notes \
+            --notes "Image: \`$REGISTRY_IMAGE:$APP\` (engine yt-dlp $ENGINE, immutable tag \`$APP-yt$ENGINE\`)."

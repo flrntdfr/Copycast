@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Paged Podcast</title>
+    <link>https://paged.example/</link>
+    <description>The second and last page.</description>
+    <language>en</language>
+    <atom:link href="https://paged.example/feed.xml?page=2" rel="self" type="application/rss+xml"/>
+    <atom:link href="paged_1.xml" rel="prev" type="application/rss+xml"/>
+    <item>
+      <title>Page two, episode 3 (repeated on both pages)</title>
+      <guid isPermaLink="false">urn:paged:episode:3</guid>
+      <pubDate>Wed, 03 Apr 2024 08:00:00 GMT</pubDate>
+      <enclosure url="https://paged.example/media/3.mp3" length="4407" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>Page two, episode 2</title>
+      <guid isPermaLink="false">urn:paged:episode:2</guid>
+      <pubDate>Tue, 02 Apr 2024 08:00:00 GMT</pubDate>
+      <enclosure url="https://paged.example/media/2.mp3" length="4407" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>Page two, episode 1</title>
+      <guid isPermaLink="false">urn:paged:episode:1</guid>
+      <pubDate>Mon, 01 Apr 2024 08:00:00 GMT</pubDate>
+      <enclosure url="https://paged.example/media/1.mp3" length="4407" type="audio/mpeg"/>
+    </item>
+  </channel>
+</rss>

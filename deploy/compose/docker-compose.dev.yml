@@ -1,0 +1,22 @@
+# Development Postgres only, for `make db-up` / `make db-down`.
+# Matches the default database_url in config/copycast.toml:
+#   postgresql+psycopg://copycast:copycast@localhost:5432/copycast
+services:
+  postgres:
+    image: postgres:17.11@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
+    environment:
+      POSTGRES_USER: copycast
+      POSTGRES_PASSWORD: copycast
+      POSTGRES_DB: copycast
+    ports:
+      - "${COPYCAST_DEV_PG_PORT:-5432}:5432"
+    volumes:
+      - pgdata-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U copycast -d copycast"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata-dev:

@@ -1,0 +1,119 @@
+name: Engine bump
+
+# Every six hours: pin uv.lock to the newest yt-dlp on the configured channel, run the engine
+# tests, and push the change to main. The push is made with a GitHub App token because a
+# push made with GITHUB_TOKEN does not trigger image.yml.
+#
+# Repository configuration:
+#   vars.ENGINE_BUMP_APP_ID + secrets.ENGINE_BUMP_APP_PRIVATE_KEY   GitHub App with contents:write
+#   vars.ENGINE_CHANNEL                                            nightly (default) | stable
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel (empty = vars.ENGINE_CHANNEL, else nightly)
+        type: choice
+        options: ["", nightly, stable]
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: engine-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump yt-dlp
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        id: app-token
+        with:
+          app-id: ${{ vars.ENGINE_BUMP_APP_ID }}
+          private-key: ${{ secrets.ENGINE_BUMP_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: true
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: "0.11.21"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Resolve versions
+        id: versions
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          VAR_CHANNEL: ${{ vars.ENGINE_CHANNEL }}
+        run: |
+          channel="${INPUT_CHANNEL:-${VAR_CHANNEL:-nightly}}"
+          current="$(python3 scripts/engine_version.py)"
+          target="$(uv run python scripts/engine_newest.py --channel "$channel")"
+          echo "channel=$channel  current=$current  target=$target"
+          {
+            echo "channel=$channel"
+            echo "current=$current"
+            echo "target=$target"
+            if [ "$current" = "$target" ]; then echo "changed=false"; else echo "changed=true"; fi
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Up to date
+        if: steps.versions.outputs.changed != 'true'
+        run: echo "yt-dlp ${{ steps.versions.outputs.current }} is the newest ${{ steps.versions.outputs.channel }} release; nothing to do"
+
+      - name: Pin the new engine
+        if: steps.versions.outputs.changed == 'true'
+        env:
+          TARGET: ${{ steps.versions.outputs.target }}
+        run: |
+          uv add "yt-dlp[default]==$TARGET"
+          locked="$(python3 scripts/engine_version.py)"
+          if [ "$locked" != "$TARGET" ]; then
+            echo "uv.lock pins yt-dlp $locked, expected $TARGET" >&2
+            exit 1
+          fi
+          uv sync --locked --all-groups
+          uv run copycast --version
+
+      - name: Engine unit tests
+        if: steps.versions.outputs.changed == 'true'
+        run: uv run pytest tests/unit/engine -q
+
+      - name: Engine integration tests (ffmpeg, no Postgres)
+        if: steps.versions.outputs.changed == 'true'
+        run: uv run pytest -m ffmpeg tests/integration/engine -q
+
+      - name: Network flat-extraction test (advisory)
+        if: steps.versions.outputs.changed == 'true'
+        continue-on-error: true
+        env:
+          COPYCAST_TEST_NETWORK: "1"
+        run: uv run pytest -m network tests/integration/engine -q
+
+      - name: Commit and push
+        if: steps.versions.outputs.changed == 'true'
+        env:
+          CURRENT: ${{ steps.versions.outputs.current }}
+          TARGET: ${{ steps.versions.outputs.target }}
+          CHANNEL: ${{ steps.versions.outputs.channel }}
+        run: |
+          git config user.name "copycast-engine-bump[bot]"
+          git config user.email "copycast-engine-bump[bot]@users.noreply.github.com"
+          git add pyproject.toml uv.lock
+          git commit -m "chore(engine): yt-dlp $CURRENT -> $TARGET" -m "Channel: $CHANNEL. Automated by engine-bump.yml."
+          git push origin HEAD:main

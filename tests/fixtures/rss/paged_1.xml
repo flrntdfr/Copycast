@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Paged Podcast</title>
+    <link>https://paged.example/</link>
+    <description>Two pages linked with atom:link rel="next" (RFC 5005).</description>
+    <language>en</language>
+    <atom:link href="https://paged.example/feed.xml" rel="self" type="application/rss+xml"/>
+    <atom:link href="paged_2.xml" rel="next" type="application/rss+xml"/>
+    <item>
+      <title>Page one, episode 4</title>
+      <guid isPermaLink="false">urn:paged:episode:4</guid>
+      <pubDate>Thu, 04 Apr 2024 08:00:00 GMT</pubDate>
+      <enclosure url="https://paged.example/media/4.mp3" length="4407" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>Page one, episode 3</title>
+      <guid isPermaLink="false">urn:paged:episode:3</guid>
+      <pubDate>Wed, 03 Apr 2024 08:00:00 GMT</pubDate>
+      <enclosure url="https://paged.example/media/3.mp3" length="4407" type="audio/mpeg"/>
+    </item>
+  </channel>
+</rss>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <title>An rss root without a channel element</title>
+  <item>
+    <title>Orphan item</title>
+    <guid>urn:nochannel:1</guid>
+    <enclosure url="https://nochannel.example/1.mp3" type="audio/mpeg" length="1"/>
+  </item>
+</rss>

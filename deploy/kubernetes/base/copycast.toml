@@ -1,0 +1,13 @@
+# Copycast configuration mounted at /config/copycast.toml.
+# base_url must be the address podcast clients reach the Tailscale Ingress at.
+base_url = "https://copycast.example-tailnet.ts.net"
+
+[refresh]
+interval_hours         = 24
+fetch_cooldown_minutes = 15
+concurrency            = 2
+
+[engine]
+channel = "nightly"
+
+[engine.options]

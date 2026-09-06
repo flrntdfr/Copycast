@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0"
+     xmlns:atom="http://www.w3.org/2005/Atom"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Copycast Test Podcast</title>
+    <link>https://podcast.example/</link>
+    <description><![CDATA[A <b>fixture</b> podcast exercising iTunes and Podcasting 2.0 tags.]]></description>
+    <language>en-us</language>
+    <copyright>&#169; 2024 Fixture Media</copyright>
+    <generator>FixtureCast 1.0</generator>
+    <lastBuildDate>Mon, 15 Jan 2024 09:00:00 GMT</lastBuildDate>
+    <atom:link href="https://podcast.example/feed.xml" rel="self" type="application/rss+xml"/>
+    <itunes:author>Fixture Media</itunes:author>
+    <itunes:owner>
+      <itunes:name>Fixture Media</itunes:name>
+      <itunes:email>podcast@podcast.example</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://podcast.example/artwork.jpg"/>
+    <itunes:category text="Technology"/>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:new-feed-url>https://podcast.example/feed.xml</itunes:new-feed-url>
+    <podcast:guid>7e9c6b2a-4c0f-4b3a-9a8c-2f1d0e5b6c7d</podcast:guid>
+    <podcast:locked owner="podcast@podcast.example">no</podcast:locked>
+    <podcast:funding url="https://podcast.example/support">Support the show</podcast:funding>
+    <podcast:person role="host" href="https://podcast.example/host" img="https://podcast.example/host.jpg">Alex Host</podcast:person>
+
+    <item>
+      <title>Episode 5: Chapters, transcripts and all</title>
+      <itunes:title>Chapters, transcripts and all</itunes:title>
+      <link>https://podcast.example/episodes/5</link>
+      <guid isPermaLink="false">urn:fixture:episode:5</guid>
+      <pubDate>Mon, 15 Jan 2024 08:00:00 GMT</pubDate>
+      <description><![CDATA[<p>The <em>fifth</em> episode &amp; the richest: two transcript formats and a chapters file.</p>]]></description>
+      <content:encoded><![CDATA[<p>Full show notes for episode five.</p>]]></content:encoded>
+      <enclosure url="https://podcast.example/media/5.mp3" length="4407" type="audio/mpeg"/>
+      <itunes:duration>00:31:05</itunes:duration>
+      <itunes:episode>5</itunes:episode>
+      <itunes:season>1</itunes:season>
+      <itunes:episodeType>full</itunes:episodeType>
+      <itunes:explicit>false</itunes:explicit>
+      <itunes:author>Alex Host</itunes:author>
+      <itunes:image href="https://podcast.example/artwork/5.jpg"/>
+      <podcast:chapters url="https://podcast.example/chapters/5.json" type="application/json+chapters"/>
+      <podcast:transcript url="https://podcast.example/transcripts/5.vtt" type="text/vtt" language="en" rel="captions"/>
+      <podcast:transcript url="https://podcast.example/transcripts/5.srt" type="application/x-subrip" language="en" rel="captions"/>
+      <podcast:transcript url="https://podcast.example/transcripts/5.de.vtt" type="text/vtt" language="de"/>
+      <podcast:transcript url="https://podcast.example/transcripts/5.de.srt" type="application/srt" language="de"/>
+      <podcast:person role="guest">Sam Guest</podcast:person>
+    </item>
+
+    <item>
+      <title>Episode 4: Duration in seconds</title>
+      <link>https://podcast.example/episodes/4</link>
+      <guid isPermaLink="false">urn:fixture:episode:4</guid>
+      <pubDate>Mon, 08 Jan 2024 08:00:00 +0000</pubDate>
+      <description>Plain text description with an ampersand &amp; an entity &#8212; dash.</description>
+      <enclosure url="https://podcast.example/media/4.mp3?token=abc" length="4407" type="audio/mpeg"/>
+      <itunes:duration>1865</itunes:duration>
+      <itunes:episode>4</itunes:episode>
+      <itunes:season>1</itunes:season>
+      <itunes:episodeType>full</itunes:episodeType>
+      <itunes:image href="https://podcast.example/artwork/4.jpg"/>
+      <podcast:transcript url="https://podcast.example/transcripts/4.json" type="application/json" language="en"/>
+    </item>
+
+    <item>
+      <title>Episode 3: Guid is the permalink</title>
+      <link>https://podcast.example/episodes/3</link>
+      <guid isPermaLink="true">https://podcast.example/episodes/3</guid>
+      <pubDate>Mon, 01 Jan 2024 08:00:00 GMT</pubDate>
+      <description>The guid is a permalink that differs from the enclosure URL; identity follows the guid.</description>
+      <enclosure url="https://podcast.example/media/3.m4a" length="4407" type="audio/x-m4a"/>
+      <itunes:duration>12:34</itunes:duration>
+      <itunes:episode>3</itunes:episode>
+      <itunes:season>1</itunes:season>
+    </item>
+
+    <item>
+      <title>Trailer: Season 1</title>
+      <link>https://podcast.example/episodes/trailer</link>
+      <guid isPermaLink="false">urn:fixture:episode:trailer</guid>
+      <pubDate>Fri, 22 Dec 2023 08:00:00 GMT</pubDate>
+      <description>A trailer has no episode number.</description>
+      <enclosure url="https://podcast.example/media/trailer.mp3" length="4407" type="audio/mpeg"/>
+      <itunes:duration>45</itunes:duration>
+      <itunes:episodeType>trailer</itunes:episodeType>
+      <itunes:season>1</itunes:season>
+    </item>
+
+    <item>
+      <title>Episode 2: No guid at all</title>
+      <link>https://podcast.example/episodes/2</link>
+      <pubDate>Mon, 18 Dec 2023 08:00:00 GMT</pubDate>
+      <description>Without a guid the enclosure URL identifies the item.</description>
+      <enclosure url="https://podcast.example/media/2.mp3" length="4407" type="audio/mpeg"/>
+      <itunes:duration>00:20:00</itunes:duration>
+      <itunes:episode>2</itunes:episode>
+      <itunes:season>1</itunes:season>
+    </item>
+
+    <item>
+      <title>Episode 1: The first one</title>
+      <link>https://podcast.example/episodes/1</link>
+      <guid isPermaLink="false">urn:fixture:episode:1</guid>
+      <pubDate>Mon, 11 Dec 2023 08:00:00 GMT</pubDate>
+      <description>Where it all began.</description>
+      <enclosure url="https://podcast.example/media/1.mp3" length="4407" type="audio/mpeg"/>
+      <itunes:duration>00:25:10</itunes:duration>
+      <itunes:episode>1</itunes:episode>
+      <itunes:season>1</itunes:season>
+      <itunes:image href="https://podcast.example/artwork/1.jpg"/>
+      <podcast:chapters url="https://podcast.example/chapters/1.json" type="application/json+chapters"/>
+    </item>
+  </channel>
+</rss>

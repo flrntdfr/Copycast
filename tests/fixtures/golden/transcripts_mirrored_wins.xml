@@ -1,0 +1,24 @@
+<rss version="2.0">
+  <channel>
+    <title>T</title>
+    <link>http://testserver/</link>
+    <description>T</description>
+    <language>en</language>
+    <itunes:type xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">episodic</itunes:type>
+    <itunes:explicit xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">false</itunes:explicit>
+    <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="http://testserver/feeds/0123456789abcdef.xml" rel="self" type="application/rss+xml"/>
+    <generator>Copycast 1.0.0</generator>
+    <lastBuildDate/>
+    <item>
+      <title>T1</title>
+      <guid isPermaLink="false">urn:copycast:t1</guid>
+      <pubDate/>
+      <enclosure length="5155" type="audio/mpeg" url="http://testserver/feeds/0123456789abcdef/media/t1.mp3"/>
+      <itunes:episode xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">1</itunes:episode>
+      <itunes:episodeType xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">full</itunes:episodeType>
+      <podcast:transcript xmlns:podcast="https://podcastindex.org/namespace/1.0" language="de" rel="captions" type="text/vtt" url="http://testserver/feeds/0123456789abcdef/assets/t1.transcript.de.generated.vtt"/>
+      <podcast:transcript xmlns:podcast="https://podcastindex.org/namespace/1.0" language="en" type="application/json" url="http://testserver/feeds/0123456789abcdef/assets/t1.transcript.en.mirrored.json"/>
+      <podcast:transcript xmlns:podcast="https://podcastindex.org/namespace/1.0" language="en" rel="captions" type="text/vtt" url="http://testserver/feeds/0123456789abcdef/assets/t1.transcript.en.mirrored.vtt"/>
+    </item>
+  </channel>
+</rss>

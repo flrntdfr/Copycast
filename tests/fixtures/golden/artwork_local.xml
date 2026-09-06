@@ -1,0 +1,74 @@
+<rss version="2.0">
+  <channel>
+    <title>Copycast Test Podcast</title>
+    <link>https://podcast.example/</link>
+    <description>A &lt;b&gt;fixture&lt;/b&gt; podcast exercising iTunes and Podcasting 2.0 tags.</description>
+    <language>en-us</language>
+    <copyright>© 2024 Fixture Media</copyright>
+    <itunes:author xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Fixture Media</itunes:author>
+    <itunes:owner xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+      <itunes:name>Fixture Media</itunes:name>
+      <itunes:email>podcast@podcast.example</itunes:email>
+    </itunes:owner>
+    <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/feeds/0123456789abcdef/assets/feed.artwork.png"/>
+    <itunes:category xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" text="Technology"/>
+    <itunes:explicit xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">false</itunes:explicit>
+    <itunes:type xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">episodic</itunes:type>
+    <podcast:guid xmlns:podcast="https://podcastindex.org/namespace/1.0">7e9c6b2a-4c0f-4b3a-9a8c-2f1d0e5b6c7d</podcast:guid>
+    <podcast:locked xmlns:podcast="https://podcastindex.org/namespace/1.0" owner="podcast@podcast.example">no</podcast:locked>
+    <podcast:funding xmlns:podcast="https://podcastindex.org/namespace/1.0" url="https://podcast.example/support">Support the show</podcast:funding>
+    <podcast:person xmlns:podcast="https://podcastindex.org/namespace/1.0" href="https://podcast.example/host" img="https://podcast.example/host.jpg" role="host">Alex Host</podcast:person>
+    <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="http://testserver/feeds/0123456789abcdef.xml" rel="self" type="application/rss+xml"/>
+    <generator>Copycast 1.0.0</generator>
+    <lastBuildDate/>
+    <item>
+      <title>Episode 5: Chapters, transcripts and all</title>
+      <itunes:title xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Chapters, transcripts and all</itunes:title>
+      <link>https://podcast.example/episodes/5</link>
+      <guid isPermaLink="false">urn:fixture:episode:5</guid>
+      <pubDate/>
+      <description>&lt;p&gt;The &lt;em&gt;fifth&lt;/em&gt; episode &amp;amp; the richest: two transcript formats and a chapters file.&lt;/p&gt;</description>
+      <content:encoded xmlns:content="http://purl.org/rss/1.0/modules/content/">&lt;p&gt;Full show notes for episode five.&lt;/p&gt;</content:encoded>
+      <enclosure length="5155" type="audio/mpeg" url="http://testserver/feeds/0123456789abcdef/media/i6.mp3"/>
+      <itunes:duration xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">00:31:05</itunes:duration>
+      <itunes:episode xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">5</itunes:episode>
+      <itunes:season xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">1</itunes:season>
+      <itunes:episodeType xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">full</itunes:episodeType>
+      <itunes:explicit xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">false</itunes:explicit>
+      <itunes:author xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Alex Host</itunes:author>
+      <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/feeds/0123456789abcdef/assets/i6.artwork.jpg"/>
+      <podcast:chapters xmlns:podcast="https://podcastindex.org/namespace/1.0" type="application/json+chapters" url="https://podcast.example/chapters/5.json"/>
+      <podcast:transcript xmlns:podcast="https://podcastindex.org/namespace/1.0" language="en" rel="captions" type="text/vtt" url="https://podcast.example/transcripts/5.vtt"/>
+      <podcast:transcript xmlns:podcast="https://podcastindex.org/namespace/1.0" language="en" rel="captions" type="application/x-subrip" url="https://podcast.example/transcripts/5.srt"/>
+      <podcast:transcript xmlns:podcast="https://podcastindex.org/namespace/1.0" language="de" type="text/vtt" url="https://podcast.example/transcripts/5.de.vtt"/>
+      <podcast:transcript xmlns:podcast="https://podcastindex.org/namespace/1.0" language="de" type="application/srt" url="https://podcast.example/transcripts/5.de.srt"/>
+      <podcast:person xmlns:podcast="https://podcastindex.org/namespace/1.0" role="guest">Sam Guest</podcast:person>
+    </item>
+    <item>
+      <title>Episode 4: Duration in seconds</title>
+      <link>https://podcast.example/episodes/4</link>
+      <guid isPermaLink="false">urn:fixture:episode:4</guid>
+      <pubDate/>
+      <description>Plain text description with an ampersand &amp; an entity — dash.</description>
+      <enclosure length="5155" type="audio/mpeg" url="http://testserver/feeds/0123456789abcdef/media/i5.mp3"/>
+      <itunes:duration xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">1865</itunes:duration>
+      <itunes:episode xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">4</itunes:episode>
+      <itunes:season xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">1</itunes:season>
+      <itunes:episodeType xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">full</itunes:episodeType>
+      <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="https://podcast.example/artwork/4.jpg"/>
+      <podcast:transcript xmlns:podcast="https://podcastindex.org/namespace/1.0" language="en" type="application/json" url="https://podcast.example/transcripts/4.json"/>
+    </item>
+    <item>
+      <title>Trailer: Season 1</title>
+      <link>https://podcast.example/episodes/trailer</link>
+      <guid isPermaLink="false">urn:fixture:episode:trailer</guid>
+      <pubDate/>
+      <description>A trailer has no episode number.</description>
+      <enclosure length="5155" type="audio/mpeg" url="http://testserver/feeds/0123456789abcdef/media/i3.mp3"/>
+      <itunes:duration xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">45</itunes:duration>
+      <itunes:episodeType xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">trailer</itunes:episodeType>
+      <itunes:season xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">1</itunes:season>
+      <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/feeds/0123456789abcdef/assets/i3.artwork.webp"/>
+    </item>
+  </channel>
+</rss>
