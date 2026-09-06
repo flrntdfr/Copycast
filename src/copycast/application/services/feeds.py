@@ -14,6 +14,7 @@ from copycast.application.services.context import (
 )
 from copycast.application.services.readmodels import feed_reads, inbox_read, one_feed_read
 from copycast.application.services.retry import retry_concurrent
+from copycast.domain.credentials import new_feed_password, new_feed_username
 from copycast.domain.enums import FeedKind
 from copycast.domain.exceptions import Conflict, NotFound
 from copycast.logging import get_logger
@@ -87,6 +88,21 @@ async def delete_feed(ctx: ServiceContext, feed_id: str) -> None:
     log.info("feed.deleted", feed_id=feed_id)
 
 
+@capability("rotate_feed_credentials")
+async def rotate_feed_credentials(ctx: ServiceContext, feed_id: str) -> FeedRead:
+    """Mint a new Basic auth pair for a Feed; every client holding the old one stops working."""
+    async with ctx.uow_factory() as uow:
+        feed = await uow.feeds.require(feed_id)
+        feed.auth_username = new_feed_username()
+        feed.auth_password = new_feed_password()
+        await uow.flush()
+        await uow.update_intent(feed_id)
+        await uow.publish(FeedEvent(feed_id=feed_id, revision=feed.revision, reason="updated"))
+        read = await one_feed_read(uow, ctx.urls, feed)
+    log.info("feed.credentials_rotated", feed_id=feed_id)
+    return read
+
+
 @capability("ensure_default_inbox", response=InboxRead)
 async def ensure_default_inbox(ctx: ServiceContext) -> InboxRead:
     """The one default Inbox "Copycast", created on first call (api lifespan, worker start)."""
@@ -120,4 +136,5 @@ __all__ = [
     "require_inbox",
     "require_mirror",
     "resolve_inbox",
+    "rotate_feed_credentials",
 ]

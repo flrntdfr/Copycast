@@ -390,3 +390,31 @@ async def test_yes_deletes_rows_absent_from_disk_and_skips_unreadable_dirs(
             .all()
         )
         assert len(remaining) == 2
+
+
+async def test_rebuild_keeps_the_feed_pair_and_mints_one_for_old_descriptors(
+    uow_factory: UnitOfWorkFactory,
+    layout: Layout,
+    settings: Settings,
+    db_engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    mirror_id, inbox_id = await _populate(uow_factory, layout)
+    async with sessionmaker() as session:
+        mirror = await session.get(Feed, mirror_id)
+        assert mirror is not None
+        pair = (mirror.auth_username, mirror.auth_password)
+    # A descriptor written before credentials existed carries none of them.
+    inbox_descriptor = layout.descriptor_path(inbox_id)
+    data = json.loads(inbox_descriptor.read_text(encoding="utf-8"))
+    del data["feed"]["auth_username"], data["feed"]["auth_password"]
+    inbox_descriptor.write_text(json.dumps(data), encoding="utf-8")
+    await _wipe(sessionmaker)
+
+    await rebuild(settings, yes=False, db_engine=db_engine)
+    async with sessionmaker() as session:
+        mirror = await session.get(Feed, mirror_id)
+        inbox = await session.get(Feed, inbox_id)
+        assert mirror is not None and inbox is not None
+        assert (mirror.auth_username, mirror.auth_password) == pair
+        assert len(inbox.auth_username) == 8 and len(inbox.auth_password) == 24

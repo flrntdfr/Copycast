@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from copycast.adapters.db.base import Base, TimestampMixin, TZDateTime, enum_check
+from copycast.domain.credentials import new_feed_password, new_feed_username
 from copycast.domain.enums import BackfillMode, FeedKind, SourceKind
 
 KIND_SHAPE = (
@@ -43,6 +44,12 @@ class Feed(TimestampMixin, Base):
     author: Mapped[str | None] = mapped_column(Text)
     artwork_url: Mapped[str | None] = mapped_column(Text)
     language: Mapped[str | None] = mapped_column(Text)
+
+    # The feed's own Basic auth pair, minted at creation and rotated on demand
+    auth_username: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=new_feed_username
+    )
+    auth_password: Mapped[str] = mapped_column(Text, nullable=False, default=new_feed_password)
 
     # Mirror only
     source_url: Mapped[str | None] = mapped_column(Text)

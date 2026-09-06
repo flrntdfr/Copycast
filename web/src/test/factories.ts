@@ -1,6 +1,7 @@
 /** Typed builders for API read models, shaped exactly like the generated schema. */
 import type {
   AboutRead,
+  ApiKeyRead,
   InboxRead,
   ItemRead,
   JobRead,
@@ -29,6 +30,7 @@ export function mirror(overrides: Partial<MirrorRead> = {}): MirrorRead {
     description: null,
     artwork_url: null,
     feed_url: `http://localhost:8080/feeds/${id}.xml`,
+    feed_credentials: null,
     episode_count: 3,
     storage_bytes: 12_345_678,
     revision: 1,
@@ -60,6 +62,7 @@ export function inbox(overrides: Partial<InboxRead> = {}): InboxRead {
     description: null,
     artwork_url: null,
     feed_url: `http://localhost:8080/feeds/${id}.xml`,
+    feed_credentials: null,
     episode_count: 0,
     storage_bytes: 0,
     revision: 1,
@@ -194,6 +197,19 @@ export function about(overrides: Partial<AboutRead> = {}): AboutRead {
     base_url: "http://localhost:8080",
     layout_version: "1",
     totals: { feeds: 2, episodes: 42, storage_bytes: 1_500_000_000 },
+    auth_enabled: false,
+    ...overrides,
+  };
+}
+
+export function apiKey(overrides: Partial<ApiKeyRead> = {}): ApiKeyRead {
+  return {
+    id: overrides.id ?? `00000000-0000-4000-8000-${(++sequence).toString().padStart(12, "0")}`,
+    name: "Claude Code",
+    scope: "write",
+    prefix: "cck_a1b2c3d4",
+    created_at: "2024-01-15T09:00:00Z",
+    last_used_at: null,
     ...overrides,
   };
 }

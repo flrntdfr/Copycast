@@ -37,6 +37,7 @@ from copycast.adapters.storage.layout import (
     ITEM_XML_SUFFIX,
     Layout,
 )
+from copycast.domain.credentials import new_feed_password, new_feed_username
 from copycast.domain.enums import (
     ArchiveState,
     AssetKind,
@@ -335,6 +336,8 @@ async def _upsert_feed(session: AsyncSession, layout: Layout, descriptor: FeedDe
         "source_dedup_key": feed.source_dedup_key,
         "source_kind": feed.source_kind.value if feed.source_kind else None,
         "service": feed.service,
+        "auth_username": feed.auth_username or new_feed_username(),
+        "auth_password": feed.auth_password or new_feed_password(),
         "backfill_mode": policy.backfill_mode.value if policy.backfill_mode else None,
         "backfill_latest_n": policy.backfill_latest_n,
         "follow": policy.follow,

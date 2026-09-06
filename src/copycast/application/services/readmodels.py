@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Iterable, Mapping, Sequence
 
 from copycast.application.models import (
+    ApiKeyRead,
     AssetRead,
     BackfillPolicy,
     CatalogCounts,
@@ -25,6 +26,7 @@ from copycast.application.models import (
     SelectionSummary,
 )
 from copycast.application.services.context import (
+    ApiKeyRow,
     AssetRow,
     FeedRow,
     ItemRow,
@@ -42,6 +44,7 @@ from copycast.domain.enums import (
     BackfillMode,
     FeedKind,
     HealthStatus,
+    KeyScope,
     RequestedVia,
     RequestStatus,
     SourceKind,
@@ -89,7 +92,8 @@ def mirror_read(
         title=feed.title,
         description=feed.description,
         artwork_url=feed.artwork_url,
-        feed_url=urls.feed_url(feed.id),
+        feed_url=urls.feed_url(feed.id, username=feed.auth_username, password=feed.auth_password),
+        feed_credentials=urls.feed_credentials(feed.auth_username, feed.auth_password),
         episode_count=counts.archived,
         storage_bytes=feed.storage_bytes,
         revision=feed.revision,
@@ -121,7 +125,8 @@ def inbox_read(
         name=feed.title,
         description=feed.description,
         artwork_url=feed.artwork_url,
-        feed_url=urls.feed_url(feed.id),
+        feed_url=urls.feed_url(feed.id, username=feed.auth_username, password=feed.auth_password),
+        feed_credentials=urls.feed_credentials(feed.auth_username, feed.auth_password),
         episode_count=counts.archived,
         storage_bytes=feed.storage_bytes,
         revision=feed.revision,
@@ -270,6 +275,17 @@ def job_read(job: JobRow) -> JobRead:
     return JobRead.model_validate(job)
 
 
+def api_key_read(key: ApiKeyRow) -> ApiKeyRead:
+    return ApiKeyRead(
+        id=key.id,
+        name=key.name,
+        scope=KeyScope(key.scope),
+        prefix=key.prefix,
+        created_at=key.created_at,
+        last_used_at=key.last_used_at,
+    )
+
+
 async def request_read(
     uow: UnitOfWorkPort,
     urls: PublicUrls,
@@ -299,6 +315,7 @@ async def request_read(
 
 __all__ = [
     "SELECTED_STATES",
+    "api_key_read",
     "asset_read",
     "feed_health",
     "feed_read",

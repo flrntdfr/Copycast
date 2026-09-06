@@ -34,7 +34,9 @@ EXPECTED_TABLES = {
     "refresh_runs",
     "worker_heartbeat",
     "engine_versions",
+    "api_keys",
 }
+HEAD = "0002"
 
 
 def _table_names(conn: Connection) -> set[str]:
@@ -42,8 +44,8 @@ def _table_names(conn: Connection) -> set[str]:
 
 
 async def test_template_is_at_head(db_engine: AsyncEngine) -> None:
-    assert head_revision() == "0001"
-    assert await current_revision(db_engine) == "0001"
+    assert head_revision() == HEAD
+    assert await current_revision(db_engine) == HEAD
     assert await schema_is_current(db_engine)
     async with db_engine.connect() as conn:
         assert await conn.run_sync(_table_names) == EXPECTED_TABLES
@@ -76,14 +78,17 @@ async def test_no_drift_between_models_and_migrations(db_engine: AsyncEngine) ->
 
     async with db_engine.connect() as conn:
         diff = await conn.run_sync(_diff)
-    assert diff == [], f"models and migration 0001 differ: {diff}"
+    assert diff == [], f"models and migrations differ: {diff}"
 
 
 async def test_enum_check_constraints_are_named_and_enforced(db_engine: AsyncEngine) -> None:
     async with db_engine.begin() as conn:
         with pytest.raises(Exception, match="ck_feeds_kind"):
             await conn.execute(
-                text("INSERT INTO feeds (id, kind, title) VALUES ('x', 'bogus', 'Bogus')")
+                text(
+                    "INSERT INTO feeds (id, kind, title, auth_username, auth_password) "
+                    "VALUES ('x', 'bogus', 'Bogus', 'u', 'p')"
+                )
             )
 
 
@@ -91,7 +96,10 @@ async def test_kind_shape_constraint(db_engine: AsyncEngine) -> None:
     async with db_engine.begin() as conn:
         with pytest.raises(Exception, match="ck_feeds_kind_shape"):
             await conn.execute(
-                text("INSERT INTO feeds (id, kind, title) VALUES ('m1', 'mirror', 'No source')")
+                text(
+                    "INSERT INTO feeds (id, kind, title, auth_username, auth_password) "
+                    "VALUES ('m1', 'mirror', 'No source', 'u', 'p')"
+                )
             )
 
 
@@ -105,4 +113,21 @@ async def test_await_schema_times_out_when_behind(db_engine: AsyncEngine) -> Non
     with pytest.raises(SchemaNotCurrent, match="copycast migrate"):
         await await_schema(db_engine, wait_seconds=0.3, poll=0.1)
     await prepare_schema(db_engine, auto_migrate=True)
+    assert await schema_is_current(db_engine)
+
+
+async def test_0002_mints_a_pair_for_every_existing_feed(db_engine: AsyncEngine) -> None:
+    await downgrade_schema(db_engine, "0001")
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("INSERT INTO feeds (id, kind, title) VALUES ('inbox-old', 'inbox', 'Old')")
+        )
+    await ensure_schema(db_engine)
+    async with db_engine.connect() as conn:
+        row = (
+            await conn.execute(
+                text("SELECT auth_username, auth_password FROM feeds WHERE id = 'inbox-old'")
+            )
+        ).one()
+    assert len(row[0]) == 8 and len(row[1]) == 24
     assert await schema_is_current(db_engine)

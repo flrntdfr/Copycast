@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from posixpath import basename
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 
 FEEDS_PREFIX = "/feeds"
 
@@ -12,9 +12,25 @@ def _base(base_url: str) -> str:
     return base_url.rstrip("/")
 
 
-def feed_url(base_url: str, feed_id: str) -> str:
-    """``{base_url}/feeds/{id}.xml``"""
-    return f"{_base(base_url)}{FEEDS_PREFIX}/{quote(feed_id, safe='')}.xml"
+def with_credentials(url: str, username: str, password: str) -> str:
+    """``https://user:pass@host/...``: the form podcast clients take a private feed in."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    port = f":{parts.port}" if parts.port else ""
+    netloc = f"{quote(username, safe='')}:{quote(password, safe='')}@{host}{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def feed_url(
+    base_url: str, feed_id: str, *, username: str | None = None, password: str | None = None
+) -> str:
+    """``{base_url}/feeds/{id}.xml``, with ``user:pass@`` when a pair is given."""
+    url = f"{_base(base_url)}{FEEDS_PREFIX}/{quote(feed_id, safe='')}.xml"
+    if username is not None and password is not None:
+        return with_credentials(url, username, password)
+    return url
 
 
 def media_url(base_url: str, feed_id: str, item_id: str, ext: str) -> str:
@@ -34,4 +50,4 @@ def asset_url(base_url: str, feed_id: str, local_path: str) -> str:
     )
 
 
-__all__ = ["FEEDS_PREFIX", "asset_url", "feed_url", "media_url"]
+__all__ = ["FEEDS_PREFIX", "asset_url", "feed_url", "media_url", "with_credentials"]

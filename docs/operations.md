@@ -15,8 +15,9 @@ One image, `ghcr.io/flrntdfr/copycast`, run as two processes plus Postgres 17:
 
 Both share the same Postgres database and the same data directory (`/data` in the image).
 There is exactly one worker: it holds a session-level advisory lock and a second worker exits
-with a message. Copycast has no authentication; put it behind Tailscale (the compose
-`tailscale` profile, the Kubernetes Tailscale Ingress) or on a trusted network.
+with a message. By default Copycast has no authentication: put it behind Tailscale (the
+compose `tailscale` profile, the Kubernetes Tailscale Ingress) or on a trusted network, or
+switch authentication on (below) behind TLS.
 
 ## First run with Docker Compose
 
@@ -63,10 +64,15 @@ concurrency            = 2      # parallel engine jobs in the worker
 channel = "nightly"             # informational: nightly | stable
 
 [engine.options]                # raw yt-dlp defaults applied to every job
+
+[auth]                          # prefer the environment for the password (below)
+username = "copycast"           # the operator's username
+# password = ""                 # 8+ characters switches authentication on
 ```
 
 Every TOML key can be overridden with `COPYCAST__<SECTION>__<KEY>` (double underscores):
-`COPYCAST__BASE_URL`, `COPYCAST__DATABASE_URL`, `COPYCAST__REFRESH__CONCURRENCY`, ...
+`COPYCAST__BASE_URL`, `COPYCAST__DATABASE_URL`, `COPYCAST__REFRESH__CONCURRENCY`,
+`COPYCAST__AUTH__PASSWORD`, ...
 
 `[engine.options]` takes raw yt-dlp options (for example `cookiefile`, `proxy`,
 `sleep_interval`). Options Copycast owns (output paths, format selection, postprocessors,
@@ -89,8 +95,53 @@ hooks, ...) are rejected at startup with exit code 2; `cookiefile`, `proxy` and
 | `COPYCAST_TEST_NETWORK` | unset | tests: `1` enables the network-marked tests |
 
 Compose-only (interpolated by `docker compose`, see `.env.example`): `COMPOSE_PROFILES`,
-`TS_AUTHKEY`, `POSTGRES_PASSWORD`, `COPYCAST_BASE_URL`, `COPYCAST_IMAGE`, `COPYCAST_PORT`,
-`COPYCAST_UID`, `COPYCAST_GID`.
+`TS_AUTHKEY`, `POSTGRES_PASSWORD`, `COPYCAST_BASE_URL`, `COPYCAST_AUTH_PASSWORD`,
+`COPYCAST_AUTH_USERNAME`, `COPYCAST_IMAGE`, `COPYCAST_PORT`, `COPYCAST_UID`, `COPYCAST_GID`.
+
+## Authentication
+
+Off unless `COPYCAST__AUTH__PASSWORD` is set (`COPYCAST_AUTH_PASSWORD` in the compose `.env`).
+Basic auth is only a gate over TLS: with the `direct` profile put a TLS-terminating proxy in
+front. The decision and its trade-offs are
+[ADR 0011](adr/0011-optional-authentication-for-direct-deployments.md). Once on:
+
+| Surface | Credential | Notes |
+|---|---|---|
+| Web UI, `/api/*`, `/api/events` | the operator pair (HTTP Basic) | `auth.username` defaults to `copycast`; the browser prompts once |
+| `/feeds/<id>.xml`, media, assets | that feed's own pair, or the operator pair | one pair opens one feed; a wrong pair is 401 with a `Basic` challenge |
+| `/mcp` | an API key as `Authorization: Bearer cck_…` | keys only; the operator pair is refused |
+| `/healthz/*` | none | probes and healthchecks stay open |
+
+**Feed credentials.** Every feed has a random username (8 characters) and password (24) minted
+at creation; migration 0002 mints them for feeds that existed before. They live in Postgres
+and in `feed.json`, so a rebuild keeps every subscription working. The UI shows them under the
+feed URL, which already carries them as `https://user:pass@host/feeds/<id>.xml`. *Rotate*
+(`POST /api/feeds/{id}/credentials/rotate`) mints a new pair and cuts off every client holding
+the old one. Overcast, Pocket Casts and AntennaPod send the pair for episode downloads too;
+Apple Podcasts fetches the feed but not the audio.
+
+**API keys.** Minted and revoked on the *API keys* page (`/api/keys`), shown once, stored as a
+SHA-256 digest, with a scope: `read` (read-only tools), `write` (everything but deletions) or
+`full` (everything, including `delete_feed`, `delete_item` and `prune_inbox`). Every tool
+checks the scope before running and refuses with a `ToolError` naming the scope it needs.
+`last_used_at` is updated at most once a minute per key. Keys cannot mint keys: the key
+capabilities have no MCP tools. For Claude Code:
+
+```bash
+export COPYCAST_MCP_KEY=cck_...
+claude mcp add --transport http copycast https://copycast.example/mcp --header "Authorization: Bearer $COPYCAST_MCP_KEY"
+```
+
+or in `.mcp.json`: `{"copycast": {"type": "http", "url": "https://copycast.example/mcp",
+"headers": {"Authorization": "Bearer ${COPYCAST_MCP_KEY}"}}}`. Claude Desktop and claude.ai
+custom connectors accept OAuth only and cannot use a key.
+
+**Turning it on later** breaks every existing subscription until each podcast app is given
+its feed's pair; agents need a key. Turning it off makes everything open again; the pairs
+and keys are kept for the next time.
+
+Kubernetes: the example overlay's `api-auth.yaml` reads the password from a Secret named
+`copycast-auth` (key `password`) and stays valid while the Secret is absent.
 
 ### The data directory
 
@@ -177,13 +228,13 @@ the engine tests, and pushes the lock change to `main`; `image.yml` then builds 
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
-| `1.0.0` | yes, on every engine bump | "the current 1.0.0" |
-| `1.0.0-yt2026.8.19` | never | exactly this app + engine combination |
+| `1.1.0` | yes, on every engine bump | "the current 1.1.0" |
+| `1.1.0-yt2026.8.19` | never | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
 Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. To roll back an engine
 that broke a site, pin the previous immutable tag in `.env`
-(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:1.0.0-yt<previous>`) or in the kustomize overlay
+(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:1.1.0-yt<previous>`) or in the kustomize overlay
 (`images[].newTag`), and `docker compose up -d` / `kubectl apply -k`. The About page and
 `copycast --version` show which engine is running; `jobs.engine_version` records which engine
 archived each item.

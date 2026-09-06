@@ -18,7 +18,7 @@ from datetime import datetime
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from copycast.application.models import PodcastSearchResult
+from copycast.application.models import FeedCredentials, PodcastSearchResult
 from copycast.application.ports import CancelToken, Engine
 from copycast.application.services.context import ServiceContext, SourceSnapshot
 from copycast.domain.enums import (
@@ -116,14 +116,25 @@ class SourceGatewayAdapter:
 
 
 class PublicUrlsAdapter:
-    """``adapters.feeds.urls`` bound to ``base_url``."""
+    """``adapters.feeds.urls`` bound to ``base_url``; embeds feed pairs only while auth is on."""
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, *, auth_enabled: bool = False) -> None:
         self._base_url = base_url
+        self._auth_enabled = auth_enabled
 
-    def feed_url(self, feed_id: str) -> str:
-        url: str = _load("copycast.adapters.feeds.urls", "feed_url")(self._base_url, feed_id)
+    def feed_url(
+        self, feed_id: str, *, username: str | None = None, password: str | None = None
+    ) -> str:
+        compose = _load("copycast.adapters.feeds.urls", "feed_url")
+        if not self._auth_enabled:
+            username = password = None
+        url: str = compose(self._base_url, feed_id, username=username, password=password)
         return url
+
+    def feed_credentials(self, username: str, password: str) -> FeedCredentials | None:
+        if not self._auth_enabled:
+            return None
+        return FeedCredentials(username=username, password=password)
 
     def media_url(self, feed_id: str, item_id: str, ext: str) -> str:
         compose = _load("copycast.adapters.feeds.urls", "media_url")
@@ -346,7 +357,10 @@ class Container:
     @property
     def urls(self) -> PublicUrlsAdapter:
         urls: PublicUrlsAdapter = self._cached(
-            "urls", lambda: PublicUrlsAdapter(self.settings.base_url)
+            "urls",
+            lambda: PublicUrlsAdapter(
+                self.settings.base_url, auth_enabled=self.settings.auth.enabled
+            ),
         )
         return urls
 

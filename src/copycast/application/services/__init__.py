@@ -16,6 +16,10 @@ from dataclasses import dataclass
 from copycast.application.capabilities import CAPABILITIES, CAPABILITY_NAMES
 from copycast.application.models import (
     AboutRead,
+    ApiKeyCreate,
+    ApiKeyCreated,
+    ApiKeyList,
+    ApiKeyRead,
     FeedList,
     FeedRead,
     InboxCreate,
@@ -46,6 +50,7 @@ from copycast.application.services import feeds as _feeds
 from copycast.application.services import inboxes as _inboxes
 from copycast.application.services import items as _items
 from copycast.application.services import jobs as _jobs
+from copycast.application.services import keys as _keys
 from copycast.application.services import mirrors as _mirrors
 from copycast.application.services import sources as _sources
 from copycast.application.services.context import (
@@ -82,6 +87,9 @@ class Services:
 
     async def delete_feed(self, feed_id: str) -> None:
         await _feeds.delete_feed(self.ctx, feed_id)
+
+    async def rotate_feed_credentials(self, feed_id: str) -> FeedRead:
+        return await _feeds.rotate_feed_credentials(self.ctx, feed_id)
 
     async def ensure_default_inbox(self) -> InboxRead:
         return await _feeds.ensure_default_inbox(self.ctx)
@@ -214,6 +222,19 @@ class Services:
 
     async def about(self) -> AboutRead:
         return await _about.about(self.ctx)
+
+    # api keys
+    async def list_api_keys(self) -> ApiKeyList:
+        return await _keys.list_api_keys(self.ctx)
+
+    async def create_api_key(self, body: ApiKeyCreate) -> ApiKeyCreated:
+        return await _keys.create_api_key(self.ctx, body)
+
+    async def revoke_api_key(self, key_id: uuid.UUID) -> None:
+        await _keys.revoke_api_key(self.ctx, key_id)
+
+    async def authenticate_api_key(self, secret: str) -> ApiKeyRead | None:
+        return await _keys.authenticate_api_key(self.ctx, secret)
 
 
 def build_services(container: ServiceContext) -> Services:

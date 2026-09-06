@@ -21,7 +21,13 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel
 
-from copycast.application.models import CatalogCounts, PodcastSearchResult, ProbeCandidate, Totals
+from copycast.application.models import (
+    CatalogCounts,
+    FeedCredentials,
+    PodcastSearchResult,
+    ProbeCandidate,
+    Totals,
+)
 from copycast.application.ports import CancelToken, Engine
 from copycast.domain.enums import (
     ArchiveState,
@@ -33,6 +39,7 @@ from copycast.domain.enums import (
     JobKind,
     JobStatus,
     JobTrigger,
+    KeyScope,
     LogLevel,
     Numbering,
     RefreshRunStatus,
@@ -80,6 +87,8 @@ class FeedRow(Protocol):
     author: str | None
     artwork_url: str | None
     language: str | None
+    auth_username: str
+    auth_password: str
     source_url: str | None
     source_dedup_key: str | None
     source_kind: str | None
@@ -247,6 +256,21 @@ class RequestRow(Protocol):
     def error(self) -> str | None: ...
     @property
     def created_at(self) -> datetime: ...
+
+
+class ApiKeyRow(Protocol):
+    @property
+    def id(self) -> uuid.UUID: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def scope(self) -> str: ...
+    @property
+    def prefix(self) -> str: ...
+    @property
+    def created_at(self) -> datetime: ...
+    @property
+    def last_used_at(self) -> datetime | None: ...
 
 
 class RefreshRunRow(Protocol):
@@ -468,6 +492,16 @@ class JobRepositoryPort(Protocol):
     ) -> int: ...
 
 
+class ApiKeyRepositoryPort(Protocol):
+    async def get(self, key_id: uuid.UUID) -> ApiKeyRow | None: ...
+    async def require(self, key_id: uuid.UUID) -> ApiKeyRow: ...
+    async def by_hash(self, key_hash: str) -> ApiKeyRow | None: ...
+    async def list(self) -> Sequence[ApiKeyRow]: ...
+    async def add(self, *, name: str, scope: KeyScope, key_hash: str, prefix: str) -> ApiKeyRow: ...
+    async def delete(self, key_id: uuid.UUID) -> bool: ...
+    async def touch(self, key_id: uuid.UUID, at: datetime | None = None) -> None: ...
+
+
 class TelemetryRepositoryPort(Protocol):
     async def start_refresh_run(
         self, feed_id: str, *, trigger: JobTrigger, job_id: uuid.UUID | None = None
@@ -539,6 +573,8 @@ class UnitOfWorkPort(Protocol):
     @property
     def telemetry(self) -> TelemetryRepositoryPort: ...
     @property
+    def api_keys(self) -> ApiKeyRepositoryPort: ...
+    @property
     def layout(self) -> LayoutPort: ...
 
     def after_commit(self, hook: Hook) -> None: ...
@@ -599,9 +635,16 @@ class SourceGateway(Protocol):
 
 
 class PublicUrls(Protocol):
-    """The URLs Copycast publishes (``adapters.feeds.urls`` bound to ``base_url``)."""
+    """The URLs Copycast publishes (``adapters.feeds.urls`` bound to ``base_url``).
 
-    def feed_url(self, feed_id: str) -> str: ...
+    While authentication is on, ``feed_url`` carries the feed's own pair as
+    ``user:pass@`` and ``feed_credentials`` exposes it; otherwise both stay bare.
+    """
+
+    def feed_url(
+        self, feed_id: str, *, username: str | None = None, password: str | None = None
+    ) -> str: ...
+    def feed_credentials(self, username: str, password: str) -> FeedCredentials | None: ...
     def media_url(self, feed_id: str, item_id: str, ext: str) -> str: ...
     def asset_url(self, feed_id: str, local_path: str) -> str: ...
 
@@ -632,6 +675,8 @@ class ServiceContext(Protocol):
 
 
 __all__ = [
+    "ApiKeyRepositoryPort",
+    "ApiKeyRow",
     "AssetRepositoryPort",
     "AssetRow",
     "CatalogRepositoryPort",

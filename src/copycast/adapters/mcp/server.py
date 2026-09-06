@@ -1,4 +1,8 @@
-"""``create_mcp(settings, container)``: the FastMCP server mounted at ``/mcp``."""
+"""``create_mcp(settings, container)``: the FastMCP server mounted at ``/mcp``.
+
+While ``settings.auth`` is on the server takes an :class:`ApiKeyVerifier`, so
+every HTTP request to the mount needs ``Authorization: Bearer cck_...``.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +10,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from copycast.adapters.mcp.auth import ApiKeyVerifier
 from copycast.adapters.mcp.container import ServicesProvider
 from copycast.adapters.mcp.prompts import register_prompts
 from copycast.adapters.mcp.resources import register_resources
@@ -25,8 +30,10 @@ INSTRUCTIONS = (
 
 def create_mcp(settings: Settings, container: ServicesProvider) -> FastMCP[Any]:
     """Tools, resources and the prompt bound to ``container.services``; no IO at build time."""
-    del settings  # the MCP surface has no settings of its own yet
-    mcp: FastMCP[Any] = FastMCP(SERVER_NAME, instructions=INSTRUCTIONS, version=APP_VERSION)
+    auth = ApiKeyVerifier(container) if settings.auth.enabled else None
+    mcp: FastMCP[Any] = FastMCP(
+        SERVER_NAME, instructions=INSTRUCTIONS, version=APP_VERSION, auth=auth
+    )
     register_tools(mcp, container)
     register_resources(mcp, container)
     register_prompts(mcp)

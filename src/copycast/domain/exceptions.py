@@ -63,6 +63,16 @@ class FeedExists(Conflict):
         super().__init__(detail, existing_feed_id=existing_feed_id)
 
 
+class Unauthorized(DomainError):
+    """Missing or wrong credentials (401); the API adds the Basic challenge."""
+
+    slug = "unauthorized"
+    status = 401
+
+    def __init__(self, message: str = "authentication required") -> None:
+        super().__init__(message)
+
+
 class Unsupported(DomainError):
     """The Source cannot be mirrored (422 source-unsupported)."""
 

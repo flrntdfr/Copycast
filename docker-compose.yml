@@ -11,6 +11,9 @@
 x-env: &env
   COPYCAST__BASE_URL: ${COPYCAST_BASE_URL:-http://localhost:8080}
   COPYCAST__DATABASE_URL: postgresql://copycast:${POSTGRES_PASSWORD:-copycast}@postgres:5432/copycast
+  # Empty means no authentication (docs/adr/0011).
+  COPYCAST__AUTH__PASSWORD: ${COPYCAST_AUTH_PASSWORD:-}
+  COPYCAST__AUTH__USERNAME: ${COPYCAST_AUTH_USERNAME:-copycast}
 
 x-app: &app
   image: ${COPYCAST_IMAGE:-ghcr.io/flrntdfr/copycast:latest}
