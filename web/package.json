@@ -15,7 +15,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "pnpm run gen && tsc -b --noEmit",
-    "lint": "eslint .",
+    "lint": "pnpm run gen && eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest",

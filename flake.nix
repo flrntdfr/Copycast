@@ -24,6 +24,7 @@
             pyright
             jq
             gnumake
+            gh
           ];
 
           # uv must use the Nix-provided interpreter, never download one.

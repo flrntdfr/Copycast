@@ -40,6 +40,17 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    ignore:
+      # The runtime is pinned to CPython 3.13 (requires-python = ">=3.13,<3.14"); a newer
+      # minor needs a deliberate migration, and Postgres/Node majors likewise.
+      - dependency-name: python
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+      - dependency-name: tailscale/tailscale
+        update-types: ["version-update:semver-major"]
     labels: ["dependencies", "docker"]
 
   - package-ecosystem: docker-compose
@@ -47,4 +58,15 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    ignore:
+      # The runtime is pinned to CPython 3.13 (requires-python = ">=3.13,<3.14"); a newer
+      # minor needs a deliberate migration, and Postgres/Node majors likewise.
+      - dependency-name: python
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+      - dependency-name: tailscale/tailscale
+        update-types: ["version-update:semver-major"]
     labels: ["dependencies", "docker"]
