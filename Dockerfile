@@ -23,7 +23,7 @@ COPY web/ ./
 RUN pnpm run build
 
 # ---- lock ------------------------------------------------------------------------------
-FROM python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS lock
+FROM python:3.14.7-slim-bookworm@sha256:9ab8d9c8514b44f90cf0029dd42fdd7e9e211e639c8b995304cc04568dee900f AS lock
 COPY --from=ghcr.io/astral-sh/uv:0.11.21@sha256:ff07b86af50d4d9391d9daf4ff89ce427bc544f9aae87057e69a1cc0aa369946 /uv /usr/local/bin/uv
 WORKDIR /lock
 COPY pyproject.toml uv.lock ./
@@ -31,7 +31,7 @@ RUN uv export --frozen --no-dev --no-emit-project --no-emit-package yt-dlp -o ba
     && uv export --frozen --no-dev --no-emit-project --only-emit-package yt-dlp -o engine.txt
 
 # ---- runtime ---------------------------------------------------------------------------
-FROM python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS runtime
+FROM python:3.14.7-slim-bookworm@sha256:9ab8d9c8514b44f90cf0029dd42fdd7e9e211e639c8b995304cc04568dee900f AS runtime
 ARG APP_VERSION
 ARG ENGINE_VERSION
 
