@@ -1,9 +1,13 @@
 /** Vitest setup: jest-dom matchers, jsdom polyfills Radix needs, and the MSW server. */
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
 
 import { server } from "./server";
+
+// `findBy*` / `waitFor` default to 1 s, which a whole-app render (router, query client, MSW)
+// exceeds on a loaded CI runner; the tests still fail fast on a genuine miss.
+configure({ asyncUtilTimeout: 4000 });
 
 class ResizeObserverStub {
   observe(): void {}

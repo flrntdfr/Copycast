@@ -1,10 +1,12 @@
 name: Engine bump
 
 # Every six hours: pin uv.lock to the newest yt-dlp on the configured channel, run the engine
-# tests, and push the change to main. The push is made with a GitHub App token because a
-# push made with GITHUB_TOKEN does not trigger image.yml.
+# tests, and push the change to main. With a GitHub App configured the push is made with its
+# token, which triggers image.yml like any push. Without one the push is made with
+# GITHUB_TOKEN, which does not trigger other workflows, so the image build is dispatched
+# explicitly afterwards (workflow_dispatch is the one event GITHUB_TOKEN may raise).
 #
-# Repository configuration:
+# Repository configuration (all optional):
 #   vars.ENGINE_BUMP_APP_ID + secrets.ENGINE_BUMP_APP_PRIVATE_KEY   GitHub App with contents:write
 #   vars.ENGINE_CHANNEL                                            nightly (default) | stable
 
@@ -21,6 +23,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # to dispatch image.yml when no GitHub App token is configured
 
 concurrency:
   group: engine-bump
@@ -33,6 +36,7 @@ jobs:
     steps:
       - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         id: app-token
+        if: vars.ENGINE_BUMP_APP_ID != ''
         with:
           app-id: ${{ vars.ENGINE_BUMP_APP_ID }}
           private-key: ${{ secrets.ENGINE_BUMP_APP_PRIVATE_KEY }}
@@ -40,7 +44,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: main
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ steps.app-token.outputs.token || github.token }}
           persist-credentials: true
 
       - name: Install ffmpeg
@@ -117,3 +121,9 @@ jobs:
           git add pyproject.toml uv.lock
           git commit -m "chore(engine): yt-dlp $CURRENT -> $TARGET" -m "Channel: $CHANNEL. Automated by engine-bump.yml."
           git push origin HEAD:main
+
+      - name: Build the image (a GITHUB_TOKEN push does not trigger image.yml)
+        if: steps.versions.outputs.changed == 'true' && steps.app-token.outputs.token == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run image.yml --ref main
