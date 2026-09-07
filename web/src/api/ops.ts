@@ -25,6 +25,7 @@ export const OPS = {
   delete_item: ["delete", "/api/feeds/{feed_id}/items/{item_id}"],
   probe_source: ["post", "/api/probe"],
   search_podcasts: ["get", "/api/search/podcasts"],
+  search_videos: ["get", "/api/search/videos"],
   create_mirror: ["post", "/api/mirrors"],
   update_mirror: ["patch", "/api/mirrors/{feed_id}"],
   set_paused: ["post", "/api/mirrors/{feed_id}/pause"],
@@ -48,6 +49,8 @@ export const OPS = {
   get_engine_cookies: ["get", "/api/engine/cookies"],
   set_engine_cookies: ["put", "/api/engine/cookies"],
   delete_engine_cookies: ["delete", "/api/engine/cookies"],
+  get_mirror_defaults: ["get", "/api/settings/defaults"],
+  set_mirror_defaults: ["put", "/api/settings/defaults"],
 } as const satisfies Record<string, Op>;
 
 export type Capability = keyof typeof OPS;

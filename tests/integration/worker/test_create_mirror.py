@@ -149,3 +149,40 @@ async def test_get_and_list_and_delete_feed(container: Container, source: Source
     with pytest.raises(NotFound):
         await container.services.get_feed(mirror.id)
     assert (await jobs_of(container, mirror.id)) == []
+
+
+async def test_archive_fills_description_date_and_author_from_the_engine_info(
+    container: Container, engine, runner: Runner
+) -> None:
+    """A flat YouTube listing carries no description or date; the fetched info does."""
+    from datetime import UTC, datetime
+
+    from tests.support.factories import listing
+
+    url = "https://www.youtube.com/@tester/videos"
+    engine.script_listing(
+        url,
+        listing(1, service="YouTube", title="Tester", with_dates=False, raw={"_type": "playlist"}),
+    )
+    engine.info_extra = {
+        "description": "Full show notes from the video page",
+        "timestamp": 1718136000,
+        "uploader": "Tester Channel",
+        "thumbnail": "https://i.ytimg.com/vi/x/maxres.jpg",
+    }
+    mirror = await create_mirror(container, url)
+    async with uow(container) as unit:
+        before = (await unit.catalog.for_feed(mirror.id))[0]
+        assert before.published_at is None
+        listed_description = before.description
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        item = (await unit.catalog.for_feed(mirror.id))[0]
+        assert item.archive_state == ArchiveState.archived
+        assert item.published_at == datetime(2024, 6, 11, 20, 0, tzinfo=UTC)
+        # The listing's description, when it had one, is kept; only gaps are filled.
+        assert item.description == (listed_description or "Full show notes from the video page")
+        assert item.author == "Tester Channel"  # the flat listing named no author
+        assert item.artwork_url is not None
+    page = await container.services.list_items(mirror.id)
+    assert page.items[0].published_at is not None

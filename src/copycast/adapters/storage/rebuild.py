@@ -353,6 +353,8 @@ async def _upsert_feed(session: AsyncSession, layout: Layout, descriptor: FeedDe
         "auth_password": feed.auth_password or new_feed_password(),
         "backfill_mode": policy.backfill_mode.value if policy.backfill_mode else None,
         "backfill_latest_n": policy.backfill_latest_n,
+        "min_duration_seconds": policy.min_duration_seconds,
+        "preferred_language": policy.preferred_language,
         "follow": policy.follow,
         "paused": policy.paused,
         "policy_applied_at": policy.policy_applied_at,

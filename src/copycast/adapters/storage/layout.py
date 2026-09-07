@@ -4,6 +4,7 @@
 
     {data_dir}/LAYOUT_VERSION                       "1\\n"
     {data_dir}/engine/cookies.txt                   the Engine's cookie file (optional, 0600)
+    {data_dir}/engine/defaults.json                 operator defaults every Mirror may override
     {data_dir}/feeds/{feed_id}/feed.json            descriptor
       source/feed.xml | source/listing.json         verbatim Source XML | last flat listing
       media/{item_id}.{ext}                         audio, {item_id}.info.json, {item_id}.item.xml
@@ -35,6 +36,7 @@ LAYOUT_VERSION_FILE: Final = "LAYOUT_VERSION"
 FEEDS_DIR: Final = "feeds"
 ENGINE_DIR: Final = "engine"
 COOKIES_NAME: Final = "cookies.txt"
+DEFAULTS_NAME: Final = "defaults.json"
 DESCRIPTOR_NAME: Final = "feed.json"
 SOURCE_XML_NAME: Final = "feed.xml"
 SOURCE_LISTING_NAME: Final = "listing.json"
@@ -91,6 +93,10 @@ class Layout:
     def cookies_path(self) -> Path:
         """``engine/cookies.txt``: handed to yt-dlp as ``cookiefile`` when present."""
         return self.engine_dir / COOKIES_NAME
+
+    def defaults_path(self) -> Path:
+        """``engine/defaults.json``: the operator's defaults (language, minimum length)."""
+        return self.engine_dir / DEFAULTS_NAME
 
     @property
     def feeds_dir(self) -> Path:

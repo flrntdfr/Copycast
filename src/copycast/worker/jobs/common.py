@@ -7,7 +7,7 @@ from typing import Any
 
 from copycast.adapters.db.models import CatalogItem, Job
 from copycast.adapters.db.uow import UnitOfWork
-from copycast.adapters.engine.options import subtitle_languages
+from copycast.adapters.engine.options import subtitle_languages, with_language
 from copycast.adapters.sources.http import (
     BodyTooLarge,
     NotAFeed,
@@ -32,14 +32,16 @@ from copycast.settings import Settings
 def engine_options_for(
     settings: Settings, feed_options: Mapping[str, Any] | None, *, language: str | None
 ) -> dict[str, Any]:
-    """config ``[engine.options]`` -> Feed options, with the subtitle languages defaulted.
+    """config ``[engine.options]`` -> Feed options, with the languages defaulted.
 
     ``BASE_OPTIONS`` are overlaid by the engine itself; a Feed's own
-    ``subtitleslangs`` wins over the ``[feed language, en]`` default.
+    ``subtitleslangs`` wins over the ``[feed language, en]`` default, and its
+    ``language`` becomes the preferred YouTube metadata language unless the
+    Feed's options name one (the engine falls back to ``[engine] language``).
     """
     merged = EngineOptions.merge(settings.engine.options, feed_options, None)
     merged.setdefault("subtitleslangs", subtitle_languages(language))
-    return merged
+    return with_language(merged, language)
 
 
 def source_error_to_engine(exc: SourceError) -> EngineError:

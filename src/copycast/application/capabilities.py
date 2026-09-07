@@ -32,6 +32,7 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         # sources
         "probe_source",
         "search_podcasts",
+        "search_videos",
         # mirrors
         "create_mirror",
         "update_mirror",
@@ -61,6 +62,9 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "get_engine_cookies",
         "set_engine_cookies",
         "delete_engine_cookies",
+        # mirror defaults
+        "get_mirror_defaults",
+        "set_mirror_defaults",
         # internal
         "record_download",
         "ensure_default_inbox",
@@ -85,6 +89,9 @@ TOOL_EXEMPT: Final[frozenset[str]] = frozenset(
         "get_engine_cookies",
         "set_engine_cookies",
         "delete_engine_cookies",
+        # Operator defaults are policy, set on the Settings page.
+        "get_mirror_defaults",
+        "set_mirror_defaults",
     }
 )
 """Capabilities with a route but deliberately no MCP tool."""

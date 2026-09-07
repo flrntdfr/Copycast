@@ -4,6 +4,7 @@ import type {
   ApiKeyRead,
   EngineCookiesRead,
   InboxRead,
+  MirrorDefaults,
   ItemRead,
   JobRead,
   MirrorRead,
@@ -14,6 +15,7 @@ import type {
   ReadyRead,
   RequestRead,
   SelectionResult,
+  VideoSearchResult,
 } from "@/api/types";
 
 let sequence = 0;
@@ -39,6 +41,9 @@ export function mirror(overrides: Partial<MirrorRead> = {}): MirrorRead {
     source_url: "https://podcast.example/feed.xml",
     service: null,
     source_kind: "rss",
+    language: null,
+    preferred_language: null,
+    min_duration_seconds: null,
     paused: false,
     follow: true,
     backfill: { mode: "all", latest_n: null },
@@ -223,6 +228,22 @@ export function engineCookies(overrides: Partial<EngineCookiesRead> = {}): Engin
     cookie_count: 0,
     domains: [],
     youtube: false,
+    ...overrides,
+  };
+}
+
+export function mirrorDefaults(overrides: Partial<MirrorDefaults> = {}): MirrorDefaults {
+  return { language: null, min_duration_seconds: null, ...overrides };
+}
+
+export function videoResult(overrides: Partial<VideoSearchResult> = {}): VideoSearchResult {
+  return {
+    title: "WWDC 2024 Live from Cupertino",
+    url: "https://www.youtube.com/watch?v=abc123",
+    channel: "The Talk Show",
+    duration_seconds: 5400,
+    published_at: "2024-06-11T20:00:00Z",
+    artwork_url: null,
     ...overrides,
   };
 }

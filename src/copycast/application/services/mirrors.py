@@ -139,6 +139,8 @@ def _feed_values(snapshot: SourceSnapshot, dedup_key: str, body: MirrorCreate) -
         "author": candidate.author or listing.author,
         "artwork_url": candidate.artwork_url or listing.artwork_url,
         "language": listing.language,
+        "preferred_language": body.preferred_language,
+        "min_duration_seconds": body.min_duration_seconds,
         "source_url": candidate.source_url,
         "source_dedup_key": dedup_key,
         "source_kind": candidate.source_kind.value,
@@ -303,7 +305,11 @@ async def update_mirror(
     *,
     cancel: CancelToken | None = None,
 ) -> MirrorRead:
-    """PATCH a Mirror's policy, engine options or Source (retarget; kind change refused)."""
+    """PATCH a Mirror's policy, language, minimum length, engine options or Source.
+
+    Retargeting keeps the archive; a kind change is refused. ``language: null`` and
+    ``min_duration_seconds: null`` present in the body clear the value.
+    """
     fields = body.model_fields_set
     snapshot: SourceSnapshot | None = None
     if "source_url" in fields and body.source_url is not None:
@@ -318,6 +324,10 @@ async def update_mirror(
             feed.follow = body.follow
         if "engine_options" in fields and body.engine_options is not None:
             feed.engine_options = dict(body.engine_options)
+        if "preferred_language" in fields:
+            feed.preferred_language = body.preferred_language
+        if "min_duration_seconds" in fields:
+            feed.min_duration_seconds = body.min_duration_seconds
         if "backfill" in fields and body.backfill is not None:
             feed.backfill_mode = body.backfill.mode.value
             feed.backfill_latest_n = body.backfill.latest_n

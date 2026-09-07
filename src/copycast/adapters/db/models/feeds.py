@@ -61,6 +61,8 @@ class Feed(TimestampMixin, Base):
 
     backfill_mode: Mapped[str | None] = mapped_column(Text)
     backfill_latest_n: Mapped[int | None] = mapped_column(Integer)
+    min_duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    preferred_language: Mapped[str | None] = mapped_column(String(16))
     follow: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true"), default=True
     )
@@ -100,6 +102,9 @@ class Feed(TimestampMixin, Base):
         CheckConstraint("autoprune_days IS NULL OR autoprune_days > 0", name="autoprune_days"),
         CheckConstraint(
             "backfill_latest_n IS NULL OR backfill_latest_n > 0", name="backfill_latest_n"
+        ),
+        CheckConstraint(
+            "min_duration_seconds IS NULL OR min_duration_seconds > 0", name="min_duration_seconds"
         ),
         Index(
             "ix_feeds_is_default",

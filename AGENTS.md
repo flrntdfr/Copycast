@@ -116,6 +116,14 @@ _Avoid_: Feed token, feed secret, private URL, feed password (say the pair)
 A bearer secret minted from the UI for one MCP client, shown once, stored as a digest, revocable on its own. The only credential the MCP mount accepts while authentication is on.
 _Avoid_: Token, PAT, MCP password, service account
 
+**Default**:
+An operator setting on the Settings page (metadata language, minimum length) that every Mirror inherits unless its own value is set; stored in `data/engine/defaults.json`. A Mirror overrides it by setting a value and resets by clearing it.
+_Avoid_: Global setting, preference, config (that is the environment)
+
+**Minimum length**:
+A Mirror's rule, or the Default, that keeps items shorter than N seconds Available: never archived by Backfill or Follow, still archivable by an explicit selection. Unknown lengths pass. Keeps YouTube Shorts out.
+_Avoid_: Filter, Shorts rule, duration threshold
+
 **Cookie file**:
 The one Netscape `cookies.txt` the Engine carries along on every listing and fetch, stored at `data/engine/cookies.txt` from the Settings page so sites that demand a login (YouTube from a server's IP) accept downloads. Never shown back, never exposed to agents.
 _Avoid_: Cookies setting, session file, YouTube login

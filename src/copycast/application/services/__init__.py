@@ -32,6 +32,7 @@ from copycast.application.models import (
     JobPage,
     JobRead,
     MirrorCreate,
+    MirrorDefaults,
     MirrorRead,
     MirrorUpdate,
     PodcastSearchPage,
@@ -45,9 +46,11 @@ from copycast.application.models import (
     RequestRead,
     SelectionRequest,
     SelectionResult,
+    VideoSearchPage,
 )
 from copycast.application.ports import CancelToken
 from copycast.application.services import about as _about
+from copycast.application.services import defaults as _defaults
 from copycast.application.services import engine as _engine
 from copycast.application.services import feeds as _feeds
 from copycast.application.services import inboxes as _inboxes
@@ -148,6 +151,9 @@ class Services:
     async def search_podcasts(self, query: str, limit: int = 10) -> PodcastSearchPage:
         return await _sources.search_podcasts(self.ctx, query, limit)
 
+    async def search_videos(self, query: str, limit: int = 10) -> VideoSearchPage:
+        return await _sources.search_videos(self.ctx, query, limit)
+
     # mirrors
     async def create_mirror(
         self,
@@ -238,6 +244,13 @@ class Services:
 
     async def authenticate_api_key(self, secret: str) -> ApiKeyRead | None:
         return await _keys.authenticate_api_key(self.ctx, secret)
+
+    # mirror defaults
+    async def get_mirror_defaults(self) -> MirrorDefaults:
+        return await _defaults.get_mirror_defaults(self.ctx)
+
+    async def set_mirror_defaults(self, body: MirrorDefaults) -> MirrorDefaults:
+        return await _defaults.set_mirror_defaults(self.ctx, body)
 
     # engine cookies
     async def get_engine_cookies(self) -> EngineCookiesRead:

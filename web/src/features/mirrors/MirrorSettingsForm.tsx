@@ -4,8 +4,11 @@ import { useEffect, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 
+import { Link } from "@tanstack/react-router";
+
 import { $api, ApiProblem, describeProblem } from "@/api/client";
 import type { MirrorRead } from "@/api/types";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,6 +26,7 @@ import {
   type MirrorSettingsInput,
   type MirrorSettingsValues,
 } from "./settings-form";
+import { secondsToMinutes } from "@/lib/format";
 
 /** Follow, Backfill, Source URL, Engine options (per-key errors), read-only retention and the danger zone. */
 export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
@@ -38,6 +42,13 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
   const mode = useWatch({ control: form.control, name: "mode" });
   const sourceUrl = useWatch({ control: form.control, name: "source_url" });
   const retargeting = sourceUrl.trim() !== mirror.source_url;
+  const defaults = $api.useQuery("get", "/api/settings/defaults");
+  const language = useWatch({ control: form.control, name: "language" });
+  const minMinutes = useWatch({ control: form.control, name: "min_duration_minutes" });
+  const globalLanguage = defaults.data?.language ?? null;
+  const globalMinutes = defaults.data?.min_duration_seconds
+    ? secondsToMinutes(defaults.data.min_duration_seconds)
+    : null;
 
   // A fresh MirrorRead (after save, or an SSE `feed` event) becomes the new baseline unless the form is dirty.
   useEffect(() => {
@@ -241,6 +252,55 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
           )}
         />
 
+        <fieldset className="space-y-3 rounded-lg border p-3">
+          <legend className="px-1 text-sm font-medium">Overrides</legend>
+          <p className="text-xs text-muted-foreground">
+            Empty means the value from{" "}
+            <Link to="/settings" className="underline">
+              Settings
+            </Link>
+            ; a value here applies to this Mirror only.
+          </p>
+          <OverrideField
+            id="settings-language"
+            label="Metadata language"
+            own={language.trim()}
+            global={globalLanguage}
+            loaded={defaults.isSuccess}
+            onReset={() => form.setValue("language", "", { shouldDirty: true })}
+            error={errors.language?.message}
+          >
+            <Input
+              id="settings-language"
+              placeholder={globalLanguage ?? "fr, pt-BR…"}
+              maxLength={16}
+              {...form.register("language")}
+              aria-invalid={!!errors.language}
+            />
+          </OverrideField>
+          <OverrideField
+            id="settings-min-minutes"
+            label="Minimum length (minutes)"
+            own={
+              typeof minMinutes === "number" && !Number.isNaN(minMinutes) ? String(minMinutes) : ""
+            }
+            global={globalMinutes == null ? null : String(globalMinutes)}
+            loaded={defaults.isSuccess}
+            onReset={() => form.setValue("min_duration_minutes", undefined, { shouldDirty: true })}
+            error={errors.min_duration_minutes?.message}
+          >
+            <Input
+              id="settings-min-minutes"
+              type="number"
+              min={1}
+              inputMode="numeric"
+              placeholder={globalMinutes == null ? "everything" : String(globalMinutes)}
+              {...form.register("min_duration_minutes", { valueAsNumber: true })}
+              aria-invalid={!!errors.min_duration_minutes}
+            />
+          </OverrideField>
+        </fieldset>
+
         <div className="space-y-1.5">
           <span className="text-sm font-medium">Retention</span>
           <p className="text-sm text-muted-foreground">
@@ -283,6 +343,61 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
         </Button>
         <DeleteFeedDialog feed={mirror} open={deleting} onOpenChange={setDeleting} />
       </section>
+    </div>
+  );
+}
+
+/** A setting a Mirror may override: the field, the global value it diverges from, and a reset. */
+function OverrideField({
+  id,
+  label,
+  own,
+  global,
+  loaded,
+  onReset,
+  error,
+  children,
+}: {
+  id: string;
+  label: string;
+  own: string;
+  global: string | null;
+  loaded: boolean;
+  onReset: () => void;
+  error?: string;
+  children: React.ReactNode;
+}) {
+  const overriding = own !== "";
+  const diverges = overriding && own !== (global ?? "");
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Label htmlFor={id}>{label}</Label>
+        {loaded && diverges ? (
+          <Badge variant="secondary" data-testid={`${id}-diverges`}>
+            Overrides the default{global ? ` (${global})` : " (none)"}
+          </Badge>
+        ) : null}
+        {loaded && overriding && !diverges ? (
+          <Badge variant="outline">Same as the default</Badge>
+        ) : null}
+      </div>
+      <div className="flex gap-2">
+        {children}
+        {overriding ? (
+          <Button type="button" variant="outline" onClick={onReset}>
+            Use default
+          </Button>
+        ) : null}
+      </div>
+      <p className={error ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
+        {error ??
+          (loaded
+            ? overriding
+              ? "This Mirror ignores the default."
+              : `Using the default: ${global ?? "none"}.`
+            : "\u2026")}
+      </p>
     </div>
   );
 }

@@ -18,7 +18,7 @@ from datetime import datetime
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from copycast.application.models import FeedCredentials, PodcastSearchResult
+from copycast.application.models import FeedCredentials, PodcastSearchResult, VideoSearchResult
 from copycast.application.ports import CancelToken, Engine
 from copycast.application.services.context import ServiceContext, SourceSnapshot
 from copycast.domain.enums import (
@@ -31,6 +31,7 @@ from copycast.domain.enums import (
     SourceKind,
 )
 from copycast.domain.exceptions import EngineUnavailable
+from copycast.logging import get_logger
 from copycast.settings import Settings, SettingsError, get_settings
 
 if TYPE_CHECKING:
@@ -43,6 +44,25 @@ if TYPE_CHECKING:
 
 def _load(module: str, attr: str) -> Any:
     return getattr(importlib.import_module(module), attr)
+
+
+class _SearchLog:
+    """The ``EngineLog`` a search listing writes to: structlog, one line per level."""
+
+    def __init__(self) -> None:
+        self._log = get_logger("copycast.search")
+
+    def debug(self, message: str) -> None:
+        self._log.debug(message)
+
+    def info(self, message: str) -> None:
+        self._log.info(message)
+
+    def warning(self, message: str) -> None:
+        self._log.warning(message)
+
+    def error(self, message: str) -> None:
+        self._log.error(message)
 
 
 class SourceGatewayAdapter:
@@ -87,6 +107,30 @@ class SourceGatewayAdapter:
         except source_error as exc:
             raise EngineUnavailable(f"podcast search is unavailable: {exc}") from exc
         return results
+
+    def search_videos(self, query: str, limit: int) -> list[VideoSearchResult]:
+        """yt-dlp's ``ytsearchN:`` listing, flattened to what an agent or the wizard needs."""
+        listing = self._engine.list_source(
+            f"ytsearch{limit}:{query}",
+            self._settings.engine.options,
+            CancelToken(),
+            _SearchLog(),
+        )
+        results: list[VideoSearchResult] = []
+        for item in listing.items:
+            if not item.source_url:
+                continue
+            results.append(
+                VideoSearchResult(
+                    title=item.title,
+                    url=item.source_url,
+                    channel=item.author or listing.author,
+                    duration_seconds=item.duration_seconds,
+                    published_at=item.published_at,
+                    artwork_url=item.artwork_url,
+                )
+            )
+        return results[:limit]
 
     def save_snapshot(self, feed_id: str, snapshot: SourceSnapshot) -> None:
         """``source/feed.xml`` (RSS, verbatim) or ``source/listing.json`` (yt-dlp raw listing)."""

@@ -33,6 +33,7 @@ from copycast.domain.enums import (
     RequestStatus,
     SourceKind,
 )
+from copycast.domain.language import normalize_language
 
 INBOX_NAME_MAX_LEN = 80
 SELECTION_MAX_LEN = 4096
@@ -106,6 +107,13 @@ class MirrorRead(_FeedReadBase):
     source_url: str
     service: str | None = None
     source_kind: SourceKind
+    language: str | None = Field(default=None, description="The language the Source reports")
+    preferred_language: str | None = Field(
+        default=None, description="This Mirror's metadata language override, else the default"
+    )
+    min_duration_seconds: int | None = Field(
+        default=None, description="Shorter items are listed but never archived automatically"
+    )
     paused: bool = False
     follow: bool = True
     backfill: BackfillPolicy
@@ -277,6 +285,22 @@ class PodcastSearchPage(ReadModel):
     results: list[PodcastSearchResult]
 
 
+class VideoSearchResult(ReadModel):
+    """One YouTube search hit; ``url`` is what ``add_to_inbox`` or ``probe_source`` takes."""
+
+    title: str
+    url: str
+    channel: str | None = None
+    duration_seconds: int | None = None
+    published_at: datetime | None = None
+    artwork_url: str | None = None
+
+
+class VideoSearchPage(ReadModel):
+    query: str
+    results: list[VideoSearchResult]
+
+
 # --------------------------------------------------------------------------- mirrors
 
 
@@ -308,6 +332,19 @@ class MirrorCreate(RequestModel):
         default=None, description="Defaults to true, or false under a selection backfill"
     )
     engine_options: dict[str, Any] = Field(default_factory=dict[str, Any])
+    preferred_language: str | None = Field(
+        default=None, max_length=16, description="BCP 47 tag such as fr; YouTube metadata language"
+    )
+    min_duration_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        description="Skip items shorter than this (Shorts); unknown lengths pass",
+    )
+
+    @field_validator("preferred_language")
+    @classmethod
+    def _language(cls, value: str | None) -> str | None:
+        return normalize_language(value)
 
     @field_validator("source_url")
     @classmethod
@@ -340,6 +377,8 @@ class MirrorUpdate(RequestModel):
     follow: bool | None = None
     backfill: BackfillRequest | None = None
     engine_options: dict[str, Any] | None = None
+    preferred_language: str | None = Field(default=None, max_length=16)
+    min_duration_seconds: int | None = Field(default=None, ge=1)
 
     @field_validator("source_url")
     @classmethod
@@ -350,6 +389,11 @@ class MirrorUpdate(RequestModel):
         if not value:
             raise ValueError("source_url must not be blank")
         return value
+
+    @field_validator("preferred_language")
+    @classmethod
+    def _language(cls, value: str | None) -> str | None:
+        return normalize_language(value)
 
     @field_validator("engine_options")
     @classmethod
@@ -466,6 +510,30 @@ class PruneResult(ReadModel):
     deleted_count: int
     bytes_freed: int
     dry_run: bool
+
+
+# --------------------------------------------------------------------------- mirror defaults
+
+
+class MirrorDefaults(RequestModel):
+    """Operator defaults applied to every Mirror whose own value is null.
+
+    Stored under the data directory (``engine/defaults.json``), edited on the
+    Settings page; a Mirror overrides a value by setting its own, and resets
+    to the default by clearing it.
+    """
+
+    language: str | None = Field(
+        default=None, max_length=16, description="Preferred YouTube metadata language (fr, pt-BR)"
+    )
+    min_duration_seconds: int | None = Field(
+        default=None, ge=1, description="Items shorter than this stay Available (Shorts)"
+    )
+
+    @field_validator("language")
+    @classmethod
+    def _language(cls, value: str | None) -> str | None:
+        return normalize_language(value)
 
 
 # --------------------------------------------------------------------------- engine cookies
@@ -610,6 +678,7 @@ __all__ = [
     "JobProgress",
     "JobRead",
     "MirrorCreate",
+    "MirrorDefaults",
     "MirrorRead",
     "MirrorUpdate",
     "PodcastSearchPage",
@@ -632,4 +701,6 @@ __all__ = [
     "SelectionResult",
     "SelectionSummary",
     "Totals",
+    "VideoSearchPage",
+    "VideoSearchResult",
 ]

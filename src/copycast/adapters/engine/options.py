@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from copycast.application.ports import EngineLog
 from copycast.domain.engine_options import ENGINE_OWNED_OPTIONS, EngineOptions
@@ -71,6 +71,24 @@ def with_cookiefile(options: Mapping[str, Any] | None, cookies_path: Path | None
     merged = dict(options or {})
     if cookies_path is not None and "cookiefile" not in merged and cookies_path.is_file():
         merged["cookiefile"] = str(cookies_path)
+    return merged
+
+
+def with_language(options: Mapping[str, Any] | None, language: str | None) -> dict[str, Any]:
+    """Prefer ``language`` for YouTube metadata (``extractor_args.youtube.lang``) unless set.
+
+    Without it yt-dlp asks YouTube for English, and a French channel's titles
+    come back auto-translated.
+    """
+    merged = dict(options or {})
+    if not language:
+        return merged
+    extractor_args = dict(cast(Mapping[str, Any], merged.get("extractor_args") or {}))
+    youtube = dict(cast(Mapping[str, Any], extractor_args.get("youtube") or {}))
+    if "lang" not in youtube:
+        youtube["lang"] = [language]
+        extractor_args["youtube"] = youtube
+        merged["extractor_args"] = extractor_args
     return merged
 
 
@@ -158,4 +176,5 @@ __all__ = [
     "strip_owned",
     "subtitle_languages",
     "with_cookiefile",
+    "with_language",
 ]

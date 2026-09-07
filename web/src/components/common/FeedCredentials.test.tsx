@@ -19,6 +19,10 @@ describe("FeedCredentials", () => {
     renderWithProviders(<FeedCredentials feed={feed} canRotate={false} />);
     expect(screen.getByLabelText("Username")).toHaveValue("k7mpq2xz");
     expect(screen.queryByRole("button", { name: "Rotate…" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Username and password/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 
   it("shows the pair and rotates it after confirmation", async () => {
@@ -41,6 +45,12 @@ describe("FeedCredentials", () => {
     renderWithProviders(<FeedCredentials feed={feed} />);
 
     const block = screen.getByTestId("feed-credentials");
+    // Collapsed by default: the feed URL already carries the pair.
+    const toggle = within(block).getByRole("button", { name: /Username and password/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(within(block).getByLabelText("Username")).not.toBeVisible();
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(within(block).getByLabelText("Username")).toHaveValue("k7mpq2xz");
     expect(within(block).getByLabelText("Password")).toHaveValue("secretsecretsecretsecret");
     await user.click(within(block).getByRole("button", { name: "Rotate…" }));

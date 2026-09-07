@@ -13,7 +13,9 @@
     <lastBuildDate/>
     <item>
       <title>Fixture video four</title>
-      <description>The newest upload.</description>
+      <description>The newest upload.
+
+https://www.youtube.com/watch?v=vid00000004</description>
       <link>https://www.youtube.com/watch?v=vid00000004</link>
       <guid isPermaLink="false">https://www.youtube.com/watch?v=vid00000004</guid>
       <pubDate/>
@@ -28,6 +30,7 @@
     </item>
     <item>
       <title>Fixture video three (premiere)</title>
+      <description>https://www.youtube.com/watch?v=vid00000003</description>
       <link>https://www.youtube.com/watch?v=vid00000003</link>
       <guid isPermaLink="false">https://www.youtube.com/watch?v=vid00000003</guid>
       <pubDate/>

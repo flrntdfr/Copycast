@@ -197,3 +197,74 @@ async def test_scheduled_and_fetch_triggers_respect_pause_follow_and_cooldown(
     assert not resumed.paused
     refreshes = await jobs_of(container, mirror.id, kind=JobKind.refresh)
     assert any(j.status == JobStatus.queued.value for j in refreshes), "resume queues a Refresh"
+
+
+async def test_minimum_length_keeps_short_items_available(
+    container: Container, engine, runner: Runner
+) -> None:
+    """Shorts stay Available under a Mirror's own minimum, the default, or the follow path."""
+    from copycast.application.models import MirrorDefaults
+    from tests.support.factories import listing, listing_item
+
+    url = "https://www.youtube.com/@shorts/videos"
+    items = [
+        listing_item(1, duration_seconds=45, position=2, source_number=1),
+        listing_item(2, duration_seconds=None, position=1, source_number=2),
+        listing_item(3, duration_seconds=1800, position=0, source_number=3),
+    ]
+    engine.script_listing(
+        url, listing(3, service="YouTube", raw={"_type": "playlist"}, items=items)
+    )
+    mirror = await create_mirror(container, url, min_duration_seconds=60)
+    assert mirror.min_duration_seconds == 60
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        states = {i.source_number: i.archive_state for i in await unit.catalog.for_feed(mirror.id)}
+    assert states == {
+        1: ArchiveState.available,  # 45 s: a Short
+        2: ArchiveState.archived,  # unknown length passes
+        3: ArchiveState.archived,
+    }
+
+    # Follow honours the default once the Mirror's own value is cleared.
+    await container.services.update_mirror(mirror.id, MirrorUpdate(min_duration_seconds=None))
+    await container.services.set_mirror_defaults(MirrorDefaults(min_duration_seconds=600))
+    items.append(listing_item(4, duration_seconds=120, position=0, source_number=4))
+    engine.script_listing(
+        url, listing(4, service="YouTube", raw={"_type": "playlist"}, items=items)
+    )
+    await _run_refresh(container, runner, mirror.id)
+    async with uow(container) as unit:
+        states = {i.source_number: i.archive_state for i in await unit.catalog.for_feed(mirror.id)}
+    assert states[4] == ArchiveState.available
+    # An explicit selection still archives whatever is named.
+    from copycast.application.models import SelectionRequest
+
+    await container.services.select_items(mirror.id, SelectionRequest(selection="1"))
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        states = {i.source_number: i.archive_state for i in await unit.catalog.for_feed(mirror.id)}
+    assert states[1] == ArchiveState.archived
+
+
+async def test_mirror_language_reaches_the_engine(
+    container: Container, engine, runner: Runner
+) -> None:
+    from copycast.application.models import MirrorDefaults
+    from tests.support.factories import listing
+
+    url = "https://www.youtube.com/@french/videos"
+    engine.script_listing(url, listing(1, service="YouTube", raw={"_type": "playlist"}))
+    await container.services.set_mirror_defaults(MirrorDefaults(language="de"))
+    mirror = await create_mirror(container, url, preferred_language="fr_fr")
+    assert mirror.preferred_language == "fr-FR" and mirror.language == "en"
+    await runner.run_until_idle()
+    seen = [o.get("extractor_args") for o in engine.records.options_seen if o.get("extractor_args")]
+    assert seen and all(args["youtube"]["lang"] == ["fr-FR"] for args in seen), seen
+
+    # Clearing the Mirror's value falls back to the default from Settings.
+    await container.services.update_mirror(mirror.id, MirrorUpdate(preferred_language=None))
+    engine.records.options_seen.clear()
+    await _run_refresh(container, runner, mirror.id)
+    seen = [o["extractor_args"] for o in engine.records.options_seen if o.get("extractor_args")]
+    assert seen and all(args["youtube"]["lang"] == ["de"] for args in seen), seen

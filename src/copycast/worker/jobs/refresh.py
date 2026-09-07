@@ -30,6 +30,7 @@ from copycast.application.ports import (
     EngineLog,
     PermanentError,
 )
+from copycast.application.services.defaults import effective, load_defaults
 from copycast.domain.enums import (
     ArchiveState,
     AssetKind,
@@ -125,14 +126,22 @@ async def apply_policy(uow: UnitOfWork, feed: Feed, *, now: datetime | None = No
     all: every listed archivable Available item; latest: the N highest ordinals;
     selection: nothing. Follow wants Available items first seen after the policy
     was applied, so deleted (tombstoned) and failed items are never re-wanted.
+    Items shorter than the Mirror's ``min_duration_seconds`` stay Available.
     """
     now = now or datetime.now(UTC)
+    shortest = effective(
+        load_defaults(uow.layout),
+        language=feed.preferred_language,
+        min_duration_seconds=feed.min_duration_seconds,
+    ).min_duration_seconds
     if feed.policy_applied_at is None:
         mode = BackfillMode(feed.backfill_mode or BackfillMode.all)
         if mode is BackfillMode.all:
-            ids = await uow.catalog.available_ids(feed.id)
+            ids = await uow.catalog.available_ids(feed.id, min_duration_seconds=shortest)
         elif mode is BackfillMode.latest:
-            ids = await uow.catalog.available_ids(feed.id, latest_n=feed.backfill_latest_n)
+            ids = await uow.catalog.available_ids(
+                feed.id, latest_n=feed.backfill_latest_n, min_duration_seconds=shortest
+            )
         else:
             ids = []
         changed = await uow.catalog.set_wanted(ids, WantedReason.backfill)
@@ -140,7 +149,9 @@ async def apply_policy(uow: UnitOfWork, feed: Feed, *, now: datetime | None = No
         await uow.flush()
         return changed
     if feed.follow:
-        ids = await uow.catalog.available_ids(feed.id, first_seen_after=feed.policy_applied_at)
+        ids = await uow.catalog.available_ids(
+            feed.id, first_seen_after=feed.policy_applied_at, min_duration_seconds=shortest
+        )
         return await uow.catalog.set_wanted(ids, WantedReason.follow)
     return []
 
@@ -167,7 +178,13 @@ async def run(ctx: JobContext) -> JobOutcome:
             last_modified=feed.source_last_modified,
             first_listing=feed.last_refresh_success_at is None,
             options=engine_options_for(
-                ctx.container.settings, feed.engine_options, language=feed.language
+                ctx.container.settings,
+                feed.engine_options,
+                language=effective(
+                    load_defaults(ctx.container.layout),
+                    language=feed.preferred_language,
+                    min_duration_seconds=feed.min_duration_seconds,
+                ).language,
             ),
         )
 

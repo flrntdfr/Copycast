@@ -81,6 +81,8 @@ class FakeEngine:
         self._failures: list[Exception] = []
         self._block: threading.Event | None = None
         self.records = EngineRecords()
+        self.info_extra: dict[str, Any] = {}
+        """Merged into every info.json a fetch writes (description, timestamp, uploader...)."""
         self.version_info = FAKE_VERSION
         self.audio_bytes = STUB_AUDIO
         self.duration_seconds: int | None = 61
@@ -198,6 +200,7 @@ class FakeEngine:
             "duration": self.duration_seconds,
             "extractor": spec.synth.extractor if spec.synth else "fake",
             "chapters": [],
+            **self.info_extra,
         }
         info_path.write_text(json.dumps(info), encoding="utf-8")
         on_progress(Progress(EnginePhase.postprocessing, bytes_done=total, bytes_total=total))

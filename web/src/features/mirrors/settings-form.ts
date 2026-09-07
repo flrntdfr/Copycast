@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import type { BackfillRequest, MirrorRead, MirrorUpdate } from "@/api/types";
 import { optionalCount } from "@/features/add-source/policy-form";
+import { minutesToSeconds, secondsToMinutes } from "@/lib/format";
 import { parseSelection, selectionIsValid } from "@/lib/selection";
 
 export type EngineOptions = Record<string, unknown>;
@@ -44,6 +45,12 @@ export const mirrorSettingsSchema = z
     latest_n: optionalCount,
     selection: z.string().max(4096).optional(),
     engine_options: z.string(),
+    language: z
+      .string()
+      .trim()
+      .max(16)
+      .regex(/^([a-zA-Z]{2,3}([-_][a-zA-Z0-9]{2,8})*)?$/, "A tag such as fr or pt-BR"),
+    min_duration_minutes: optionalCount,
   })
   .superRefine((value, ctx) => {
     if (value.mode === "latest" && !value.latest_n) {
@@ -79,6 +86,10 @@ export function settingsDefaults(mirror: MirrorRead): MirrorSettingsInput {
     latest_n: mirror.backfill.latest_n ?? 10,
     selection: "",
     engine_options: formatEngineOptions(mirror.engine_options),
+    language: mirror.preferred_language ?? "",
+    min_duration_minutes: mirror.min_duration_seconds
+      ? secondsToMinutes(mirror.min_duration_seconds)
+      : undefined,
   };
 }
 
@@ -118,6 +129,12 @@ export function toMirrorUpdate(mirror: MirrorRead, values: MirrorSettingsValues)
   const options = parseEngineOptions(values.engine_options);
   if (options.value && !sameJson(options.value, mirror.engine_options ?? {}))
     update.engine_options = options.value;
+
+  // Overrides: an empty field means "use the global default", sent as null to clear it.
+  const language = values.language.trim() || null;
+  if (language !== (mirror.preferred_language ?? null)) update.preferred_language = language;
+  const seconds = minutesToSeconds(values.min_duration_minutes ?? null);
+  if (seconds !== (mirror.min_duration_seconds ?? null)) update.min_duration_seconds = seconds;
   return update;
 }
 

@@ -110,3 +110,16 @@ export function formatNumber(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "";
   return value.toLocaleString();
 }
+
+/** Whole minutes for a stored number of seconds (never below 1 when seconds is positive). */
+export function secondsToMinutes(seconds: number): number {
+  return Math.max(1, Math.round(seconds / 60));
+}
+
+/** A minutes input ("" or a number) to stored seconds, or null when empty or not a count. */
+export function minutesToSeconds(minutes: string | number | null | undefined): number | null {
+  if (minutes === "" || minutes == null) return null;
+  const value = typeof minutes === "number" ? minutes : Number(minutes);
+  if (!Number.isFinite(value) || value < 1) return null;
+  return Math.round(value) * 60;
+}

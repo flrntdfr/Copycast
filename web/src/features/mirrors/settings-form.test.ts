@@ -54,6 +54,20 @@ describe("settings form", () => {
       {},
     );
     expect(toMirrorUpdate(base, { ...parsed, engine_options: "" })).toEqual({ engine_options: {} });
+    // Overrides: a value sets it, clearing it sends null so the default applies again.
+    expect(toMirrorUpdate(base, { ...parsed, language: " fr " })).toEqual({
+      preferred_language: "fr",
+    });
+    expect(toMirrorUpdate(base, { ...parsed, min_duration_minutes: 5 })).toEqual({
+      min_duration_seconds: 300,
+    });
+    const overridden = { ...base, preferred_language: "fr", min_duration_seconds: 300 };
+    expect(
+      toMirrorUpdate(overridden, mirrorSettingsSchema.parse(settingsDefaults(overridden))),
+    ).toEqual({});
+    expect(
+      toMirrorUpdate(overridden, { ...parsed, language: "", min_duration_minutes: undefined }),
+    ).toEqual({ preferred_language: null, min_duration_seconds: null });
   });
 
   it("always sends a Selection with numbers so they get archived", () => {

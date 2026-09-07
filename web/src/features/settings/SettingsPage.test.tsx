@@ -16,6 +16,9 @@ function handlers(state: { stored: EngineCookiesRead; written: string[]; deleted
     http.get("/api/feeds", () => HttpResponse.json({ feeds: [] })),
     http.get("/api/jobs", () => HttpResponse.json({ jobs: [], total: 0, limit: 1, offset: 0 })),
     http.get("/api/engine/cookies", () => HttpResponse.json(state.stored)),
+    http.get("/api/settings/defaults", () =>
+      HttpResponse.json({ language: null, min_duration_seconds: null }),
+    ),
     http.put("/api/engine/cookies", async ({ request }) => {
       const body = (await request.json()) as EngineCookiesWrite;
       state.written.push(body.content);

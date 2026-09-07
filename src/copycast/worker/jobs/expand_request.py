@@ -37,6 +37,7 @@ from copycast.application.ports import (
     PermanentError,
     StorageFull,
 )
+from copycast.application.services.defaults import load_defaults
 from copycast.application.services.items import PRIORITY_MANUAL
 from copycast.domain.enums import (
     ArchiveState,
@@ -148,7 +149,11 @@ async def run(ctx: JobContext) -> JobOutcome:
         if feed.kind != FeedKind.inbox:
             raise PermanentError(f"feed {feed.id!r} is not an Inbox")
         feed_id, url = feed.id, request.url
-        options = engine_options_for(ctx.container.settings, feed.engine_options, language=None)
+        options = engine_options_for(
+            ctx.container.settings,
+            feed.engine_options,
+            language=load_defaults(ctx.container.layout).language,
+        )
 
     ctx.progress.set_phase(ProgressPhase.listing)
     try:

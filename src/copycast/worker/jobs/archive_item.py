@@ -11,11 +11,13 @@ job still succeeds.
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from copycast.adapters.assets.mirror import (
     CHAPTERS_MIME,
@@ -40,6 +42,7 @@ from copycast.application.ports import (
     StorageFull,
     TransientError,
 )
+from copycast.application.services.defaults import effective, load_defaults
 from copycast.domain.enums import (
     ArchiveState,
     AssetFormat,
@@ -408,6 +411,10 @@ async def run(ctx: JobContext) -> JobOutcome:
             )
         )
 
+    # A flat listing (a YouTube channel tab) carries neither a description nor a date; the
+    # full info the fetch produced does, and fills whatever the Catalog row still lacks.
+    enriched = await ctx.run_blocking(metadata_from_info_json, result.info_json_path)
+
     async with ctx.uow() as uow:
         archived = await uow.catalog.mark_state(
             item_id,
@@ -426,6 +433,8 @@ async def run(ctx: JobContext) -> JobOutcome:
             return JobOutcome(result={"skipped": "item state changed during the fetch"})
         if prepared.item_xml is not None:
             await uow.catalog.set_source_item_xml(item_id, prepared.item_xml)
+        if enriched:
+            await uow.catalog.fill_metadata(item_id, **enriched)
         await _record_assets(uow, target.feed_id, item_id, assets)
         await uow.feeds.recount_storage(target.feed_id)
         _, revision = await uow.update_intent(target.feed_id, debounce=True)
@@ -473,9 +482,51 @@ def _target(
         item_source_url=item_source_url,
         stored_item_xml=stored_item_xml,
         options=engine_options_for(
-            ctx.container.settings, feed.engine_options, language=feed.language
+            ctx.container.settings,
+            feed.engine_options,
+            language=effective(
+                load_defaults(ctx.container.layout),
+                language=feed.preferred_language,
+                min_duration_seconds=feed.min_duration_seconds,
+            ).language,
         ),
     )
+
+
+def metadata_from_info_json(path: Path | None) -> dict[str, Any]:
+    """``description``, ``published_at``, ``author``, ``artwork_url`` from a yt-dlp info dict."""
+    if path is None or not path.is_file():
+        return {}
+    try:
+        info: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(info, dict):
+        return {}
+    data = cast(dict[str, Any], info)
+    found: dict[str, Any] = {}
+    description = data.get("description")
+    if isinstance(description, str) and description.strip():
+        found["description"] = description.strip()
+    for key in ("timestamp", "release_timestamp"):
+        value = data.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
+            found["published_at"] = datetime.fromtimestamp(float(value), tz=UTC)
+            break
+    else:
+        upload_date = data.get("upload_date") or data.get("release_date")
+        if isinstance(upload_date, str) and len(upload_date) == 8 and upload_date.isdigit():
+            with contextlib.suppress(ValueError):
+                found["published_at"] = datetime.strptime(upload_date, "%Y%m%d").replace(tzinfo=UTC)
+    for key in ("artist", "uploader", "channel", "creator"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            found["author"] = value.strip()
+            break
+    thumbnail = data.get("thumbnail")
+    if isinstance(thumbnail, str) and thumbnail.startswith("http"):
+        found["artwork_url"] = thumbnail
+    return found
 
 
 def _discard_outputs(layout: Layout, feed_id: str, item_id: str, result: FetchResult) -> None:

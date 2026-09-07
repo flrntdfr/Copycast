@@ -171,6 +171,29 @@ data/feeds/<feed_id>/assets/            Artwork, chapters, transcripts
 The descriptor is rewritten after every change of intent and is what `copycast rebuild`
 reads. Nothing outside the worker writes into `media/` or `tmp/`.
 
+## Settings page: defaults every Mirror may override
+
+Two settings live in the data directory (`data/engine/defaults.json`, `PUT
+/api/settings/defaults`) rather than in the environment, because they are policy the operator
+changes from the UI:
+
+| Default | Effect | Per-Mirror override |
+|---|---|---|
+| Metadata language (`fr`, `pt-BR`) | yt-dlp asks YouTube for that language instead of English, so a French channel's titles and descriptions stay French | the Mirror's *Metadata language* field (`preferred_language`; `language` stays what the Source reports) |
+| Minimum length (minutes) | items shorter than that are listed but never archived by Backfill or Follow; unknown lengths pass; explicit selections still work (keeps Shorts out) | the Mirror's *Minimum length* field (`min_duration_seconds`) |
+
+A Mirror's Settings tab shows "Using the default" when a field is empty, marks a value that
+diverges from the default, and offers *Use default*, which clears the override (sent as
+`null`). Changing a default applies from each Mirror's next Refresh. Both capabilities have
+routes but no MCP tools.
+
+Engine-sourced Episodes (YouTube, SoundCloud, Inbox Requests) carry the Source's page URL at
+the end of their description, since most podcast apps never show the item's `<link>`.
+
+`search_videos` (`GET /api/search/videos`, an MCP tool, and the wizard's search step) finds
+videos on YouTube through the engine; an agent asked for "the last WWDC live from Gruber"
+searches, picks the newest hit and pushes its URL with `add_to_inbox`.
+
 ## YouTube and other sites that need a login
 
 YouTube answers requests from a server's address (a Linode or Hetzner IP, say) with

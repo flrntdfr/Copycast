@@ -8,10 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDate } from "@/lib/format";
+import { useSendToInbox } from "@/features/inboxes/useSendToInbox";
+import { formatDate, formatDuration } from "@/lib/format";
 import { count } from "@/lib/labels";
 
-/** iTunes search (`search_podcasts`) prefilling the wizard with the chosen feed URL. */
+/** iTunes search (`search_podcasts`) prefilling the wizard, plus YouTube hits (`search_videos`) to send to an Inbox. */
 export function SearchStep({
   query,
   onPick,
@@ -27,6 +28,13 @@ export function SearchStep({
     { params: { query: { query: term, limit: 10 } } },
     { enabled: term.trim().length > 0 },
   );
+  const videos = $api.useQuery(
+    "get",
+    "/api/search/videos",
+    { params: { query: { query: term, limit: 8 } } },
+    { enabled: term.trim().length > 0 },
+  );
+  const inbox = useSendToInbox();
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -37,13 +45,13 @@ export function SearchStep({
     <div className="space-y-4">
       <form onSubmit={submit} className="flex max-w-2xl gap-2">
         <Label htmlFor="podcast-search" className="sr-only">
-          Podcast name
+          Podcast or video name
         </Label>
         <Input
           id="podcast-search"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="Podcast name"
+          placeholder="Podcast or video name"
           autoFocus
         />
         <Button type="submit" disabled={!draft.trim()}>
@@ -91,6 +99,49 @@ export function SearchStep({
           </li>
         ))}
       </ul>
+      {term ? (
+        <section aria-labelledby="video-results" className="space-y-2">
+          <h2 id="video-results" className="text-sm font-medium">
+            Videos on YouTube
+          </h2>
+          {videos.isPending ? <Skeleton className="h-16 w-full" /> : null}
+          {videos.isError ? (
+            <p className="text-sm text-destructive">{describeProblem(videos.error).title}</p>
+          ) : null}
+          {videos.data?.results.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No videos match “{term}”.</p>
+          ) : null}
+          <ul className="divide-y rounded-lg border" aria-label="Video results">
+            {(videos.data?.results ?? []).map((video) => (
+              <li key={video.url} className="flex items-center gap-3 p-3">
+                <Artwork src={video.artwork_url} size={48} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{video.title}</div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {[
+                      video.channel,
+                      video.duration_seconds != null
+                        ? formatDuration(video.duration_seconds)
+                        : null,
+                      video.published_at ? formatDate(video.published_at) : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={inbox.isPending}
+                  onClick={() => void inbox.send(video.url)}
+                >
+                  Send to Inbox
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </div>
   );
 }

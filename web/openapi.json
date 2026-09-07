@@ -975,6 +975,72 @@
         "x-capability": "search_podcasts"
       }
     },
+    "/api/search/videos": {
+      "get": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "Find videos by name (YouTube, through the engine)",
+        "operationId": "search_videos",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "title": "Query"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoSearchPage"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Engine unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "search_videos"
+      }
+    },
     "/api/mirrors/{feed_id}": {
       "patch": {
         "tags": [
@@ -2155,6 +2221,68 @@
           }
         },
         "x-capability": "delete_engine_cookies"
+      }
+    },
+    "/api/settings/defaults": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Defaults applied wherever a Mirror leaves a value null",
+        "operationId": "get_mirror_defaults",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorDefaults"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "get_mirror_defaults"
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Replace the operator defaults",
+        "operationId": "set_mirror_defaults",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MirrorDefaults"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorDefaults"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "set_mirror_defaults"
       }
     },
     "/feeds/{feed_id}.xml": {
@@ -3721,6 +3849,32 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Engine Options"
+          },
+          "preferred_language": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 16
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Language",
+            "description": "BCP 47 tag such as fr; YouTube metadata language"
+          },
+          "min_duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Duration Seconds",
+            "description": "Skip items shorter than this (Shorts); unknown lengths pass"
           }
         },
         "additionalProperties": false,
@@ -3729,6 +3883,40 @@
           "source_url"
         ],
         "title": "MirrorCreate"
+      },
+      "MirrorDefaults": {
+        "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 16
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language",
+            "description": "Preferred YouTube metadata language (fr, pt-BR)"
+          },
+          "min_duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Duration Seconds",
+            "description": "Items shorter than this stay Available (Shorts)"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "MirrorDefaults",
+        "description": "Operator defaults applied to every Mirror whose own value is null.\n\nStored under the data directory (``engine/defaults.json``), edited on the\nSettings page; a Mirror overrides a value by setting its own, and resets\nto the default by clearing it."
       },
       "MirrorRead": {
         "properties": {
@@ -3820,6 +4008,42 @@
           },
           "source_kind": {
             "$ref": "#/components/schemas/SourceKind"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language",
+            "description": "The language the Source reports"
+          },
+          "preferred_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Language",
+            "description": "This Mirror's metadata language override, else the default"
+          },
+          "min_duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Duration Seconds",
+            "description": "Shorter items are listed but never archived automatically"
           },
           "paused": {
             "type": "boolean",
@@ -3951,6 +4175,30 @@
               }
             ],
             "title": "Engine Options"
+          },
+          "preferred_language": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 16
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Language"
+          },
+          "min_duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Duration Seconds"
           }
         },
         "additionalProperties": false,
@@ -4699,6 +4947,91 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VideoSearchPage": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/VideoSearchResult"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "results"
+        ],
+        "title": "VideoSearchPage"
+      },
+      "VideoSearchResult": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "artwork_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artwork Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "url"
+        ],
+        "title": "VideoSearchResult",
+        "description": "One YouTube search hit; ``url`` is what ``add_to_inbox`` or ``probe_source`` takes."
       }
     }
   }

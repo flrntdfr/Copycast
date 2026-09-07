@@ -31,6 +31,9 @@ function handlers(calls: { method: string; path: string; body?: unknown }[] = []
   return [
     http.get("/api/feeds", () => HttpResponse.json({ feeds: [feed] })),
     http.get("/api/feeds/:feedId", () => HttpResponse.json(feed)),
+    http.get("/api/settings/defaults", () =>
+      HttpResponse.json({ language: "fr", min_duration_seconds: 300 }),
+    ),
     http.get("/api/feeds/:feedId/items", () =>
       HttpResponse.json({
         items: [item({ id: "item-1", feed_id: feed.id, title: "First" })],
@@ -139,11 +142,30 @@ describe("Mirror page", () => {
     expect(within(form).getByLabelText("Source URL")).toHaveValue(feed.source_url);
     expect(within(form).getByText(/None\. Copycast never deletes/)).toBeInTheDocument();
 
+    // Overrides: empty fields follow the defaults from Settings and say so.
+    await waitFor(() =>
+      expect(within(form).getByLabelText("Metadata language")).toHaveAttribute("placeholder", "fr"),
+    );
+    expect(within(form).getByText("Using the default: fr.")).toBeInTheDocument();
+    expect(within(form).getByText("Using the default: 5.")).toBeInTheDocument();
+    expect(within(form).queryByRole("button", { name: "Use default" })).not.toBeInTheDocument();
+
     await user.click(within(form).getByRole("switch", { name: "Follow" }));
     await user.click(within(form).getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
     expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ follow: false });
     expect(await screen.findByText("Settings saved")).toBeInTheDocument();
+
+    // An own value diverging from the default is marked and can be reset (sent as null).
+    await user.type(within(form).getByLabelText("Metadata language"), "en");
+    expect(await within(form).findByTestId("settings-language-diverges")).toHaveTextContent(
+      "Overrides the default (fr)",
+    );
+    await user.click(within(form).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
+    expect(calls.filter((c) => c.method === "PATCH")[1]?.body).toMatchObject({
+      preferred_language: "en",
+    });
 
     const options = within(form).getByLabelText("Engine options");
     await user.clear(options);

@@ -36,6 +36,7 @@ function handlers() {
     ),
     http.get("/healthz/ready", () => HttpResponse.json({ status: "ok", checks: {} })),
     http.get("/api/search/podcasts", () => HttpResponse.json({ query: "atp", results: [] })),
+    http.get("/api/search/videos", () => HttpResponse.json({ query: "atp", results: [] })),
   ];
 }
 
@@ -53,7 +54,7 @@ describe("AppShell", () => {
     await user.click(await within(palette).findByText(/Find a podcast named “Accidental Tech”/));
     await waitFor(() => expect(history.location.pathname).toBe("/mirrors/new"));
     expect(history.location.search).toContain("query=Accidental+Tech");
-    expect(await screen.findByLabelText("Podcast name")).toHaveValue("Accidental Tech");
+    expect(await screen.findByLabelText("Podcast or video name")).toHaveValue("Accidental Tech");
   });
 
   it("offers Mirror / Send to Inbox for a URL and jumps to feeds", async () => {

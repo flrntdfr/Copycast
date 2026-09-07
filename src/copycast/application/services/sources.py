@@ -11,6 +11,7 @@ from copycast.application.models import (
     PodcastSearchPage,
     ProbeRequest,
     ProbeResult,
+    VideoSearchPage,
 )
 from copycast.application.ports import CancelToken
 from copycast.application.services.context import ServiceContext, SourceSnapshot
@@ -66,6 +67,19 @@ async def search_podcasts(
     return PodcastSearchPage(query=query, results=results)
 
 
+@capability("search_videos", response=VideoSearchPage)
+async def search_videos(
+    ctx: ServiceContext, query: str, limit: int = SEARCH_DEFAULT_LIMIT
+) -> VideoSearchPage:
+    """Videos matching ``query`` on YouTube through the engine (``ytsearch``); no key needed."""
+    query = " ".join(query.split())
+    limit = max(1, min(int(limit), SEARCH_MAX_LIMIT))
+    if not query:
+        return VideoSearchPage(query=query, results=[])
+    results = await asyncio.to_thread(ctx.sources.search_videos, query, limit)
+    return VideoSearchPage(query=query, results=results)
+
+
 __all__ = [
     "PROBE_TIMEOUT_SECONDS",
     "SEARCH_DEFAULT_LIMIT",
@@ -73,4 +87,5 @@ __all__ = [
     "probe_snapshots",
     "probe_source",
     "search_podcasts",
+    "search_videos",
 ]

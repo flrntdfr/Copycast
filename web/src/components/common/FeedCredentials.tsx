@@ -1,5 +1,5 @@
-import { KeyRound, RotateCw } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, ChevronRight, KeyRound, RotateCw } from "lucide-react";
+import { useId, useState } from "react";
 import { toast } from "sonner";
 
 import { $api } from "@/api/client";
@@ -35,6 +35,8 @@ export function FeedCredentials({
   const pair = feed.feed_credentials;
   const invalidate = useInvalidateFeed();
   const [confirming, setConfirming] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = useId();
   const rotate = $api.useMutation("post", "/api/feeds/{feed_id}/credentials/rotate", {
     onSuccess: (updated) => {
       invalidate(updated.id);
@@ -47,14 +49,31 @@ export function FeedCredentials({
   if (!pair) return null;
   return (
     <div className={className} data-testid="feed-credentials">
-      <div className="mb-1.5 flex items-center gap-2 text-sm">
-        <KeyRound className="size-4 text-muted-foreground" aria-hidden />
-        <span className="font-medium">Feed credentials</span>
-        <span className="text-muted-foreground">
-          The feed URL already carries them; apps such as Overcast also take them separately.
+      <button
+        type="button"
+        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+        aria-expanded={expanded}
+        aria-controls={detailsId}
+        onClick={() => setExpanded((open) => !open)}
+      >
+        {expanded ? (
+          <ChevronDown className="size-4" aria-hidden />
+        ) : (
+          <ChevronRight className="size-4" aria-hidden />
+        )}
+        <KeyRound className="size-4" aria-hidden />
+        <span className="font-medium text-foreground">Username and password</span>
+        <span>
+          {expanded
+            ? "The feed URL already carries them; apps such as Overcast also take them separately."
+            : "Already in the feed URL; expand for apps that ask for them separately."}
         </span>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+      </button>
+      <div
+        id={detailsId}
+        hidden={!expanded}
+        className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+      >
         <CopyField label="Username" value={pair.username} />
         <CopyField label="Password" value={pair.password} />
         {canRotate ? (

@@ -9,6 +9,7 @@ from copycast.application.models import MirrorCreate, MirrorRead
 
 PLAN_TOOLS = {
     "search_podcasts",
+    "search_videos",
     "probe_source",
     "create_mirror",
     "list_feeds",
@@ -39,6 +40,8 @@ OPERATOR_ONLY = {
     "get_engine_cookies",
     "set_engine_cookies",
     "delete_engine_cookies",
+    "get_mirror_defaults",
+    "set_mirror_defaults",
 }
 """Routed for the UI, never tools: keys must not mint keys, agents must not rotate feeds
 or touch the cookie file (a browser session)."""

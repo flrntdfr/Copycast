@@ -75,6 +75,8 @@ class DescriptorFeed(_Strict):
 class DescriptorPolicy(_Strict):
     backfill_mode: BackfillMode | None = None
     backfill_latest_n: int | None = None
+    min_duration_seconds: int | None = None
+    preferred_language: str | None = None
     follow: bool = True
     paused: bool = False
     policy_applied_at: datetime | None = None

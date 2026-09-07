@@ -101,6 +101,9 @@ def mirror_read(
         source_url=feed.source_url,
         service=feed.service,
         source_kind=SourceKind(feed.source_kind),
+        language=feed.language,
+        preferred_language=feed.preferred_language,
+        min_duration_seconds=feed.min_duration_seconds,
         paused=feed.paused,
         follow=feed.follow,
         backfill=BackfillPolicy(

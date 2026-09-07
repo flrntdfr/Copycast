@@ -36,3 +36,21 @@ export function useDeleteCookies() {
     },
   });
 }
+
+export function useSetDefaults() {
+  const queryClient = useQueryClient();
+  return $api.useMutation("put", "/api/settings/defaults", {
+    onSuccess: (stored) => {
+      queryClient.setQueryData(
+        [OPS.get_mirror_defaults[0], OPS.get_mirror_defaults[1], {}],
+        stored,
+      );
+      void queryClient.invalidateQueries({
+        queryKey: [OPS.get_mirror_defaults[0], OPS.get_mirror_defaults[1]],
+      });
+      toast.success("Defaults saved", {
+        description: "Mirrors without their own value follow them from the next Refresh.",
+      });
+    },
+  });
+}

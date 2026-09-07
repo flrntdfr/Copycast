@@ -325,14 +325,25 @@ def _preserved_item(feed: FeedView, item: ItemView, base_url: str) -> Element | 
     return element
 
 
+def with_source_link(description: str | None, source_url: str | None) -> str | None:
+    """The description with the Source's page appended (podcast apps rarely show ``<link>``)."""
+    if not source_url:
+        return description
+    text = (description or "").rstrip()
+    if source_url in text:
+        return text or None
+    return f"{text}\n\n{source_url}" if text else source_url
+
+
 def _synthesized_item(
     feed: FeedView, item: ItemView, base_url: str, feed_artwork: str | None, now: datetime
 ) -> Element:
     assert item.media_ext is not None
     element = etree.Element("item")
     _sub(element, "title", item.title)
-    if item.description:
-        _sub(element, "description", item.description)
+    description = with_source_link(item.description, item.source_url)
+    if description:
+        _sub(element, "description", description)
     if item.source_url:
         _sub(element, "link", item.source_url)
     guid = _sub(element, "guid", item.source_url or f"urn:copycast:{item.id}")
@@ -479,4 +490,5 @@ __all__ = [
     "RenderedFeed",
     "render_feed",
     "rfc2822",
+    "with_source_link",
 ]

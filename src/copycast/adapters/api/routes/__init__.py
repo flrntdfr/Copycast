@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from copycast.adapters.api.routes import (
     about,
     admin,
+    defaults,
     engine,
     events,
     feeds,
@@ -33,6 +34,7 @@ def create_api_router() -> APIRouter:
         admin,
         keys,
         engine,
+        defaults,
     ):
         router.include_router(module.router)
     return router

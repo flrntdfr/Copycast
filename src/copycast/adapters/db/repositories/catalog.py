@@ -250,8 +250,12 @@ class CatalogRepository:
         *,
         first_seen_after: datetime | None = None,
         latest_n: int | None = None,
+        min_duration_seconds: int | None = None,
     ) -> list[str]:
-        """Listed, archivable, Available items, newest ordinal first (policy input)."""
+        """Listed, archivable, Available items, newest ordinal first (policy input).
+
+        ``min_duration_seconds`` leaves out shorter items; an unknown length passes.
+        """
         stmt = (
             select(CatalogItem.id)
             .where(
@@ -264,6 +268,13 @@ class CatalogRepository:
         )
         if first_seen_after is not None:
             stmt = stmt.where(CatalogItem.first_seen_at > first_seen_after)
+        if min_duration_seconds is not None:
+            stmt = stmt.where(
+                or_(
+                    CatalogItem.duration_seconds.is_(None),
+                    CatalogItem.duration_seconds >= min_duration_seconds,
+                )
+            )
         if latest_n is not None:
             stmt = stmt.limit(latest_n)
         return list((await self._session.execute(stmt)).scalars())
@@ -560,6 +571,33 @@ class CatalogRepository:
         counted = result.scalar_one_or_none() is not None
         await self._refresh_if_loaded(item_id)
         return counted
+
+    async def fill_metadata(
+        self,
+        item_id: str,
+        *,
+        description: str | None = None,
+        published_at: datetime | None = None,
+        author: str | None = None,
+        artwork_url: str | None = None,
+    ) -> bool:
+        """Fill columns the listing left empty from the engine's full info (never overwrite)."""
+        values: dict[str, Any] = {}
+        if description:
+            values["description"] = func.coalesce(CatalogItem.description, description)
+        if published_at is not None:
+            values["published_at"] = func.coalesce(CatalogItem.published_at, published_at)
+        if author:
+            values["author"] = func.coalesce(CatalogItem.author, author)
+        if artwork_url:
+            values["artwork_url"] = func.coalesce(CatalogItem.artwork_url, artwork_url)
+        if not values:
+            return False
+        result = await self._session.execute(
+            update(CatalogItem).where(CatalogItem.id == item_id).values(**values)
+        )
+        await self._refresh_if_loaded(item_id)
+        return rows_affected(result) > 0
 
     async def set_source_item_xml(self, item_id: str, xml: str | None) -> None:
         await self._session.execute(

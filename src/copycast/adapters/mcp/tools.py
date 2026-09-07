@@ -43,6 +43,7 @@ from copycast.application.models import (
     RequestRead,
     SelectionRequest,
     SelectionResult,
+    VideoSearchPage,
 )
 from copycast.domain.credentials import required_scope
 from copycast.domain.enums import (
@@ -97,6 +98,15 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         chosen result's ``feed_url`` to ``create_mirror``.
         """
         return await container.services.search_podcasts(query, limit)
+
+    async def search_videos(query: str, limit: int = 10) -> VideoSearchPage:
+        """Find videos by name on YouTube (no key needed); each hit's ``url`` can be pushed
+        into an Inbox with ``add_to_inbox`` or probed with ``probe_source``.
+
+        For "add the last X from channel Y" search for the channel and the topic, pick
+        the newest matching hit by ``published_at``, then call ``add_to_inbox``.
+        """
+        return await container.services.search_videos(query, limit)
 
     async def probe_source(url: str) -> ProbeResult:
         """Resolve a feed, page, YouTube, SoundCloud or other Source URL into candidates.
@@ -245,6 +255,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
 
     registrations: list[tuple[ToolFn, str, str, bool]] = [
         (search_podcasts, "search_podcasts", "search_podcasts", True),
+        (search_videos, "search_videos", "search_videos", True),
         (probe_source, "probe_source", "probe_source", True),
         (create_mirror, "create_mirror", "create_mirror", False),
         (list_feeds, "list_feeds", "list_feeds", True),

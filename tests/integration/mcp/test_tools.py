@@ -236,3 +236,22 @@ async def test_jobs_and_about(mcp_client: Client[Any], source: Source) -> None:
     with pytest.raises((ToolError, MCPError)) as bad:
         await mcp_client.call_tool("probe_source", {"url": "   "})
     assert str(bad.value)
+
+
+async def test_search_videos_tool(mcp_client: Client[Any], engine: FakeEngine) -> None:
+    from tests.support.factories import listing_item
+
+    hit = listing_item(
+        1,
+        title="WWDC 2024 Live",
+        source_url="https://www.youtube.com/watch?v=abc123",
+        author="The Talk Show",
+    )
+    engine.script_listing("ytsearch3:gruber wwdc", listing(1, service="YouTube", items=[hit]))
+    result = structured(
+        await mcp_client.call_tool("search_videos", {"query": "gruber wwdc", "limit": 3})
+    )
+    assert [r["url"] for r in result["results"]] == ["https://www.youtube.com/watch?v=abc123"]
+    tools = {tool.name: tool for tool in await mcp_client.list_tools()}
+    assert (tools["search_videos"].meta or {})["capability"] == "search_videos"
+    assert "add_to_inbox" in (tools["search_videos"].description or "")

@@ -47,6 +47,9 @@ export type ApiKeyCreate = Schemas["ApiKeyCreate"];
 export type ApiKeyCreated = Schemas["ApiKeyCreated"];
 export type ApiKeyList = Schemas["ApiKeyList"];
 export type EngineCookiesRead = Schemas["EngineCookiesRead"];
+export type MirrorDefaults = Schemas["MirrorDefaults"];
+export type VideoSearchPage = Schemas["VideoSearchPage"];
+export type VideoSearchResult = Schemas["VideoSearchResult"];
 export type EngineCookiesWrite = Schemas["EngineCookiesWrite"];
 
 export type ArchiveState = Schemas["ArchiveState"];

@@ -1,4 +1,4 @@
-"""Sources: probe a URL into candidates, search podcasts by name."""
+"""Sources: probe a URL into candidates, search podcasts and videos by name."""
 
 from __future__ import annotations
 
@@ -8,7 +8,12 @@ from fastapi import APIRouter, Query, Request
 
 from copycast.adapters.api.deps import ServicesDep, run_cancellable
 from copycast.adapters.api.problems import problem_responses
-from copycast.application.models import PodcastSearchPage, ProbeRequest, ProbeResult
+from copycast.application.models import (
+    PodcastSearchPage,
+    ProbeRequest,
+    ProbeResult,
+    VideoSearchPage,
+)
 from copycast.application.ports import CancelToken
 
 router = APIRouter(tags=["sources"])
@@ -45,6 +50,22 @@ async def search_podcasts(
     limit: Annotated[int, Query(ge=1, le=MAX_SEARCH_LIMIT)] = 10,
 ) -> PodcastSearchPage:
     return await services.search_podcasts(query, limit)
+
+
+@router.get(
+    "/search/videos",
+    operation_id="search_videos",
+    openapi_extra={"x-capability": "search_videos"},
+    response_model=VideoSearchPage,
+    responses=problem_responses(503),
+    summary="Find videos by name (YouTube, through the engine)",
+)
+async def search_videos(
+    services: ServicesDep,
+    query: Annotated[str, Query(max_length=200)],
+    limit: Annotated[int, Query(ge=1, le=MAX_SEARCH_LIMIT)] = 10,
+) -> VideoSearchPage:
+    return await services.search_videos(query, limit)
 
 
 __all__ = ["MAX_SEARCH_LIMIT", "router"]
