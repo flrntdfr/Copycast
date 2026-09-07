@@ -116,6 +116,8 @@ Tools cover everything the UI does: `search_podcasts` (iTunes Search, no key nee
 
 - Audio is never re-encoded: the best audio stream (m4a preferred) is stream-copied, with
   tags and artwork embedded.
+- YouTube from a server's IP asks you to sign in: paste a logged-in browser's `cookies.txt`
+  on the **Settings** page and retry; see [docs/operations.md](docs/operations.md).
 - Everything Copycast knows is either in Postgres or under `data/`; the data directory alone
   is enough to rebuild the database (`copycast rebuild`,
   [ADR 0001](docs/adr/0001-postgres-is-truth-data-dir-rebuildable.md)).

@@ -468,6 +468,26 @@ class PruneResult(ReadModel):
     dry_run: bool
 
 
+# --------------------------------------------------------------------------- engine cookies
+
+
+class EngineCookiesWrite(RequestModel):
+    """A Netscape ``cookies.txt`` as exported by a browser extension."""
+
+    content: str = Field(min_length=1, max_length=1024 * 1024)
+
+
+class EngineCookiesRead(ReadModel):
+    """The stored cookie file without any value: presence, size, where it applies."""
+
+    present: bool
+    size_bytes: int = 0
+    updated_at: datetime | None = None
+    cookie_count: int = 0
+    domains: list[str] = Field(default_factory=list[str])
+    youtube: bool = Field(default=False, description="Whether a youtube.com cookie is stored")
+
+
 # --------------------------------------------------------------------------- api keys
 
 
@@ -573,6 +593,8 @@ __all__ = [
     "BackfillPolicy",
     "BackfillRequest",
     "CatalogCounts",
+    "EngineCookiesRead",
+    "EngineCookiesWrite",
     "EngineRead",
     "FeedCredentials",
     "FeedHealth",

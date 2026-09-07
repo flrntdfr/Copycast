@@ -191,3 +191,57 @@ def test_ytdlp_kind_fetch_of_a_direct_media_url(origin: Origin, tmp_path: Path) 
     assert result.mime == "audio/mpeg"
     assert result.info_json_path is not None and result.info_json_path.exists()
     assert ffprobe(result.audio_path)["streams"][0]["codec_name"] == "mp3"
+
+
+def _origin_with(tmp_path: Path, files: dict[str, bytes]) -> Origin:
+    """An origin serving the tiny fixtures plus ``files`` (name -> bytes) under ``/media``."""
+    root = tmp_path / "origin"
+    (root / "media").mkdir(parents=True)
+    from tests.support.origin import FIXTURES_DIR
+
+    shutil.copy(FIXTURES_DIR / "media" / "tiny.mp3", root / "media" / "tiny.mp3")
+    for name, data in files.items():
+        (root / "media" / name).write_bytes(data)
+    return Origin(root=root)
+
+
+def _spec_with_thumbnail(origin: Origin, root: Path, thumbnail: str) -> FetchSpec:
+    import dataclasses
+
+    synth = dataclasses.replace(
+        synth_for(origin, "0123456789abcdef"), thumbnail_url=origin.url_for(f"/media/{thumbnail}")
+    )
+    return FetchSpec(FetchKind.direct, synth.url, synth.id, root / "media", root / "tmp", synth)
+
+
+def test_jpeg_served_under_a_png_name_is_renamed_converted_and_embedded(tmp_path: Path) -> None:
+    """megaphone/imgix answer ``image.png?auto=format`` with a JPEG; ffmpeg must not choke."""
+    from tests.support.origin import FIXTURES_DIR
+
+    jpeg = (FIXTURES_DIR / "media" / "tiny.jpg").read_bytes()
+    with _origin_with(tmp_path, {"cover.png": jpeg}) as origin:
+        spec = _spec_with_thumbnail(origin, tmp_path / "work", "cover.png")
+        log = RecordingLog()
+        result = YtDlpEngine().fetch_item(spec, {}, CancelToken(), lambda _p: None, log)
+    assert result.artwork_path == spec.home_dir / f"{spec.item_id}.jpg"
+    assert result.artwork_path.read_bytes()[:3] == b"\xff\xd8\xff"
+    codecs = [
+        (s["codec_name"], s.get("disposition", {}).get("attached_pic", 0))
+        for s in ffprobe(result.audio_path)["streams"]
+    ]
+    assert ("mjpeg", 1) in codecs
+    assert "Correcting thumbnail" in log.text() and "extension to jpg" in log.text()
+    assert "Conversion failed" not in log.text()
+
+
+def test_an_unreadable_thumbnail_warns_and_the_audio_still_archives(tmp_path: Path) -> None:
+    with _origin_with(tmp_path, {"cover.png": b"<!doctype html><p>not an image</p>"}) as origin:
+        spec = _spec_with_thumbnail(origin, tmp_path / "work", "cover.png")
+        log = RecordingLog()
+        result = YtDlpEngine().fetch_item(spec, {}, CancelToken(), lambda _p: None, log)
+    assert result.audio_path.is_file() and result.ext == "mp3"
+    codecs = [s["codec_name"] for s in ffprobe(result.audio_path)["streams"]]
+    assert "mp3" in codecs and "mjpeg" not in codecs
+    warnings = [line for level, line in log.lines if level == "warning"]
+    assert any("thumbnail" in line.lower() for line in warnings), log.text()
+    assert not any(level == "error" for level, _ in log.lines), log.text()

@@ -2082,6 +2082,81 @@
         "x-capability": "revoke_api_key"
       }
     },
+    "/api/engine/cookies": {
+      "get": {
+        "tags": [
+          "engine"
+        ],
+        "summary": "Whether a cookie file is stored and which domains it covers (never its values)",
+        "operationId": "get_engine_cookies",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngineCookiesRead"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "get_engine_cookies"
+      },
+      "put": {
+        "tags": [
+          "engine"
+        ],
+        "summary": "Store a Netscape cookies.txt for every future fetch",
+        "operationId": "set_engine_cookies",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EngineCookiesWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngineCookiesRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "set_engine_cookies"
+      },
+      "delete": {
+        "tags": [
+          "engine"
+        ],
+        "summary": "Remove the stored cookie file",
+        "operationId": "delete_engine_cookies",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "x-capability": "delete_engine_cookies"
+      }
+    },
     "/feeds/{feed_id}.xml": {
       "get": {
         "tags": [
@@ -2675,6 +2750,72 @@
         },
         "type": "object",
         "title": "CatalogCounts"
+      },
+      "EngineCookiesRead": {
+        "properties": {
+          "present": {
+            "type": "boolean",
+            "title": "Present"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes",
+            "default": 0
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "cookie_count": {
+            "type": "integer",
+            "title": "Cookie Count",
+            "default": 0
+          },
+          "domains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Domains"
+          },
+          "youtube": {
+            "type": "boolean",
+            "title": "Youtube",
+            "description": "Whether a youtube.com cookie is stored",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "present"
+        ],
+        "title": "EngineCookiesRead",
+        "description": "The stored cookie file without any value: presence, size, where it applies."
+      },
+      "EngineCookiesWrite": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 1048576,
+            "minLength": 1,
+            "title": "Content"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "EngineCookiesWrite",
+        "description": "A Netscape ``cookies.txt`` as exported by a browser extension."
       },
       "EngineRead": {
         "properties": {

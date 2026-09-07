@@ -23,21 +23,15 @@ def test_base_options_match_the_plan() -> None:
     assert BASE_OPTIONS["format"] == YTDLP_FORMAT == "bestaudio[ext=m4a]/bestaudio/best"
     assert DIRECT_FORMAT == "bestaudio/best"
     keys = [pp["key"] for pp in POSTPROCESSORS]
-    assert keys == [
-        "FFmpegThumbnailsConvertor",
-        "FFmpegExtractAudio",
-        "FFmpegMetadata",
-        "EmbedThumbnail",
-    ]
-    assert POSTPROCESSORS[0]["when"] == "before_dl" and POSTPROCESSORS[0]["format"] == "jpg"
-    assert POSTPROCESSORS[1]["preferredcodec"] == "best"
-    assert POSTPROCESSORS[2] == {
+    # The thumbnail steps are added by the engine itself so a bad image cannot fail a fetch.
+    assert keys == ["FFmpegExtractAudio", "FFmpegMetadata"]
+    assert POSTPROCESSORS[0]["preferredcodec"] == "best"
+    assert POSTPROCESSORS[1] == {
         "key": "FFmpegMetadata",
         "add_metadata": True,
         "add_chapters": True,
         "add_infojson": False,
     }
-    assert POSTPROCESSORS[3]["already_have_thumbnail"] is True
     for key in ("writethumbnail", "writeinfojson", "clean_infojson", "writesubtitles"):
         assert BASE_OPTIONS[key] is True
     assert BASE_OPTIONS["writeautomaticsub"] is False
@@ -107,3 +101,20 @@ def test_fetch_params_set_outtmpl_paths_format_and_logger(tmp_path: Path) -> Non
     assert ytdlp["format"] == YTDLP_FORMAT
     assert "logger" not in ytdlp
     assert ytdlp["postprocessors"] == POSTPROCESSORS
+
+
+def test_with_cookiefile_adds_the_stored_file_unless_configured(tmp_path: Path) -> None:
+    from copycast.adapters.engine.options import with_cookiefile
+
+    missing = tmp_path / "cookies.txt"
+    assert with_cookiefile({"ratelimit": 1}, missing) == {"ratelimit": 1}
+    assert with_cookiefile(None, None) == {}
+    missing.write_text("# cookies\n", encoding="utf-8")
+    assert with_cookiefile({"ratelimit": 1}, missing) == {
+        "ratelimit": 1,
+        "cookiefile": str(missing),
+    }
+    # An explicit [engine.options] cookiefile wins over the stored one.
+    assert with_cookiefile({"cookiefile": "/etc/mine.txt"}, missing) == {
+        "cookiefile": "/etc/mine.txt"
+    }

@@ -57,6 +57,10 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "list_api_keys",
         "create_api_key",
         "revoke_api_key",
+        # engine cookies
+        "get_engine_cookies",
+        "set_engine_cookies",
+        "delete_engine_cookies",
         # internal
         "record_download",
         "ensure_default_inbox",
@@ -77,6 +81,10 @@ TOOL_EXEMPT: Final[frozenset[str]] = frozenset(
         "list_api_keys",
         "create_api_key",
         "revoke_api_key",
+        # The cookie file is a browser session: an agent neither reads nor replaces it.
+        "get_engine_cookies",
+        "set_engine_cookies",
+        "delete_engine_cookies",
     }
 )
 """Capabilities with a route but deliberately no MCP tool."""

@@ -116,6 +116,10 @@ _Avoid_: Feed token, feed secret, private URL, feed password (say the pair)
 A bearer secret minted from the UI for one MCP client, shown once, stored as a digest, revocable on its own. The only credential the MCP mount accepts while authentication is on.
 _Avoid_: Token, PAT, MCP password, service account
 
+**Cookie file**:
+The one Netscape `cookies.txt` the Engine carries along on every listing and fetch, stored at `data/engine/cookies.txt` from the Settings page so sites that demand a login (YouTube from a server's IP) accept downloads. Never shown back, never exposed to agents.
+_Avoid_: Cookies setting, session file, YouTube login
+
 **Scope**:
 What an API key may do over MCP: `read` (read-only tools), `write` (everything but deletions) or `full` (everything). Every tool checks it before running.
 _Avoid_: Role, permission, level, grant

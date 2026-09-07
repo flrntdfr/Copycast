@@ -8,22 +8,27 @@ the :class:`CancelToken` is set) and maps every yt-dlp exception through
 
 from __future__ import annotations
 
+import contextlib
 import functools
+import os
 import shutil
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Generator, Mapping
 from datetime import date
 from pathlib import Path
 from typing import Any, Final, cast
 
 import yt_dlp
-from yt_dlp.utils import DownloadCancelled
+from yt_dlp.postprocessor import EmbedThumbnailPP, FFmpegThumbnailsConvertorPP
+from yt_dlp.utils import DownloadCancelled, PostProcessingError, replace_extension
 from yt_dlp.version import CHANNEL, RELEASE_GIT_HEAD, __version__
 
 from copycast.adapters.engine.errors import classify
-from copycast.adapters.engine.options import fetch_params, listing_params
+from copycast.adapters.engine.options import fetch_params, listing_params, with_cookiefile
 from copycast.adapters.engine.synth import build, mime_for_ext
 from copycast.adapters.sources.listing import normalize
+from copycast.adapters.storage.atomic import write_atomic
+from copycast.adapters.storage.layout import Layout
 from copycast.application.ports import (
     Cancelled,
     CancelToken,
@@ -93,10 +98,18 @@ def engine_info() -> EngineVersion:
 
 
 class YtDlpEngine:
-    """Implements :class:`copycast.application.ports.Engine` over ``yt_dlp.YoutubeDL``."""
+    """Implements :class:`copycast.application.ports.Engine` over ``yt_dlp.YoutubeDL``.
+
+    A cookie file stored under the data directory (``Layout.cookies_path``)
+    rides along with every call as ``cookiefile`` unless the options name
+    one; yt-dlp's refreshed cookies are written back atomically afterwards.
+    """
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings
+        self._cookies_path: Path | None = (
+            Layout(settings.data_dir).cookies_path() if settings is not None else None
+        )
 
     def version(self) -> EngineVersion:
         return engine_info()
@@ -109,11 +122,12 @@ class YtDlpEngine:
         log: EngineLog,
     ) -> SourceListing:
         _check_cancel(cancel, f"listing of {url}")
-        params = listing_params(options, log=log)
         try:
-            with yt_dlp.YoutubeDL(params) as ydl:
-                info = ydl.extract_info(url, download=False)
-                info = ydl.sanitize_info(info)
+            with cookie_scope(self._cookies_path, options) as with_cookies:
+                params = listing_params(with_cookies, log=log)
+                with yt_dlp.YoutubeDL(params) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    info = ydl.sanitize_info(info)
         except Exception as exc:
             raise classify(exc) from exc
         if info is None:
@@ -134,24 +148,27 @@ class YtDlpEngine:
             raise PermanentError(f"direct fetch of {spec.item_id} without a synthesized item")
         spec.home_dir.mkdir(parents=True, exist_ok=True)
         spec.temp_dir.mkdir(parents=True, exist_ok=True)
-        params = fetch_params(
-            options,
-            kind=spec.kind,
-            item_id=spec.item_id,
-            home_dir=spec.home_dir,
-            temp_dir=spec.temp_dir,
-            log=log,
-        )
         state = _HookState()
-        params["progress_hooks"] = [_progress_hook(cancel, on_progress, state)]
-        params["postprocessor_hooks"] = [_postprocessor_hook(cancel, on_progress, state)]
+        pp_hook = _postprocessor_hook(cancel, on_progress, state)
         try:
-            with yt_dlp.YoutubeDL(params) as ydl:
-                if spec.kind is FetchKind.direct:
-                    assert spec.synth is not None
-                    info = ydl.process_ie_result(build(spec.synth), download=True)
-                else:
-                    info = ydl.extract_info(spec.url, download=True)
+            with cookie_scope(self._cookies_path, options) as with_cookies:
+                params = fetch_params(
+                    with_cookies,
+                    kind=spec.kind,
+                    item_id=spec.item_id,
+                    home_dir=spec.home_dir,
+                    temp_dir=spec.temp_dir,
+                    log=log,
+                )
+                params["progress_hooks"] = [_progress_hook(cancel, on_progress, state)]
+                params["postprocessor_hooks"] = [pp_hook]
+                with yt_dlp.YoutubeDL(params) as ydl:
+                    add_thumbnail_postprocessors(ydl, pp_hook)
+                    if spec.kind is FetchKind.direct:
+                        assert spec.synth is not None
+                        info = ydl.process_ie_result(build(spec.synth), download=True)
+                    else:
+                        info = ydl.extract_info(spec.url, download=True)
         except Exception as exc:
             discard_temp_leftovers(spec)
             raise classify(exc) from exc
@@ -170,6 +187,124 @@ class YtDlpEngine:
 
 def build_engine(settings: Settings) -> YtDlpEngine:
     return YtDlpEngine(settings)
+
+
+# --------------------------------------------------------------------------- cookies
+
+
+@contextlib.contextmanager
+def cookie_scope(
+    cookies_path: Path | None, options: Mapping[str, Any]
+) -> Generator[dict[str, Any]]:
+    """Options with ``cookiefile`` pointing at a private copy of the stored cookie file.
+
+    yt-dlp rewrites the file it is given (sites rotate cookies), and two jobs
+    may run at once, so each call works on its own copy and the shared file
+    is replaced atomically only when the call changed it.
+    """
+    if cookies_path is None or "cookiefile" in options or not cookies_path.is_file():
+        yield dict(options)
+        return
+    original = cookies_path.read_bytes()
+    scratch = cookies_path.with_name(f"{cookies_path.stem}.{os.getpid()}.{id(options):x}.txt")
+    scratch.write_bytes(original)
+    try:
+        yield with_cookiefile(options, scratch)
+        try:
+            updated = scratch.read_bytes()
+        except OSError:
+            return
+        if updated and updated != original and cookies_path.is_file():
+            write_atomic(cookies_path, updated)
+    finally:
+        scratch.unlink(missing_ok=True)
+
+
+# --------------------------------------------------------------------------- thumbnails
+
+IMAGE_MAGIC: Final[tuple[tuple[bytes, str], ...]] = (
+    (b"\xff\xd8\xff", "jpg"),
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+)
+
+
+def sniff_image_ext(path: Path) -> str | None:
+    """The extension the bytes of ``path`` call for, or ``None`` when it is no known image."""
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(16)
+    except OSError:
+        return None
+    for magic, ext in IMAGE_MAGIC:
+        if head.startswith(magic):
+            return ext
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def fix_thumbnail_extensions(info: dict[str, Any], say: Callable[[str], None]) -> int:
+    """Rename downloaded thumbnails whose extension lies about their bytes.
+
+    A CDN that answers ``image.png?auto=format`` with a JPEG makes yt-dlp
+    save ``x.png`` holding JPEG data; ffmpeg then picks its decoder from the
+    name and fails. Returns how many files were renamed.
+    """
+    renamed = 0
+    files_to_move = info.get("__files_to_move")
+    for thumbnail in cast(list[dict[str, Any]], info.get("thumbnails") or []):
+        current = thumbnail.get("filepath")
+        if not isinstance(current, str) or not os.path.isfile(current):
+            continue
+        actual = sniff_image_ext(Path(current))
+        ext = os.path.splitext(current)[1].lstrip(".").lower()
+        if actual is None or actual == ext or (actual == "jpg" and ext == "jpeg"):
+            continue
+        target = replace_extension(current, actual)
+        say(f'Correcting thumbnail "{current}" extension to {actual}')
+        os.replace(current, target)
+        thumbnail["filepath"] = target
+        if isinstance(files_to_move, dict) and current in files_to_move:
+            moved = cast(dict[str, Any], files_to_move)
+            moved[target] = replace_extension(str(moved.pop(current)), actual)
+        renamed += 1
+    return renamed
+
+
+class ThumbnailConvertor(FFmpegThumbnailsConvertorPP):
+    """yt-dlp's convertor, with the extension fixed first and failures downgraded to warnings."""
+
+    def run(self, info: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+        try:
+            fix_thumbnail_extensions(info, self.to_screen)
+            files, info = super().run(info)
+            return list(files), info
+        except PostProcessingError as exc:
+            self.report_warning(f"thumbnail conversion failed, keeping the original: {exc}")
+            return [], info
+
+
+class ThumbnailEmbedder(EmbedThumbnailPP):
+    """yt-dlp's embedder; an image ffmpeg or mutagen refuses leaves the audio untagged with art."""
+
+    def run(self, info: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+        try:
+            files, info = super().run(info)
+            return list(files), info
+        except PostProcessingError as exc:
+            self.report_warning(f"thumbnail not embedded: {exc}")
+            return [], info
+
+
+def add_thumbnail_postprocessors(ydl: yt_dlp.YoutubeDL, hook: Hook) -> None:
+    """Convert to JPEG before the download, embed after the audio steps; both non-fatal."""
+    convertor = ThumbnailConvertor(ydl, format="jpg")
+    embedder = ThumbnailEmbedder(ydl, already_have_thumbnail=True)
+    for pp, when in ((convertor, "before_dl"), (embedder, "post_process")):
+        pp.add_progress_hook(hook)
+        ydl.add_post_processor(pp, when=when)
 
 
 # --------------------------------------------------------------------------- hooks
@@ -355,12 +490,19 @@ def _final_audio_path(home_dir: Path, info: Mapping[str, Any]) -> Path | None:
 
 __all__ = [
     "ENGINE_NAME",
+    "IMAGE_MAGIC",
     "RESUMABLE_SUFFIXES",
+    "ThumbnailConvertor",
+    "ThumbnailEmbedder",
     "YtDlpEngine",
+    "add_thumbnail_postprocessors",
     "build_engine",
     "collect_outputs",
+    "cookie_scope",
     "discard_temp_leftovers",
     "engine_info",
     "ffmpeg_version",
+    "fix_thumbnail_extensions",
     "release_date",
+    "sniff_image_ext",
 ]

@@ -20,6 +20,8 @@ from copycast.application.models import (
     ApiKeyCreated,
     ApiKeyList,
     ApiKeyRead,
+    EngineCookiesRead,
+    EngineCookiesWrite,
     FeedList,
     FeedRead,
     InboxCreate,
@@ -46,6 +48,7 @@ from copycast.application.models import (
 )
 from copycast.application.ports import CancelToken
 from copycast.application.services import about as _about
+from copycast.application.services import engine as _engine
 from copycast.application.services import feeds as _feeds
 from copycast.application.services import inboxes as _inboxes
 from copycast.application.services import items as _items
@@ -235,6 +238,16 @@ class Services:
 
     async def authenticate_api_key(self, secret: str) -> ApiKeyRead | None:
         return await _keys.authenticate_api_key(self.ctx, secret)
+
+    # engine cookies
+    async def get_engine_cookies(self) -> EngineCookiesRead:
+        return await _engine.get_engine_cookies(self.ctx)
+
+    async def set_engine_cookies(self, body: EngineCookiesWrite) -> EngineCookiesRead:
+        return await _engine.set_engine_cookies(self.ctx, body)
+
+    async def delete_engine_cookies(self) -> None:
+        await _engine.delete_engine_cookies(self.ctx)
 
 
 def build_services(container: ServiceContext) -> Services:

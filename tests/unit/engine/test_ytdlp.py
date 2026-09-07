@@ -179,3 +179,90 @@ class _Log:
 
     def error(self, message: str) -> None:
         return None
+
+
+# --------------------------------------------------------------------------- thumbnails and cookies
+
+JPEG_HEAD = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01" + b"\x00" * 32
+PNG_HEAD = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+WEBP_HEAD = b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 32
+
+
+def test_sniff_image_ext(tmp_path: Path) -> None:
+    from copycast.adapters.engine.ytdlp import sniff_image_ext
+
+    for name, head, expected in (
+        ("a.png", JPEG_HEAD, "jpg"),
+        ("b.jpg", PNG_HEAD, "png"),
+        ("c.png", WEBP_HEAD, "webp"),
+        ("d.gif", b"GIF89a" + b"\x00" * 8, "gif"),
+        ("e.png", b"<!doctype html>", None),
+        ("f.png", b"", None),
+    ):
+        path = tmp_path / name
+        path.write_bytes(head)
+        assert sniff_image_ext(path) == expected, name
+    assert sniff_image_ext(tmp_path / "missing.png") is None
+
+
+def test_fix_thumbnail_extensions_renames_by_bytes_and_keeps_files_to_move(tmp_path: Path) -> None:
+    from copycast.adapters.engine.ytdlp import fix_thumbnail_extensions
+
+    lying = tmp_path / "item.png"  # a JPEG behind a .png URL (imgix auto=format)
+    lying.write_bytes(JPEG_HEAD)
+    honest = tmp_path / "other.jpg"
+    honest.write_bytes(JPEG_HEAD)
+    info = {
+        "thumbnails": [
+            {"id": "0", "filepath": str(lying)},
+            {"id": "1", "filepath": str(honest)},
+            {"id": "2"},
+        ],
+        "__files_to_move": {str(lying): "/home/item.png", str(honest): "/home/other.jpg"},
+    }
+    said: list[str] = []
+    assert fix_thumbnail_extensions(info, said.append) == 1
+    fixed = tmp_path / "item.jpg"
+    assert fixed.is_file() and not lying.exists()
+    assert info["thumbnails"][0]["filepath"] == str(fixed)
+    assert info["thumbnails"][1]["filepath"] == str(honest)
+    assert info["__files_to_move"] == {str(fixed): "/home/item.jpg", str(honest): "/home/other.jpg"}
+    assert said == [f'Correcting thumbnail "{lying}" extension to jpg']
+    assert fix_thumbnail_extensions(info, said.append) == 0
+
+
+def test_cookie_scope_copies_the_file_and_writes_changes_back(tmp_path: Path) -> None:
+    from copycast.adapters.engine.ytdlp import cookie_scope
+
+    stored = tmp_path / "engine" / "cookies.txt"
+    stored.parent.mkdir()
+    stored.write_text("# v1\n", encoding="utf-8")
+
+    with cookie_scope(stored, {"ratelimit": 1}) as options:
+        scratch = Path(options["cookiefile"])
+        assert scratch != stored and scratch.parent == stored.parent
+        assert scratch.read_text(encoding="utf-8") == "# v1\n"
+        assert options["ratelimit"] == 1
+        scratch.write_text("# v2 rotated by yt-dlp\n", encoding="utf-8")
+    assert not scratch.exists()
+    assert stored.read_text(encoding="utf-8") == "# v2 rotated by yt-dlp\n"
+    assert sorted(p.name for p in stored.parent.iterdir()) == ["cookies.txt"]
+
+    # Unchanged: the stored file is left alone (no rewrite, no leftovers).
+    with cookie_scope(stored, {}) as options:
+        scratch = Path(options["cookiefile"])
+    assert not scratch.exists() and stored.read_text(encoding="utf-8").startswith("# v2")
+
+    # No stored file, or an explicit cookiefile: options pass through untouched.
+    with cookie_scope(tmp_path / "absent.txt", {"a": 1}) as options:
+        assert options == {"a": 1}
+    with cookie_scope(stored, {"cookiefile": "/etc/mine.txt"}) as options:
+        assert options == {"cookiefile": "/etc/mine.txt"}
+    with cookie_scope(None, {"a": 1}) as options:
+        assert options == {"a": 1}
+
+
+def test_engine_reads_the_cookie_path_from_the_settings(settings: Settings) -> None:
+    engine = build_engine(settings)
+    assert engine._cookies_path == settings.data_dir / "engine" / "cookies.txt"
+    assert YtDlpEngine()._cookies_path is None
