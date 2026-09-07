@@ -183,7 +183,9 @@ recommends is the cookies of a logged-in browser session:
 4. Paste or pick the file on the **Settings** page (`PUT /api/engine/cookies`).
 5. **Retry** the failed Episodes from the Catalog.
 
-The file is stored at `data/engine/cookies.txt` with mode 0600, never shown again, and
+The image also ships `deno`, the JavaScript runtime yt-dlp needs for YouTube's signature
+and "n" challenges; without it YouTube extraction degrades to a warning-laden fallback that
+is refused far more often. The file is stored at `data/engine/cookies.txt` with mode 0600, never shown again, and
 handed to yt-dlp as `cookiefile` on every listing and fetch, in both processes. Each call
 works on a private copy and the stored file is replaced atomically when the site rotated a
 cookie, so two jobs never tear it. An explicit `cookiefile` under `[engine.options]` still

@@ -20,7 +20,8 @@ audio preferring m4a, with tags, chapters and Artwork embedded; Artwork the file
 carries is kept. mp3 and m4a are never re-encoded; a codec podcast apps do not play (Opus,
 Vorbis, FLAC, WAV) is transcoded once to mp3 at 192 kbit/s so every archive is predictable.
 
-The version is pinned in `uv.lock`, installed as its own image layer, bumped by automation
+The image carries ffmpeg and `deno` (the JavaScript runtime yt-dlp uses for YouTube's
+challenges), both pinned. The version is pinned in `uv.lock`, installed as its own image layer, bumped by automation
 (`engine-bump.yml`, every six hours, nightly channel by default, `vars.ENGINE_CHANNEL` to
 switch) and recorded on every archived item. The engine version and release date are shown
 on the About page.

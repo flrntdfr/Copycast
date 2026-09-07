@@ -30,6 +30,26 @@ COPY pyproject.toml uv.lock ./
 RUN uv export --frozen --no-dev --no-emit-project --no-emit-package yt-dlp -o base.txt \
     && uv export --frozen --no-dev --no-emit-project --only-emit-package yt-dlp -o engine.txt
 
+# ---- deno ------------------------------------------------------------------------------
+# yt-dlp needs a JavaScript runtime for YouTube (signature and "n" challenges); deno is the
+# one it enables by default. Pinned by version and checksum for both architectures.
+FROM python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS deno
+ARG TARGETARCH
+ARG DENO_VERSION=2.9.6
+ARG DENO_SHA256_AMD64=394f07f4da2bebe6ce6f1e7ce0fa16429b29b08c35e3fac3fe25972676dff4b2
+ARG DENO_SHA256_ARM64=9a46afc6c392c7cd2ff71a31558935545b46408d0e87f7a86908c712721c046e
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) triple=x86_64-unknown-linux-gnu; sum="$DENO_SHA256_AMD64" ;; \
+      arm64) triple=aarch64-unknown-linux-gnu; sum="$DENO_SHA256_ARM64" ;; \
+      *) echo "unsupported TARGETARCH $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-${triple}.zip', '/tmp/deno.zip')"; \
+    echo "$sum  /tmp/deno.zip" | sha256sum -c -; \
+    python3 -c "import zipfile; zipfile.ZipFile('/tmp/deno.zip').extract('deno', '/tmp')"; \
+    install -m 0755 /tmp/deno /usr/local/bin/deno; \
+    /usr/local/bin/deno --version
+
 # ---- runtime ---------------------------------------------------------------------------
 FROM python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS runtime
 ARG APP_VERSION
@@ -38,6 +58,8 @@ ARG ENGINE_VERSION
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=deno /usr/local/bin/deno /usr/local/bin/deno
 
 RUN useradd --uid 1000 --user-group --create-home --shell /usr/sbin/nologin copycast \
     && mkdir -p /app /data /config \
