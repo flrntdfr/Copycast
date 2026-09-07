@@ -16,8 +16,9 @@ module, `copycast.adapters.engine` (an import-linter contract enforces this). Th
 runs one `YoutubeDL` per call in a thread, with progress hooks, a cancel token and a logger
 bridge. Every download goes through the engine, including RSS enclosures, for which the
 adapter synthesizes an info dict and calls `process_ie_result`. Audio is stream-copied, best
-audio preferring m4a, with tags and Artwork embedded; nothing is re-encoded except an
-enclosure whose codec cannot be copied.
+audio preferring m4a, with tags, chapters and Artwork embedded; Artwork the file already
+carries is kept. mp3 and m4a are never re-encoded; a codec podcast apps do not play (Opus,
+Vorbis, FLAC, WAV) is transcoded once to mp3 at 192 kbit/s so every archive is predictable.
 
 The version is pinned in `uv.lock`, installed as its own image layer, bumped by automation
 (`engine-bump.yml`, every six hours, nightly channel by default, `vars.ENGINE_CHANNEL` to

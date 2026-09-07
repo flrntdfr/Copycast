@@ -17,7 +17,28 @@ class PostProcessor:
     def write_debug(self, text: str, *args: Any, **kwargs: Any) -> None: ...
     def run(self, info: dict[str, Any]) -> tuple[list[str], dict[str, Any]]: ...
 
-class FFmpegPostProcessor(PostProcessor): ...
+class FFmpegPostProcessor(PostProcessor):
+    def get_audio_codec(self, path: str) -> str | None: ...
+
+class FFmpegExtractAudioPP(FFmpegPostProcessor):
+    COMMON_AUDIO_EXTS: tuple[str, ...]
+    mapping: str
+    def __init__(
+        self,
+        downloader: YoutubeDL | None = None,
+        preferredcodec: str | None = None,
+        preferredquality: str | None = None,
+        nopostoverwrites: bool = False,
+    ) -> None: ...
+
+class FFmpegMetadataPP(FFmpegPostProcessor):
+    def __init__(
+        self,
+        downloader: YoutubeDL | None,
+        add_metadata: bool = True,
+        add_chapters: bool = True,
+        add_infojson: bool | str = "if_exists",
+    ) -> None: ...
 
 class FFmpegThumbnailsConvertorPP(FFmpegPostProcessor):
     def __init__(self, downloader: YoutubeDL | None = None, format: str | None = None) -> None: ...

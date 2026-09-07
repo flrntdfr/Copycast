@@ -199,7 +199,8 @@ def _origin_with(tmp_path: Path, files: dict[str, bytes]) -> Origin:
     (root / "media").mkdir(parents=True)
     from tests.support.origin import FIXTURES_DIR
 
-    shutil.copy(FIXTURES_DIR / "media" / "tiny.mp3", root / "media" / "tiny.mp3")
+    for fixture in ("tiny.mp3", "tiny.jpg"):
+        shutil.copy(FIXTURES_DIR / "media" / fixture, root / "media" / fixture)
     for name, data in files.items():
         (root / "media" / name).write_bytes(data)
     return Origin(root=root)
@@ -245,3 +246,101 @@ def test_an_unreadable_thumbnail_warns_and_the_audio_still_archives(tmp_path: Pa
     warnings = [line for level, line in log.lines if level == "warning"]
     assert any("thumbnail" in line.lower() for line in warnings), log.text()
     assert not any(level == "error" for level, _ in log.lines), log.text()
+
+
+def _ffmpeg(*args: str) -> None:
+    subprocess.run(["ffmpeg", "-v", "error", "-y", *args], check=True, capture_output=True)
+
+
+def _attached_picture(path: Path) -> bytes | None:
+    """The bytes of the attached picture ffmpeg finds in ``path``, or None."""
+    out = path.with_suffix(".cover.jpg")
+    completed = subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-i", str(path), "-an", "-c:v", "copy", str(out)],
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0 or not out.is_file():
+        return None
+    return out.read_bytes()
+
+
+def _synth(origin: Origin, root: Path, name: str, mime: str, thumbnail: str) -> FetchSpec:
+    import dataclasses
+
+    synth = dataclasses.replace(
+        synth_for(origin, "0123456789abcdef"),
+        url=origin.url_for(f"/media/{name}"),
+        mime=mime,
+        ext=name.rsplit(".", 1)[-1],
+        thumbnail_url=origin.url_for(f"/media/{thumbnail}"),
+    )
+    return FetchSpec(FetchKind.direct, synth.url, synth.id, root / "media", root / "tmp", synth)
+
+
+def test_artwork_already_embedded_in_the_enclosure_is_kept(tmp_path: Path) -> None:
+    from tests.support.origin import FIXTURES_DIR
+
+    media = FIXTURES_DIR / "media"
+    own_cover = (media / "tiny.jpg").read_bytes()
+    with_art = tmp_path / "with-art.mp3"
+    _ffmpeg(
+        "-i",
+        str(media / "tiny.mp3"),
+        "-i",
+        str(media / "tiny.jpg"),
+        "-map",
+        "0:a",
+        "-map",
+        "1:v",
+        "-c",
+        "copy",
+        "-id3v2_version",
+        "3",
+        "-disposition:v",
+        "attached_pic",
+        str(with_art),
+    )
+    feed_image = tmp_path / "feed.png"  # a different image, the feed's own episode image
+    _ffmpeg("-i", str(media / "tiny.jpg"), "-vf", "scale=8:8", str(feed_image))
+    files = {"with-art.mp3": with_art.read_bytes(), "feed.png": feed_image.read_bytes()}
+    with _origin_with(tmp_path, files) as origin:
+        spec = _synth(origin, tmp_path / "work", "with-art.mp3", "audio/mpeg", "feed.png")
+        log = RecordingLog()
+        result = YtDlpEngine().fetch_item(spec, {}, CancelToken(), lambda _p: None, log)
+    assert result.ext == "mp3"
+    assert _attached_picture(result.audio_path) == own_cover, "the enclosure's own cover survives"
+    assert "Keeping the artwork already embedded" in log.text()
+    # The feed's image is still delivered as the Episode's Artwork asset.
+    assert result.artwork_path is not None and result.artwork_path.suffix == ".jpg"
+
+
+def test_exotic_codecs_become_mp3_while_m4a_is_kept(tmp_path: Path) -> None:
+    from tests.support.origin import FIXTURES_DIR
+
+    media = FIXTURES_DIR / "media"
+    flac = tmp_path / "tiny.flac"
+    _ffmpeg("-i", str(media / "tiny.mp3"), "-c:a", "flac", str(flac))
+    m4a = tmp_path / "tiny.m4a"
+    _ffmpeg("-i", str(media / "tiny.mp3"), "-c:a", "aac", "-b:a", "64k", str(m4a))
+    files = {"tiny.flac": flac.read_bytes(), "tiny.m4a": m4a.read_bytes()}
+    with _origin_with(tmp_path, files) as origin:
+        spec = _synth(origin, tmp_path / "flac", "tiny.flac", "audio/flac", "tiny.jpg")
+        log = RecordingLog()
+        result = YtDlpEngine().fetch_item(spec, {}, CancelToken(), lambda _p: None, log)
+        assert result.ext == "mp3" and result.mime == "audio/mpeg"
+        assert result.audio_path.suffix == ".mp3"
+        codecs = [
+            (s["codec_name"], s.get("disposition", {}).get("attached_pic", 0))
+            for s in ffprobe(result.audio_path)["streams"]
+        ]
+        assert ("mp3", 0) in codecs and ("mjpeg", 1) in codecs
+        assert "Transcoding flac" in log.text()
+
+        spec = _synth(origin, tmp_path / "m4a", "tiny.m4a", "audio/mp4", "tiny.jpg")
+        log = RecordingLog()
+        result = YtDlpEngine().fetch_item(spec, {}, CancelToken(), lambda _p: None, log)
+        assert result.ext == "m4a"
+        codecs = [s["codec_name"] for s in ffprobe(result.audio_path)["streams"]]
+        assert "aac" in codecs, "m4a is copied, never transcoded"
+        assert "Transcoding" not in log.text()

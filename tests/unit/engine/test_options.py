@@ -22,16 +22,8 @@ from copycast.domain.enums import FetchKind
 def test_base_options_match_the_plan() -> None:
     assert BASE_OPTIONS["format"] == YTDLP_FORMAT == "bestaudio[ext=m4a]/bestaudio/best"
     assert DIRECT_FORMAT == "bestaudio/best"
-    keys = [pp["key"] for pp in POSTPROCESSORS]
-    # The thumbnail steps are added by the engine itself so a bad image cannot fail a fetch.
-    assert keys == ["FFmpegExtractAudio", "FFmpegMetadata"]
-    assert POSTPROCESSORS[0]["preferredcodec"] == "best"
-    assert POSTPROCESSORS[1] == {
-        "key": "FFmpegMetadata",
-        "add_metadata": True,
-        "add_chapters": True,
-        "add_infojson": False,
-    }
+    # The whole chain is added by the engine itself (thumbnail, audio, metadata, embed).
+    assert POSTPROCESSORS == []
     for key in ("writethumbnail", "writeinfojson", "clean_infojson", "writesubtitles"):
         assert BASE_OPTIONS[key] is True
     assert BASE_OPTIONS["writeautomaticsub"] is False

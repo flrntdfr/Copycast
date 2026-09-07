@@ -190,6 +190,12 @@ cookie, so two jobs never tear it. An explicit `cookiefile` under `[engine.optio
 wins. Remove the file from the same page to go back to anonymous fetches. An agent cannot
 read or replace it: the three capabilities have routes but no MCP tools.
 
+What lands in `media/`: mp3 and m4a enclosures and streams are copied byte for byte; AAC in
+a video container is remuxed to m4a; Opus, Vorbis, FLAC, WAV and the like are transcoded
+once to mp3 at 192 kbit/s, so every Episode plays in every podcast app and carries its
+chapters. Cover art already embedded in a file is kept; the feed's episode image is then
+stored as the Episode's Artwork asset next to it.
+
 Thumbnails never fail an archive: a CDN that serves a JPEG under a `.png` URL is detected
 from the bytes and renamed before ffmpeg converts it, and an image ffmpeg still refuses only
 costs the embedded artwork, with a warning in the job log.

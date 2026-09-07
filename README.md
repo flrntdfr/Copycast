@@ -114,8 +114,9 @@ Tools cover everything the UI does: `search_podcasts` (iTunes Search, no key nee
 
 ## Good to know
 
-- Audio is never re-encoded: the best audio stream (m4a preferred) is stream-copied, with
-  tags and artwork embedded.
+- mp3 and m4a are stream-copied, never re-encoded, with tags, chapters and artwork embedded;
+  a cover the file already carries is kept. Anything podcast apps do not play (Opus, Vorbis,
+  FLAC, WAV) is transcoded once to mp3.
 - YouTube from a server's IP asks you to sign in: paste a logged-in browser's `cookies.txt`
   on the **Settings** page and retry; see [docs/operations.md](docs/operations.md).
 - Everything Copycast knows is either in Postgres or under `data/`; the data directory alone

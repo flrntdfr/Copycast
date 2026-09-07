@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import json
 import os
 import shutil
 import subprocess
@@ -19,7 +20,12 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 import yt_dlp
-from yt_dlp.postprocessor import EmbedThumbnailPP, FFmpegThumbnailsConvertorPP
+from yt_dlp.postprocessor import (
+    EmbedThumbnailPP,
+    FFmpegExtractAudioPP,
+    FFmpegMetadataPP,
+    FFmpegThumbnailsConvertorPP,
+)
 from yt_dlp.utils import DownloadCancelled, PostProcessingError, replace_extension
 from yt_dlp.version import CHANNEL, RELEASE_GIT_HEAD, __version__
 
@@ -163,7 +169,7 @@ class YtDlpEngine:
                 params["progress_hooks"] = [_progress_hook(cancel, on_progress, state)]
                 params["postprocessor_hooks"] = [pp_hook]
                 with yt_dlp.YoutubeDL(params) as ydl:
-                    add_thumbnail_postprocessors(ydl, pp_hook)
+                    add_postprocessors(ydl, pp_hook)
                     if spec.kind is FetchKind.direct:
                         assert spec.synth is not None
                         info = ydl.process_ie_result(build(spec.synth), download=True)
@@ -287,9 +293,17 @@ class ThumbnailConvertor(FFmpegThumbnailsConvertorPP):
 
 
 class ThumbnailEmbedder(EmbedThumbnailPP):
-    """yt-dlp's embedder; an image ffmpeg or mutagen refuses leaves the audio untagged with art."""
+    """yt-dlp's embedder, kept from overwriting artwork the file already carries, non-fatal.
+
+    An enclosure often ships its own cover in the ID3 tags; the feed's episode
+    image is then kept as a sidecar asset instead of replacing it.
+    """
 
     def run(self, info: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+        path = info.get("filepath")
+        if isinstance(path, str) and has_embedded_artwork(Path(path)):
+            self.to_screen(f"Keeping the artwork already embedded in {path}")
+            return [], info
         try:
             files, info = super().run(info)
             return list(files), info
@@ -298,11 +312,89 @@ class ThumbnailEmbedder(EmbedThumbnailPP):
             return [], info
 
 
-def add_thumbnail_postprocessors(ydl: yt_dlp.YoutubeDL, hook: Hook) -> None:
-    """Convert to JPEG before the download, embed after the audio steps; both non-fatal."""
-    convertor = ThumbnailConvertor(ydl, format="jpg")
-    embedder = ThumbnailEmbedder(ydl, already_have_thumbnail=True)
-    for pp, when in ((convertor, "before_dl"), (embedder, "post_process")):
+def has_embedded_artwork(path: Path) -> bool:
+    """Whether ffprobe sees an attached picture (ID3 APIC, MP4 covr) in ``path``."""
+    binary = shutil.which("ffprobe")
+    if binary is None or not path.is_file():
+        return False
+    try:
+        completed = subprocess.run(
+            [binary, "-v", "quiet", "-print_format", "json", "-show_streams", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        streams = cast(
+            list[dict[str, Any]], json.loads(completed.stdout or "{}").get("streams", [])
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    for stream in streams:
+        disposition = cast(dict[str, Any], stream.get("disposition") or {})
+        if stream.get("codec_type") == "video" and int(disposition.get("attached_pic") or 0):
+            return True
+    return False
+
+
+# --------------------------------------------------------------------------- audio
+
+PODCAST_EXTS: Final = frozenset({"mp3", "m4a"})
+"""Containers every podcast app plays and that carry chapters and cover art: kept as they are."""
+AAC_CONTAINERS: Final = frozenset({"mp4", "m4v", "mov", "mkv", "webm", "mka"})
+"""AAC inside a video container is remuxed to m4a without touching the audio."""
+TRANSCODE_CODEC: Final = "mp3"
+TRANSCODE_QUALITY: Final = "192"
+
+
+def audio_target(ext: str, codec: str | None) -> str:
+    """``best`` (copy or remux) for mp3, m4a and AAC-in-a-container; ``mp3`` for the rest.
+
+    Opus, Vorbis, FLAC, WAV and friends play in few podcast apps and cannot
+    carry chapters the way mp3 and m4a do, so they are transcoded once.
+    """
+    ext = ext.lower().lstrip(".")
+    if ext in PODCAST_EXTS:
+        return "best"
+    if codec == "aac" and ext in AAC_CONTAINERS:
+        return "best"
+    return TRANSCODE_CODEC
+
+
+class AudioNormalizer(FFmpegExtractAudioPP):
+    """yt-dlp's audio extraction with the target chosen per file by :func:`audio_target`."""
+
+    def __init__(self, downloader: yt_dlp.YoutubeDL) -> None:
+        super().__init__(downloader, preferredcodec="best", preferredquality=TRANSCODE_QUALITY)
+
+    def run(self, info: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+        ext = str(info.get("ext") or "")
+        codec: str | None = None
+        path = info.get("filepath")
+        if ext.lower() not in PODCAST_EXTS and isinstance(path, str):
+            codec = self.get_audio_codec(path)
+        target = audio_target(ext, codec)
+        self.mapping = target
+        if target != "best":
+            self.to_screen(
+                f"Transcoding {ext} ({codec or 'unknown codec'}) to mp3 for podcast apps"
+            )
+        files, info = super().run(info)
+        return list(files), info
+
+
+def add_postprocessors(ydl: yt_dlp.YoutubeDL, hook: Hook) -> None:
+    """The chain: thumbnail to JPEG before the download; then audio, metadata, artwork."""
+    steps: tuple[tuple[Any, str], ...] = (
+        (ThumbnailConvertor(ydl, format="jpg"), "before_dl"),
+        (AudioNormalizer(ydl), "post_process"),
+        (
+            FFmpegMetadataPP(ydl, add_metadata=True, add_chapters=True, add_infojson=False),
+            "post_process",
+        ),
+        (ThumbnailEmbedder(ydl, already_have_thumbnail=True), "post_process"),
+    )
+    for pp, when in steps:
         pp.add_progress_hook(hook)
         ydl.add_post_processor(pp, when=when)
 
@@ -491,11 +583,14 @@ def _final_audio_path(home_dir: Path, info: Mapping[str, Any]) -> Path | None:
 __all__ = [
     "ENGINE_NAME",
     "IMAGE_MAGIC",
+    "PODCAST_EXTS",
     "RESUMABLE_SUFFIXES",
+    "AudioNormalizer",
     "ThumbnailConvertor",
     "ThumbnailEmbedder",
     "YtDlpEngine",
-    "add_thumbnail_postprocessors",
+    "add_postprocessors",
+    "audio_target",
     "build_engine",
     "collect_outputs",
     "cookie_scope",
@@ -503,6 +598,7 @@ __all__ = [
     "engine_info",
     "ffmpeg_version",
     "fix_thumbnail_extensions",
+    "has_embedded_artwork",
     "release_date",
     "sniff_image_ext",
 ]

@@ -20,18 +20,10 @@ DIRECT_FORMAT: Final = "bestaudio/best"
 LIVE_CHAT_EXCLUDE: Final = "-live_chat"
 DEFAULT_SUBTITLE_LANGUAGE: Final = "en"
 
-POSTPROCESSORS: Final[list[dict[str, Any]]] = [
-    {"key": "FFmpegExtractAudio", "preferredcodec": "best"},
-    {
-        "key": "FFmpegMetadata",
-        "add_metadata": True,
-        "add_chapters": True,
-        "add_infojson": False,
-    },
-]
-"""The audio steps. The thumbnail convertor and embedder are added by the engine itself
-(``ytdlp.ThumbnailConvertor`` / ``ytdlp.ThumbnailEmbedder``) so a bad image warns instead
-of failing the whole fetch."""
+POSTPROCESSORS: Final[list[dict[str, Any]]] = []
+"""Empty on purpose: the engine adds its own chain (``ytdlp.add_postprocessors``): the
+thumbnail convertor, the audio normaliser, ffmpeg metadata and the thumbnail embedder, in
+that order, so a bad image warns instead of failing the fetch and exotic codecs become mp3."""
 
 BASE_OPTIONS: Final[dict[str, Any]] = {
     "format": YTDLP_FORMAT,

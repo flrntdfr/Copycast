@@ -266,3 +266,26 @@ def test_engine_reads_the_cookie_path_from_the_settings(settings: Settings) -> N
     engine = build_engine(settings)
     assert engine._cookies_path == settings.data_dir / "engine" / "cookies.txt"
     assert YtDlpEngine()._cookies_path is None
+
+
+@pytest.mark.parametrize(
+    ("ext", "codec", "expected"),
+    [
+        ("mp3", None, "best"),
+        ("m4a", None, "best"),
+        ("M4A", None, "best"),
+        ("mp4", "aac", "best"),
+        ("webm", "aac", "best"),
+        ("webm", "opus", "mp3"),
+        ("opus", "opus", "mp3"),
+        ("ogg", "vorbis", "mp3"),
+        ("flac", "flac", "mp3"),
+        ("wav", "pcm_s16le", "mp3"),
+        ("aac", "aac", "mp3"),
+        ("bin", None, "mp3"),
+    ],
+)
+def test_audio_target(ext: str, codec: str | None, expected: str) -> None:
+    from copycast.adapters.engine.ytdlp import audio_target
+
+    assert audio_target(ext, codec) == expected
