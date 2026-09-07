@@ -16,6 +16,7 @@ from copycast.adapters.assets.mirror import (
     language_tag,
     mirror_asset,
     remote_assets_from_item,
+    remote_attachments_from_description,
     sniff_image,
     transcript_format,
     write_atomic,
@@ -221,3 +222,50 @@ def test_write_atomic_leaves_no_part_file(tmp_path: Path) -> None:
     blocked.write_bytes(b"")
     with pytest.raises(AssetError):
         write_atomic(blocked / "child", b"x")
+
+
+def test_remote_attachments_from_show_notes() -> None:
+    notes = (
+        '<p>Pictures: <img src="https://cdn.example/a.jpg"> and <img src="/rel/b.png"></p>'
+        '<p><a href="https://cdn.example/notes.pdf">PDF</a>, '
+        '<a href="https://x.example/page">page</a>, '
+        '<a href="https://cdn.example/a.jpg">the same picture</a>, '
+        '<img src="data:image/png;base64,AAAA">, <a href="ftp://old.example/f.mp3">ftp</a></p>'
+    )
+    found = remote_attachments_from_description(
+        notes, item_id="abc", base_url="https://podcast.example/feed.xml"
+    )
+    assert [a.url for a in found] == [
+        "https://cdn.example/a.jpg",
+        "https://podcast.example/rel/b.png",
+        "https://cdn.example/notes.pdf",
+    ]
+    assert {a.kind for a in found} == {AssetKind.attachment}
+    assert all(a.item_id == "abc" and a.slot and len(a.slot) == 12 for a in found)
+    assert found[0].slot != found[1].slot
+    assert remote_attachments_from_description("plain text, no tags", item_id="abc") == []
+    assert remote_attachments_from_description(None, item_id="abc") == []
+    many = "".join(f'<img src="https://cdn.example/{n}.png">' for n in range(30))
+    assert len(remote_attachments_from_description(many, item_id="abc")) == 20
+    assert (
+        asset_basename(AssetKind.attachment, ext="PNG", item_id="abc", slot="0123456789ab")
+        == "abc.attachment.0123456789ab.png"
+    )
+
+
+def test_mirror_attachments_by_sniff_type_or_extension(origin: Origin, tmp_path: Path) -> None:
+    image = RemoteAsset(
+        AssetKind.attachment, origin.url_for("/media/tiny.jpg"), item_id="abc", slot="aaaaaaaaaaaa"
+    )
+    mirrored = mirror_asset(image, tmp_path / "assets")
+    assert mirrored.basename == "abc.attachment.aaaaaaaaaaaa.jpg"
+    assert mirrored.mime == "image/jpeg" and mirrored.slot == "aaaaaaaaaaaa"
+    audio = RemoteAsset(
+        AssetKind.attachment, origin.url_for("/media/tiny.mp3"), item_id="abc", slot="bbbbbbbbbbbb"
+    )
+    assert mirror_asset(audio, tmp_path / "assets").basename == "abc.attachment.bbbbbbbbbbbb.mp3"
+    page = RemoteAsset(
+        AssetKind.attachment, origin.url_for("/rss/atom.xml"), item_id="abc", slot="cccccccccccc"
+    )
+    with pytest.raises(AssetError, match="not an image, PDF or audio"):
+        mirror_asset(page, tmp_path / "assets")

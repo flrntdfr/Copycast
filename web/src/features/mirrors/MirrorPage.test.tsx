@@ -186,6 +186,29 @@ describe("Mirror page", () => {
     expect(await screen.findByText("1 failed download queued again")).toBeInTheDocument();
   });
 
+  it("edits the title in place from the pen button", async () => {
+    const calls: { method: string; path: string; body?: unknown }[] = [];
+    server.use(...handlers(calls));
+    const user = userEvent.setup();
+    renderApp("/mirrors/mirror-1");
+    await screen.findByRole("heading", { name: "Example Podcast" });
+    await user.click(screen.getByRole("button", { name: "Edit title" }));
+    const field = screen.getByRole("textbox", { name: "Title" });
+    expect(field).toHaveValue("Example Podcast");
+    await user.clear(field);
+    await user.type(field, "My Podcast{Enter}");
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ title: "My Podcast" });
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox", { name: "Title" })).not.toBeInTheDocument(),
+    );
+    // Escape leaves the title as it was.
+    await user.click(screen.getByRole("button", { name: "Edit title" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("textbox", { name: "Title" })).not.toBeInTheDocument();
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
+  });
+
   it("shows the feed URL as a QR code only when asked", async () => {
     server.use(...handlers());
     const user = userEvent.setup();

@@ -312,6 +312,28 @@
         "x-capability": "create_inbox"
       }
     },
+    "/api/feeds.opml": {
+      "get": {
+        "tags": [
+          "feeds"
+        ],
+        "summary": "Every feed as OPML, to subscribe to all of them at once",
+        "operationId": "export_opml",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/x-opml+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "export_opml"
+      }
+    },
     "/api/feeds/{feed_id}": {
       "get": {
         "tags": [
@@ -2837,7 +2859,8 @@
         "enum": [
           "artwork",
           "chapters",
-          "transcript"
+          "transcript",
+          "attachment"
         ],
         "title": "AssetKind"
       },

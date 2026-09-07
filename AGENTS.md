@@ -107,6 +107,10 @@ _Avoid_: Plays, listens, hits
 **Tombstone**:
 The trace left by an Episode you deleted (or that rolled out, expired, or was purged): the Catalog item stays, marked deleted, so the Mirror will not archive it again on its own; it shows as Available and can be re-archived on demand, and an Automatic Mirror downloads it again when a podcast app asks.
 
+**Attachment**:
+A file the show notes of an Episode embed or link to (an image, a PDF, an audio file), mirrored next to the Episode's media at archive time; the Mirror Feed's notes point at the local copy.
+_Avoid_: Enclosure (that is the media), inline asset, media (that is the audio)
+
 **Title override**:
 A Mirror's own title, kept over the Source's across Refreshes and shown in the UI, the Mirror Feed and MCP; clearing it restores the Source's title.
 _Avoid_: Rename (that is an Inbox), alias, custom name

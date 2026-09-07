@@ -61,6 +61,26 @@ async def list_inboxes(
     return await services.list_feeds(FeedKind.inbox, sort=sort, order=order)
 
 
+OPML_MEDIA_TYPE = "text/x-opml+xml; charset=utf-8"
+
+
+@router.get(
+    "/feeds.opml",
+    operation_id="export_opml",
+    openapi_extra={"x-capability": "export_opml"},
+    response_class=Response,
+    responses={200: {"content": {"text/x-opml+xml": {"schema": {"type": "string"}}}}},
+    summary="Every feed as OPML, to subscribe to all of them at once",
+)
+async def export_opml(services: ServicesDep) -> Response:
+    document = await services.export_opml()
+    return Response(
+        document,
+        media_type=OPML_MEDIA_TYPE,
+        headers={"Content-Disposition": 'attachment; filename="copycast.opml"'},
+    )
+
+
 @router.get(
     "/feeds/{feed_id}",
     operation_id="get_feed",

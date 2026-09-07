@@ -25,6 +25,7 @@ from copycast.adapters.assets.mirror import (
     RemoteAsset,
     mirror_asset,
     remote_assets_from_item,
+    remote_attachments_from_description,
 )
 from copycast.adapters.db.models import Feed
 from copycast.adapters.db.uow import UnitOfWork
@@ -87,6 +88,7 @@ class _Target:
     item_source_url: str | None
     stored_item_xml: str | None
     options: dict[str, Any]
+    description: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +110,7 @@ class PlacedAsset:
     provenance: AssetProvenance = AssetProvenance.mirrored
     remote_url: str | None = None
     error: str | None = None
+    slot: str | None = None
 
 
 @dataclass(slots=True)
@@ -302,6 +305,14 @@ def mirror_item_assets(
     return placed
 
 
+def mirror_description_attachments(
+    layout: Layout, feed_id: str, item_id: str, description: str, base_url: str | None
+) -> list[PlacedAsset]:
+    """The images the show notes embed and the files they link to, kept next to the media."""
+    remotes = remote_attachments_from_description(description, item_id=item_id, base_url=base_url)
+    return [_mirror_one(layout, feed_id, remote) for remote in remotes]
+
+
 def _mirror_one(layout: Layout, feed_id: str, remote: RemoteAsset) -> PlacedAsset:
     try:
         mirrored = mirror_asset(remote, layout.assets_dir(feed_id))
@@ -316,6 +327,7 @@ def _mirror_one(layout: Layout, feed_id: str, remote: RemoteAsset) -> PlacedAsse
             provenance=remote.provenance,
             remote_url=remote.url,
             error=str(exc),
+            slot=remote.slot,
         )
     return PlacedAsset(
         mirrored.kind,
@@ -326,6 +338,7 @@ def _mirror_one(layout: Layout, feed_id: str, remote: RemoteAsset) -> PlacedAsse
         format=mirrored.format,
         provenance=mirrored.provenance,
         remote_url=remote.url,
+        slot=mirrored.slot,
     )
 
 
@@ -348,6 +361,7 @@ async def _record_assets(
             state=AssetState.failed if asset.error else AssetState.archived,
             last_error=asset.error,
             fetched_at=None if asset.error else now,
+            slot=asset.slot,
         )
 
 
@@ -369,7 +383,15 @@ async def run(ctx: JobContext) -> JobOutcome:
             raise Cancelled("the Mirror is Paused")
         await uow.catalog.mark_state(item_id, ArchiveState.archiving, only_from=ArchiveState.wanted)
         await uow.publish(ItemEvent(feed_id=feed.id, item_id=item_id, state=ArchiveState.archiving))
-        target = _target(ctx, feed, item.source_key, item.source_url, item.source_item_xml, item_id)
+        target = _target(
+            ctx,
+            feed,
+            item.source_key,
+            item.source_url,
+            item.source_item_xml,
+            item_id,
+            description=item.description,
+        )
 
     layout: Layout = ctx.container.layout
     layout.ensure_feed_dirs(target.feed_id)
@@ -414,6 +436,18 @@ async def run(ctx: JobContext) -> JobOutcome:
     # A flat listing (a YouTube channel tab) carries neither a description nor a date; the
     # full info the fetch produced does, and fills whatever the Catalog row still lacks.
     enriched = await ctx.run_blocking(metadata_from_info_json, result.info_json_path)
+    notes = target.description or enriched.get("description")
+    if notes:
+        assets.extend(
+            await ctx.run_blocking(
+                mirror_description_attachments,
+                layout,
+                target.feed_id,
+                item_id,
+                notes,
+                target.feed_source_url,
+            )
+        )
 
     async with ctx.uow() as uow:
         archived = await uow.catalog.mark_state(
@@ -468,6 +502,8 @@ def _target(
     item_source_url: str | None,
     stored_item_xml: str | None,
     item_id: str,
+    *,
+    description: str | None = None,
 ) -> _Target:
     return _Target(
         feed_id=feed.id,
@@ -481,6 +517,7 @@ def _target(
         source_key=source_key,
         item_source_url=item_source_url,
         stored_item_xml=stored_item_xml,
+        description=description,
         options=engine_options_for(
             ctx.container.settings,
             feed.engine_options,
@@ -567,6 +604,7 @@ __all__ = [
     "PlacedAsset",
     "Prepared",
     "Produced",
+    "mirror_description_attachments",
     "mirror_item_assets",
     "place_engine_outputs",
     "prepare",

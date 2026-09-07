@@ -439,6 +439,7 @@ class AssetRepositoryPort(Protocol):
         state: AssetState = AssetState.wanted,
         last_error: str | None = None,
         fetched_at: datetime | None = None,
+        slot: str | None = None,
     ) -> AssetRow: ...
     async def delete_for_item(self, item_id: str) -> Sequence[AssetRow]: ...
 

@@ -46,6 +46,7 @@ OPERATOR_ONLY = {
     "set_mirror_defaults",
     "preview_mirror_update",
     "purge_episodes",
+    "export_opml",
 }
 """Routed for the UI, never tools: keys must not mint keys, agents must not rotate feeds
 or touch the cookie file (a browser session)."""

@@ -200,6 +200,20 @@ An Automatic Mirror's feed lists every item the Source lists; the ones not archi
 a placeholder `.mp3` enclosure of length 0, and the media route serves the real file (any
 container) under that URL once archived.
 
+## Show notes, OPML and the player
+
+- **Attachments.** When an Episode is archived, the images its show notes embed and the
+  files they link to (images, PDFs, audio; up to 20 per Episode, 5 MiB per image, 20 MiB per
+  file) are mirrored as `attachment` assets under `assets/{item}.attachment.{slot}.{ext}`,
+  and the Mirror Feed's description points at the local copies. A file that cannot be fetched
+  is recorded as a failed asset and its original URL stays in the notes.
+- **OPML.** *Export OPML* on the Mirrors page (`GET /api/feeds.opml`) lists every feed with
+  its credentialed URL, to subscribe to all of them in one go.
+- **Player.** The web player has a seek bar with chapter marks (from the Episode's chapters
+  asset), skip back 15 s / forward 30 s, speed from 0.75× to 2×, volume and mute, and keyboard
+  shortcuts (space, arrows, `m`, `[` and `]`); speed and volume are remembered per browser.
+- **Title.** The pen next to a Mirror's title edits it in place; Enter saves, Escape cancels.
+
 ## Titles, artwork and crawlers
 
 - A Mirror's Settings tab has a *Title* field: a title of your own is shown in the UI, the

@@ -1,4 +1,4 @@
-"""Mirror Source assets (Artwork, chapters, transcripts) into a feed's ``assets/`` directory.
+"""Mirror Source assets (Artwork, chapters, transcripts, attachments) into ``assets/``.
 
 Limits: Artwork 10 MiB and must sniff as an image; chapters 2 MiB and must
 be JSON; transcripts 20 MiB in a known format. A failed asset raises
@@ -24,6 +24,7 @@ from lxml import etree
 from copycast.adapters.sources.http import BodyTooLarge, SourceError, fetch
 from copycast.adapters.sources.rss import NS_ITUNES, NS_PODCAST, PARSER, tag
 from copycast.domain.enums import AssetFormat, AssetKind, AssetProvenance
+from copycast.domain.ids import attachment_slot
 
 if TYPE_CHECKING:
     from lxml.etree import XmlElement
@@ -33,11 +34,40 @@ ARTWORK_MAX_BYTES: Final = 10 * MiB
 CHAPTERS_MAX_BYTES: Final = 2 * MiB
 TRANSCRIPT_MAX_BYTES: Final = 20 * MiB
 
+ATTACHMENT_MAX_BYTES: Final = 20 * MiB
+ATTACHMENT_IMAGE_MAX_BYTES: Final = 5 * MiB
+ATTACHMENTS_PER_ITEM: Final = 20
+
 LIMITS: Final[dict[AssetKind, int]] = {
     AssetKind.artwork: ARTWORK_MAX_BYTES,
     AssetKind.chapters: CHAPTERS_MAX_BYTES,
     AssetKind.transcript: TRANSCRIPT_MAX_BYTES,
+    AssetKind.attachment: ATTACHMENT_MAX_BYTES,
 }
+
+ATTACHMENT_LINK_EXTS: Final[frozenset[str]] = frozenset(
+    {"jpg", "jpeg", "png", "gif", "webp", "pdf", "mp3", "m4a", "wav", "ogg", "opus", "flac"}
+)
+"""Linked files worth keeping with the show notes (images, PDFs, audio)."""
+
+_ATTACHMENT_MIME_EXT: Final[dict[str, str]] = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "application/pdf": "pdf",
+    "audio/mpeg": "mp3",
+    "audio/mp4": "m4a",
+    "audio/x-m4a": "m4a",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+    "audio/ogg": "ogg",
+    "audio/opus": "opus",
+    "audio/flac": "flac",
+}
+_ATTACHMENT_EXT_MIME: Final[dict[str, str]] = {
+    ext: mime for mime, ext in reversed(list(_ATTACHMENT_MIME_EXT.items()))
+} | {"jpeg": "image/jpeg"}
 
 FORMAT_MIME: Final[dict[AssetFormat, str]] = {
     AssetFormat.vtt: "text/vtt",
@@ -103,6 +133,7 @@ class RemoteAsset:
     language: str | None = None
     format: AssetFormat | None = None
     provenance: AssetProvenance = AssetProvenance.mirrored
+    slot: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +149,7 @@ class MirroredAsset:
     path: Path
     mime: str
     size_bytes: int
+    slot: str | None = None
 
     @property
     def local_path(self) -> str:
@@ -131,15 +163,18 @@ def asset_basename(
     item_id: str | None = None,
     language: str | None = None,
     provenance: AssetProvenance = AssetProvenance.mirrored,
+    slot: str | None = None,
 ) -> str:
     """``feed.artwork.jpg`` | ``{item_id}.artwork.jpg`` | ``{item_id}.chapters.json`` |
-    ``{item_id}.transcript.{lang}.{provenance}.{ext}``."""
+    ``{item_id}.transcript.{lang}.{provenance}.{ext}`` | ``{item_id}.attachment.{slot}.{ext}``."""
     clean_ext = ext.lower().lstrip(".")
     stem = item_id or "feed"
     if kind is AssetKind.artwork:
         return f"{stem}.artwork.{clean_ext}"
     if kind is AssetKind.chapters:
         return f"{stem}.chapters.{clean_ext}"
+    if kind is AssetKind.attachment:
+        return f"{stem}.attachment.{slot or 'x'}.{clean_ext}"
     lang = language_tag(language)
     return f"{stem}.transcript.{lang}.{provenance.value}.{clean_ext}"
 
@@ -245,6 +280,52 @@ def feed_artwork_asset(url: str) -> RemoteAsset:
     return RemoteAsset(AssetKind.artwork, url, item_id=None)
 
 
+def _url_ext(url: str) -> str | None:
+    name = posix_basename(urlsplit(url).path)
+    return name.rsplit(".", 1)[1].lower() if "." in name else None
+
+
+def remote_attachments_from_description(
+    description: str | None,
+    *,
+    item_id: str,
+    base_url: str | None = None,
+    limit: int = ATTACHMENTS_PER_ITEM,
+) -> list[RemoteAsset]:
+    """What the show notes embed or link to: ``<img src>`` and ``<a href>`` to a file.
+
+    Links count only with an image, PDF or audio extension; ``data:`` and non-HTTP
+    URLs are skipped; duplicates collapse; at most ``limit`` per item, in order.
+    """
+    if not description or "<" not in description:
+        return []
+    try:
+        root = etree.fromstring(f"<div>{description}</div>", parser=etree.HTMLParser(recover=True))
+    except (etree.LxmlError, ValueError):
+        return []
+    found: list[RemoteAsset] = []
+    seen: set[str] = set()
+
+    def add(href: str | None) -> None:
+        if not href or len(found) >= limit:
+            return
+        url = _resolve(base_url, href.strip())
+        if urlsplit(url).scheme not in ("http", "https") or url in seen:
+            return
+        seen.add(url)
+        found.append(
+            RemoteAsset(AssetKind.attachment, url, item_id=item_id, slot=attachment_slot(url))
+        )
+
+    for image in root.iter("img"):
+        add(image.get("src"))
+    for anchor in root.iter("a"):
+        href = anchor.get("href")
+        if href and (_url_ext(href) or "") in ATTACHMENT_LINK_EXTS:
+            add(href)
+    return found
+
+
 def _href(element: XmlElement | None, attribute: str) -> str | None:
     if element is None:
         return None
@@ -292,6 +373,11 @@ def mirror_asset(
         except ValueError as exc:
             raise AssetError(f"chapters are not JSON: {asset.url}") from exc
         ext, mime, fmt = "json", CHAPTERS_MIME, AssetFormat.json
+    elif asset.kind is AssetKind.attachment:
+        ext, mime = _attachment_type(body, fetched.content_type, asset.url)
+        if mime.startswith("image/") and len(body) > ATTACHMENT_IMAGE_MAX_BYTES:
+            raise AssetError(f"image exceeds {ATTACHMENT_IMAGE_MAX_BYTES} bytes: {asset.url}")
+        fmt = None
     else:
         fmt = asset.format or transcript_format(asset.mime or fetched.content_type, asset.url)
         if fmt is None:
@@ -303,6 +389,7 @@ def mirror_asset(
         item_id=asset.item_id,
         language=asset.language if asset.kind is AssetKind.transcript else None,
         provenance=asset.provenance,
+        slot=asset.slot,
     )
     path = write_atomic(assets_dir / name, body)
     return MirroredAsset(
@@ -315,7 +402,22 @@ def mirror_asset(
         path=path,
         mime=mime,
         size_bytes=len(body),
+        slot=asset.slot,
     )
+
+
+def _attachment_type(body: bytes, content_type: str | None, url: str) -> tuple[str, str]:
+    """``(ext, mime)`` of an attachment: sniffed for images, else the served type, else the URL."""
+    sniffed = sniff_image(body[:16])
+    if sniffed is not None:
+        return sniffed
+    served = (content_type or "").split(";", 1)[0].strip().lower()
+    if served in _ATTACHMENT_MIME_EXT:
+        return _ATTACHMENT_MIME_EXT[served], served
+    ext = _url_ext(url)
+    if ext in _ATTACHMENT_EXT_MIME:
+        return ("jpg" if ext == "jpeg" else ext), _ATTACHMENT_EXT_MIME[ext]
+    raise AssetError(f"not an image, PDF or audio file ({served or 'unknown type'}): {url}")
 
 
 def write_atomic(path: Path, data: bytes) -> Path:
@@ -351,6 +453,7 @@ __all__ = [
     "language_tag",
     "mirror_asset",
     "remote_assets_from_item",
+    "remote_attachments_from_description",
     "sniff_image",
     "transcript_format",
     "write_atomic",

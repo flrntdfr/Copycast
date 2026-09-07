@@ -30,6 +30,8 @@ class Asset(TimestampMixin, Base):
     )
     language: Mapped[str | None] = mapped_column(Text)
     format: Mapped[str | None] = mapped_column(Text)
+    slot: Mapped[str | None] = mapped_column(Text)
+    """Tells attachments of one item apart: a hash of the remote URL; null for other kinds."""
     remote_url: Mapped[str | None] = mapped_column(Text)
     local_path: Mapped[str | None] = mapped_column(Text)
     mime: Mapped[str | None] = mapped_column(Text)
@@ -53,6 +55,7 @@ class Asset(TimestampMixin, Base):
             func.coalesce(text("language"), text("''")),
             func.coalesce(text("format"), text("''")),
             "provenance",
+            func.coalesce(text("slot"), text("''")),
             unique=True,
         ),
         Index("ix_assets_item_id", "item_id"),

@@ -98,6 +98,9 @@ class Services:
     async def delete_feed(self, feed_id: str) -> None:
         await _feeds.delete_feed(self.ctx, feed_id)
 
+    async def export_opml(self) -> str:
+        return await _feeds.export_opml(self.ctx)
+
     async def rotate_feed_credentials(self, feed_id: str) -> FeedRead:
         return await _feeds.rotate_feed_credentials(self.ctx, feed_id)
 

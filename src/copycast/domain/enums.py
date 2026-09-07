@@ -75,6 +75,8 @@ class AssetKind(StrEnum):
     artwork = "artwork"
     chapters = "chapters"
     transcript = "transcript"
+    attachment = "attachment"
+    """A file the show notes reference (an inline image, a linked PDF or audio file)."""
 
 
 class AssetProvenance(StrEnum):

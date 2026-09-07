@@ -93,6 +93,7 @@ class AssetRepository:
         last_error: str | None = None,
         fetched_at: datetime | None = None,
         asset_id: str | None = None,
+        slot: str | None = None,
     ) -> Asset:
         """Insert or update the asset with this identity; the id is derived from the identity."""
         aid = asset_id or make_asset_id(
@@ -102,11 +103,13 @@ class AssetRepository:
             language,
             format.value if format else None,
             provenance.value,
+            slot,
         )
         values: dict[str, Any] = {
             "id": aid,
             "feed_id": feed_id,
             "item_id": item_id,
+            "slot": slot,
             "kind": kind.value,
             "provenance": provenance.value,
             "language": language,

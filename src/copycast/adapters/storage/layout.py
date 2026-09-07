@@ -54,6 +54,10 @@ _TRANSCRIPT_RE: Final = re.compile(
 _ARTWORK_RE: Final = re.compile(r"^(?P<item_id>[0-9a-f]{16})\.artwork\.(?P<ext>[A-Za-z0-9]{1,8})$")
 _FEED_ARTWORK_RE: Final = re.compile(r"^feed\.artwork\.(?P<ext>[A-Za-z0-9]{1,8})$")
 _CHAPTERS_RE: Final = re.compile(r"^(?P<item_id>[0-9a-f]{16})\.chapters\.json$")
+_SLOT_RE: Final = re.compile(r"^[0-9a-f]{12}$")
+_ATTACHMENT_RE: Final = re.compile(
+    r"^(?P<item_id>[0-9a-f]{16})\.attachment\.(?P<slot>[0-9a-f]{12})\.(?P<ext>[A-Za-z0-9]{1,8})$"
+)
 _SIDECAR_SUFFIXES: Final = (INFO_JSON_SUFFIX, ITEM_XML_SUFFIX, PART_SUFFIX, ".ytdl")
 
 
@@ -74,6 +78,7 @@ class AssetFileName:
     ext: str
     language: str | None = None
     provenance: AssetProvenance = AssetProvenance.mirrored
+    slot: str | None = None
 
 
 class Layout:
@@ -175,6 +180,11 @@ class Layout:
     def chapters_path(self, feed_id: str, item_id: str) -> Path:
         return self.assets_dir(feed_id) / f"{_item(item_id)}.chapters.json"
 
+    def attachment_path(self, feed_id: str, item_id: str, slot: str, ext: str) -> Path:
+        if not _SLOT_RE.match(slot):
+            raise UnsafePath(f"invalid attachment slot {slot!r}")
+        return self.assets_dir(feed_id) / f"{_item(item_id)}.attachment.{slot}.{_ext(ext)}"
+
     def transcript_path(
         self, feed_id: str, item_id: str, language: str, provenance: AssetProvenance | str, ext: str
     ) -> Path:
@@ -193,9 +203,14 @@ class Layout:
         *,
         language: str | None = None,
         provenance: AssetProvenance | str = AssetProvenance.mirrored,
+        slot: str | None = None,
     ) -> Path:
         """The canonical file for an asset row's identity."""
         match AssetKind(kind):
+            case AssetKind.attachment:
+                if item_id is None or not slot:
+                    raise UnsafePath("an attachment needs an item and a slot")
+                return self.attachment_path(feed_id, item_id, slot, ext)
             case AssetKind.artwork:
                 if item_id is None:
                     return self.feed_artwork_path(feed_id, ext)
@@ -316,6 +331,10 @@ class Layout:
                 m.group("ext"),
                 language=m.group("language"),
                 provenance=AssetProvenance(m.group("provenance")),
+            )
+        if m := _ATTACHMENT_RE.match(name):
+            return AssetFileName(
+                AssetKind.attachment, m.group("item_id"), m.group("ext"), slot=m.group("slot")
             )
         return None
 

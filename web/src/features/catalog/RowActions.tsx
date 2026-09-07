@@ -77,6 +77,8 @@ export function RowActions({ item, feedTitle }: { item: ItemRead; feedTitle: str
                 mime: item.media?.mime ?? "",
                 artworkUrl: item.artwork_url ?? null,
                 durationSeconds: item.duration_seconds ?? null,
+                chaptersUrl:
+                  item.assets?.find((asset) => asset.kind === "chapters" && asset.url)?.url ?? null,
               })
             }
           >

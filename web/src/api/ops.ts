@@ -18,6 +18,7 @@ export const OPS = {
   list_feeds: ["get", "/api/feeds"],
   get_feed: ["get", "/api/feeds/{feed_id}"],
   delete_feed: ["delete", "/api/feeds/{feed_id}"],
+  export_opml: ["get", "/api/feeds.opml"],
   rotate_feed_credentials: ["post", "/api/feeds/{feed_id}/credentials/rotate"],
   list_items: ["get", "/api/feeds/{feed_id}/items"],
   get_item: ["get", "/api/feeds/{feed_id}/items/{item_id}"],

@@ -56,10 +56,21 @@ def asset_id(
     language: str | None,
     format: str | None,
     provenance: str,
+    slot: str | None = None,
 ) -> str:
-    """Hash of the asset's uniqueness tuple; ``item_id`` None means feed Artwork."""
+    """Hash of the asset's uniqueness tuple; ``item_id`` None means feed Artwork.
+
+    ``slot`` (attachments only) joins the tuple when given, so older ids are unchanged.
+    """
     parts = [feed_id, item_id or "", str(kind), language or "", format or "", str(provenance)]
+    if slot:
+        parts.append(slot)
     return _short_hash("\n".join(parts))
+
+
+def attachment_slot(url: str) -> str:
+    """The slot of an attachment: a short hash of its remote URL."""
+    return _short_hash("attachment\n" + url)[:12]
 
 
 def is_feed_id(value: str) -> bool:

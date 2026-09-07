@@ -452,6 +452,7 @@ async def _upsert_assets(session: AsyncSession, descriptor: FeedDescriptor) -> i
             "provenance": a.provenance.value,
             "language": a.language,
             "format": a.format.value if a.format else None,
+            "slot": a.slot,
             "remote_url": a.remote_url,
             "local_path": a.local_path,
             "mime": a.mime,
@@ -683,6 +684,7 @@ async def _reconcile_assets(session: AsyncSession, layout: Layout, feed_id: str)
             parsed.language,
             fmt,
             parsed.provenance.value,
+            parsed.slot,
         )
         stmt = insert(Asset).values(
             id=aid,
@@ -692,6 +694,7 @@ async def _reconcile_assets(session: AsyncSession, layout: Layout, feed_id: str)
             provenance=parsed.provenance.value,
             language=parsed.language,
             format=fmt,
+            slot=parsed.slot,
             local_path=relative,
             mime=mime_for(parsed.ext),
             size_bytes=path.stat().st_size,
@@ -723,7 +726,7 @@ def mime_for(ext: str) -> str:
 
 
 def _asset_format(kind: AssetKind, ext: str) -> str | None:
-    if kind is AssetKind.artwork:
+    if kind is AssetKind.artwork or kind is AssetKind.attachment:
         return None
     if kind is AssetKind.chapters:
         return "json"

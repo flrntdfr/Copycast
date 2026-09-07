@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from email.utils import format_datetime
+
+from lxml import etree
+
 from copycast.application.capabilities import capability
 from copycast.application.events import FeedEvent
 from copycast.application.models import FeedList, FeedRead, InboxRead
@@ -138,3 +143,34 @@ __all__ = [
     "resolve_inbox",
     "rotate_feed_credentials",
 ]
+
+
+@capability("export_opml")
+async def export_opml(ctx: ServiceContext) -> str:
+    """Every feed as an OPML 2.0 document; ``xmlUrl`` carries the feed's pair while auth is on."""
+    async with ctx.uow_factory() as uow:
+        feeds = await uow.feeds.list()
+        outlines = [
+            (
+                feed.title_override or feed.title,
+                ctx.urls.feed_url(
+                    feed.id, username=feed.auth_username, password=feed.auth_password
+                ),
+                feed.source_url,
+            )
+            for feed in feeds
+        ]
+    root = etree.Element("opml", version="2.0")
+    head = etree.SubElement(root, "head")
+    etree.SubElement(head, "title").text = "Copycast"
+    etree.SubElement(head, "dateCreated").text = format_datetime(datetime.now(UTC), usegmt=True)
+    body = etree.SubElement(root, "body")
+    for title, xml_url, html_url in outlines:
+        outline = etree.SubElement(body, "outline", text=title, title=title, type="rss")
+        outline.set("xmlUrl", xml_url)
+        if html_url:
+            outline.set("htmlUrl", html_url)
+    document: bytes = etree.tostring(
+        root, xml_declaration=True, encoding="UTF-8", pretty_print=True
+    )
+    return document.decode("utf-8")

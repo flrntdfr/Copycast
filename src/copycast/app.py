@@ -327,6 +327,7 @@ class FeedRendererAdapter:
             format=AssetFormat(asset.format) if asset.format else None,
             mime=asset.mime,
             size_bytes=asset.size_bytes,
+            remote_url=asset.remote_url,
         )
 
 

@@ -113,6 +113,7 @@ export const assetKindLabel = label<AssetKind>({
   artwork: "Artwork",
   chapters: "Chapters",
   transcript: "Transcript",
+  attachment: "Attachment",
 });
 
 export const keyScopeLabel = label<KeyScope>({

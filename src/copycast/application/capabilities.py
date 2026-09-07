@@ -24,6 +24,7 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "get_feed",
         "delete_feed",
         "rotate_feed_credentials",
+        "export_opml",
         # items
         "list_items",
         "get_item",
@@ -100,6 +101,8 @@ TOOL_EXEMPT: Final[frozenset[str]] = frozenset(
         "preview_mirror_update",
         # Wipes every archive at once: an operator's button, never an agent's tool.
         "purge_episodes",
+        # A download for a podcast app; an agent has list_feeds.
+        "export_opml",
     }
 )
 """Capabilities with a route but deliberately no MCP tool."""

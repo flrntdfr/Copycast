@@ -78,6 +78,20 @@ class XMLParser:
         compact: bool = True,
     ) -> None: ...
 
+class HTMLParser(XMLParser):
+    def __init__(
+        self,
+        *,
+        encoding: str | None = None,
+        remove_blank_text: bool = False,
+        remove_comments: bool = False,
+        remove_pis: bool = False,
+        no_network: bool = True,
+        recover: bool = True,
+        compact: bool = True,
+        huge_tree: bool = False,
+    ) -> None: ...
+
 class LxmlError(Exception): ...
 class XMLSyntaxError(LxmlError, SyntaxError): ...
 

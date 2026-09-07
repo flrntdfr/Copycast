@@ -121,6 +121,7 @@ class DescriptorAsset(_Strict):
     provenance: AssetProvenance = AssetProvenance.mirrored
     language: str | None = None
     format: AssetFormat | None = None
+    slot: str | None = None
     remote_url: str | None = None
     local_path: str | None = None
     mime: str | None = None

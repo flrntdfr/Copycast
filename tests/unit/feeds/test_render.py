@@ -696,3 +696,36 @@ def test_rfc2822_is_always_gmt() -> None:
         rfc2822(datetime(2024, 1, 15, 9, tzinfo=timezone(timedelta(hours=1))))
         == "Mon, 15 Jan 2024 08:00:00 GMT"
     )
+
+
+def test_show_notes_point_at_the_mirrored_attachments() -> None:
+    attachment = AssetView(
+        kind=AssetKind.attachment,
+        local_path="assets/aaaaaaaaaaaaaaaa.attachment.0123456789ab.jpg",
+        mime="image/jpeg",
+        remote_url="https://cdn.example/pic.jpg",
+    )
+    missing = AssetView(
+        kind=AssetKind.attachment,
+        local_path=None,
+        state=AssetState.failed,
+        remote_url="https://cdn.example/gone.pdf",
+    )
+    notes = '<p><img src="https://cdn.example/pic.jpg"> <a href="https://cdn.example/gone.pdf">x</a></p>'
+    feed = FeedView(id=FEED_ID, kind=FeedKind.mirror, title="Notes", source_kind=SourceKind.ytdlp)
+    items = [
+        item(
+            "aaaaaaaaaaaaaaaa",
+            1,
+            "With pictures",
+            published_at=NOW,
+            description=notes,
+            assets=(attachment, missing),
+        )
+    ]
+    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    description = etree.fromstring(rendered.body).findtext(".//item/description") or ""
+    local = f"{BASE_URL}/feeds/{FEED_ID}/assets/aaaaaaaaaaaaaaaa.attachment.0123456789ab.jpg"
+    assert local in description
+    assert "https://cdn.example/pic.jpg" not in description
+    assert "https://cdn.example/gone.pdf" in description  # not mirrored: the original stays

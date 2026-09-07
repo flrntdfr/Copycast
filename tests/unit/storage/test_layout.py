@@ -164,6 +164,11 @@ def test_disk_helpers(data_dir: Path) -> None:
                 provenance=AssetProvenance.generated,
             ),
         ),
+        (
+            f"{ITEM}.attachment.0123456789ab.pdf",
+            AssetFileName(AssetKind.attachment, ITEM, "pdf", slot="0123456789ab"),
+        ),
+        (f"{ITEM}.attachment.short.pdf", None),
         ("README.txt", None),
         (f"{ITEM}.transcript.en.unknown.vtt", None),
         ("short.artwork.jpg", None),

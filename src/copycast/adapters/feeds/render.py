@@ -87,6 +87,7 @@ class AssetView:
     format: AssetFormat | None = None
     mime: str | None = None
     size_bytes: int | None = None
+    remote_url: str | None = None
 
     @property
     def served(self) -> bool:
@@ -335,6 +336,9 @@ def _preserved_item(feed: FeedView, item: ItemView, base_url: str) -> Element | 
         return None
     # An Automatic feed lists unarchived items too: the enclosure is then the placeholder.
     _replace_all(element, [_enclosure(base_url, feed, item)], (None, "enclosure"))
+    for notes in (element.find("description"), element.find(tag(NS_CONTENT, "encoded"))):
+        if notes is not None and notes.text:
+            notes.text = localized_notes(notes.text, base_url, feed.id, item.assets)
 
     chapters = _pick_chapters(item.assets)
     if chapters is not None:
@@ -352,6 +356,19 @@ def _preserved_item(feed: FeedView, item: ItemView, base_url: str) -> Element | 
     if artwork:
         _set_artwork(element, artwork, create=True)
     return element
+
+
+def localized_notes(
+    text: str | None, base_url: str, feed_id: str, assets: Iterable[AssetView]
+) -> str | None:
+    """The show notes with every mirrored attachment's URL replaced by the local copy."""
+    if not text:
+        return text
+    for asset in _served(assets, AssetKind.attachment):
+        local = _local_url(base_url, feed_id, asset)
+        if asset.remote_url and local and asset.remote_url in text:
+            text = text.replace(asset.remote_url, local)
+    return text
 
 
 def with_source_link(description: str | None, source_url: str | None) -> str | None:
@@ -385,7 +402,9 @@ def _synthesized_item(
 ) -> Element:
     element = etree.Element("item")
     _sub(element, "title", item.title)
-    description = with_source_link(item.description, item.source_url)
+    description = with_source_link(
+        localized_notes(item.description, base_url, feed.id, item.assets), item.source_url
+    )
     if description:
         _sub(element, "description", description)
     if item.source_url:
@@ -541,6 +560,7 @@ __all__ = [
     "FeedView",
     "ItemView",
     "RenderedFeed",
+    "localized_notes",
     "render_feed",
     "rfc2822",
     "with_source_link",
