@@ -7,6 +7,7 @@ calls so that pyright strict mode can check the engine adapter.
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from . import postprocessor as postprocessor
 from . import utils as utils
 from . import version as version
 
@@ -39,7 +40,15 @@ class YoutubeDL:
     def add_progress_hook(self, ph: ProgressHook) -> None: ...
     def add_postprocessor_hook(self, ph: ProgressHook) -> None: ...
     def add_post_hook(self, ph: Callable[[str], object]) -> None: ...
+    def add_post_processor(
+        self, pp: postprocessor.PostProcessor, when: str = "post_process"
+    ) -> None: ...
     def prepare_filename(
-        self, info_dict: InfoDict, dir_type: str = "", *, outtmpl: str | None = None, warn: bool = False
+        self,
+        info_dict: InfoDict,
+        dir_type: str = "",
+        *,
+        outtmpl: str | None = None,
+        warn: bool = False,
     ) -> str: ...
     def close(self) -> None: ...

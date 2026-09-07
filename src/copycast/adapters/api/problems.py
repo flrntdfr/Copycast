@@ -34,6 +34,7 @@ TITLES: dict[str, str] = {
     "source-kind-change": "Source kind change refused",
     "invalid-selection": "Invalid selection",
     "engine-option-rejected": "Engine option rejected",
+    "invalid-cookies": "Not a cookie file",
     "conflict": "Conflict",
     "engine-unavailable": "Engine unavailable",
     "internal": "Internal error",

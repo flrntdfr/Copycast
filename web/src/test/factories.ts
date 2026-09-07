@@ -2,6 +2,7 @@
 import type {
   AboutRead,
   ApiKeyRead,
+  EngineCookiesRead,
   InboxRead,
   ItemRead,
   JobRead,
@@ -210,6 +211,18 @@ export function apiKey(overrides: Partial<ApiKeyRead> = {}): ApiKeyRead {
     prefix: "cck_a1b2c3d4",
     created_at: "2024-01-15T09:00:00Z",
     last_used_at: null,
+    ...overrides,
+  };
+}
+
+export function engineCookies(overrides: Partial<EngineCookiesRead> = {}): EngineCookiesRead {
+  return {
+    present: false,
+    size_bytes: 0,
+    updated_at: null,
+    cookie_count: 0,
+    domains: [],
+    youtube: false,
     ...overrides,
   };
 }

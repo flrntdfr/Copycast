@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from "./routes/index";
 import { Route as AboutRouteImport } from "./routes/about";
 import { Route as JobsRouteImport } from "./routes/jobs";
 import { Route as KeysRouteImport } from "./routes/keys";
+import { Route as SettingsRouteImport } from "./routes/settings";
 import { Route as InboxesIndexRouteImport } from "./routes/inboxes/index";
 import { Route as InboxesInboxIdRouteImport } from "./routes/inboxes/$inboxId";
 import { Route as MirrorsIndexRouteImport } from "./routes/mirrors/index";
@@ -37,6 +38,11 @@ const JobsRoute = JobsRouteImport.update({
 const KeysRoute = KeysRouteImport.update({
   id: "/keys",
   path: "/keys",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const SettingsRoute = SettingsRouteImport.update({
+  id: "/settings",
+  path: "/settings",
   getParentRoute: () => rootRouteImport,
 } as any);
 const InboxesIndexRoute = InboxesIndexRouteImport.update({
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   "/about": typeof AboutRoute;
   "/jobs": typeof JobsRoute;
   "/keys": typeof KeysRoute;
+  "/settings": typeof SettingsRoute;
   "/inboxes/$inboxId": typeof InboxesInboxIdRoute;
   "/mirrors/$mirrorId": typeof MirrorsMirrorIdRoute;
   "/mirrors/new": typeof MirrorsNewRoute;
@@ -81,6 +88,7 @@ export interface FileRoutesByTo {
   "/about": typeof AboutRoute;
   "/jobs": typeof JobsRoute;
   "/keys": typeof KeysRoute;
+  "/settings": typeof SettingsRoute;
   "/inboxes/$inboxId": typeof InboxesInboxIdRoute;
   "/mirrors/$mirrorId": typeof MirrorsMirrorIdRoute;
   "/mirrors/new": typeof MirrorsNewRoute;
@@ -93,6 +101,7 @@ export interface FileRoutesById {
   "/about": typeof AboutRoute;
   "/jobs": typeof JobsRoute;
   "/keys": typeof KeysRoute;
+  "/settings": typeof SettingsRoute;
   "/inboxes/$inboxId": typeof InboxesInboxIdRoute;
   "/mirrors/$mirrorId": typeof MirrorsMirrorIdRoute;
   "/mirrors/new": typeof MirrorsNewRoute;
@@ -106,6 +115,7 @@ export interface FileRouteTypes {
     | "/about"
     | "/jobs"
     | "/keys"
+    | "/settings"
     | "/inboxes/$inboxId"
     | "/mirrors/$mirrorId"
     | "/mirrors/new"
@@ -117,6 +127,7 @@ export interface FileRouteTypes {
     | "/about"
     | "/jobs"
     | "/keys"
+    | "/settings"
     | "/inboxes/$inboxId"
     | "/mirrors/$mirrorId"
     | "/mirrors/new"
@@ -128,6 +139,7 @@ export interface FileRouteTypes {
     | "/about"
     | "/jobs"
     | "/keys"
+    | "/settings"
     | "/inboxes/$inboxId"
     | "/mirrors/$mirrorId"
     | "/mirrors/new"
@@ -140,6 +152,7 @@ export interface RootRouteChildren {
   AboutRoute: typeof AboutRoute;
   JobsRoute: typeof JobsRoute;
   KeysRoute: typeof KeysRoute;
+  SettingsRoute: typeof SettingsRoute;
   InboxesInboxIdRoute: typeof InboxesInboxIdRoute;
   MirrorsMirrorIdRoute: typeof MirrorsMirrorIdRoute;
   MirrorsNewRoute: typeof MirrorsNewRoute;
@@ -175,6 +188,13 @@ declare module "@tanstack/react-router" {
       path: "/keys";
       fullPath: "/keys";
       preLoaderRoute: typeof KeysRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/settings": {
+      id: "/settings";
+      path: "/settings";
+      fullPath: "/settings";
+      preLoaderRoute: typeof SettingsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/inboxes/": {
@@ -220,6 +240,7 @@ const rootRouteChildren: RootRouteChildren = {
   AboutRoute: AboutRoute,
   JobsRoute: JobsRoute,
   KeysRoute: KeysRoute,
+  SettingsRoute: SettingsRoute,
   InboxesInboxIdRoute: InboxesInboxIdRoute,
   MirrorsMirrorIdRoute: MirrorsMirrorIdRoute,
   MirrorsNewRoute: MirrorsNewRoute,

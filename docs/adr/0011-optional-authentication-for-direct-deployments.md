@@ -37,7 +37,8 @@ ADR 0004 unchanged. On, three credentials gate three surfaces:
    Keys are minted and revoked from the UI, shown once, stored as a SHA-256 digest (the
    secret is random, so no salt or work factor is needed), and carry a scope: `read` for the
    read-only tools, `write` for everything but deletions, `full` for everything. Every tool
-   checks the calling key's scope before it runs. The key capabilities and the rotation have
+   checks the calling key's scope before it runs; switching an Inbox's Retention on counts as
+   a deletion because autoprune deletes. The key capabilities and the rotation have
    routes but no tools: a key must never mint keys and an agent must never break every
    subscriber of a feed.
 

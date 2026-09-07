@@ -90,7 +90,7 @@ class AuthSettings(BaseModel):
     @field_validator("password")
     @classmethod
     def _password(cls, value: str | None) -> str | None:
-        if value is None or value == "":
+        if value is None or not value.strip():
             return None
         if len(value) < AUTH_PASSWORD_MIN_LEN:
             raise ValueError(f"auth.password must be at least {AUTH_PASSWORD_MIN_LEN} characters")

@@ -1,5 +1,6 @@
 # Exposed by the Tailscale Kubernetes operator as https://copycast.<tailnet>.ts.net.
-# The tailnet is the security boundary: Copycast has no authentication of its own.
+# The tailnet is the security boundary; Copycast's own authentication stays off unless
+# COPYCAST__AUTH__PASSWORD is set (docs/adr/0011, see the example overlay's api-auth.yaml).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

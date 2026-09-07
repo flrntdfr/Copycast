@@ -139,8 +139,9 @@ def test_auth_is_off_by_default_and_on_with_a_password(
     assert (on.auth.username, on.auth.password) == ("florent", "correct-horse")
     assert on.redacted()["auth"] == {"username": "florent", "password": "***"}
 
-    # An empty password is "unset", not a weak password.
+    # An empty or blank password is "unset", not a weak password.
     assert get_settings(data_dir=tmp_path, auth={"password": ""}).auth.enabled is False
+    assert get_settings(data_dir=tmp_path, auth={"password": "        "}).auth.enabled is False
 
 
 @pytest.mark.parametrize(

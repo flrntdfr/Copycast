@@ -4,7 +4,7 @@
  */
 import type { paths } from "./schema";
 
-export type HttpMethod = "get" | "post" | "patch" | "delete";
+export type HttpMethod = "get" | "post" | "put" | "patch" | "delete";
 
 type PathsFor<M extends HttpMethod> = {
   [P in keyof paths]: paths[P] extends Record<M, unknown> ? P : never;
@@ -45,6 +45,9 @@ export const OPS = {
   list_api_keys: ["get", "/api/keys"],
   create_api_key: ["post", "/api/keys"],
   revoke_api_key: ["delete", "/api/keys/{key_id}"],
+  get_engine_cookies: ["get", "/api/engine/cookies"],
+  set_engine_cookies: ["put", "/api/engine/cookies"],
+  delete_engine_cookies: ["delete", "/api/engine/cookies"],
 } as const satisfies Record<string, Op>;
 
 export type Capability = keyof typeof OPS;

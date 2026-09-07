@@ -46,6 +46,8 @@ export type ApiKeyRead = Schemas["ApiKeyRead"];
 export type ApiKeyCreate = Schemas["ApiKeyCreate"];
 export type ApiKeyCreated = Schemas["ApiKeyCreated"];
 export type ApiKeyList = Schemas["ApiKeyList"];
+export type EngineCookiesRead = Schemas["EngineCookiesRead"];
+export type EngineCookiesWrite = Schemas["EngineCookiesWrite"];
 
 export type ArchiveState = Schemas["ArchiveState"];
 export type AssetKind = Schemas["AssetKind"];

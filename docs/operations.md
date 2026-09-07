@@ -122,7 +122,8 @@ Apple Podcasts fetches the feed but not the audio.
 
 **API keys.** Minted and revoked on the *API keys* page (`/api/keys`), shown once, stored as a
 SHA-256 digest, with a scope: `read` (read-only tools), `write` (everything but deletions) or
-`full` (everything, including `delete_feed`, `delete_item` and `prune_inbox`). Every tool
+`full` (everything, including `delete_feed`, `delete_item`, `prune_inbox`, and setting an
+Inbox's Retention through `create_inbox` or `update_inbox`, since autoprune deletes). Every tool
 checks the scope before running and refuses with a `ToolError` naming the scope it needs.
 `last_used_at` is updated at most once a minute per key. Keys cannot mint keys: the key
 capabilities have no MCP tools. For Claude Code:
@@ -132,9 +133,21 @@ export COPYCAST_MCP_KEY=cck_...
 claude mcp add --transport http copycast https://copycast.example/mcp --header "Authorization: Bearer $COPYCAST_MCP_KEY"
 ```
 
-or in `.mcp.json`: `{"copycast": {"type": "http", "url": "https://copycast.example/mcp",
-"headers": {"Authorization": "Bearer ${COPYCAST_MCP_KEY}"}}}`. Claude Desktop and claude.ai
-custom connectors accept OAuth only and cannot use a key.
+or in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "copycast": {
+      "type": "http",
+      "url": "https://copycast.example/mcp",
+      "headers": { "Authorization": "Bearer ${COPYCAST_MCP_KEY}" }
+    }
+  }
+}
+```
+
+Claude Desktop and claude.ai custom connectors accept OAuth only and cannot use a key.
 
 **Turning it on later** breaks every existing subscription until each podcast app is given
 its feed's pair; agents need a key. Turning it off makes everything open again; the pairs
@@ -147,6 +160,7 @@ Kubernetes: the example overlay's `api-auth.yaml` reads the password from a Secr
 
 ```
 data/LAYOUT_VERSION                     "1"; written on first start, a mismatch refuses to start
+data/engine/cookies.txt                 the engine's cookie file (optional, mode 0600), see below
 data/feeds/<feed_id>/feed.json          descriptor of the feed, its policy, items, assets and requests
 data/feeds/<feed_id>/source/            verbatim Source XML or the last engine listing
 data/feeds/<feed_id>/media/             audio, <item_id>.info.json, <item_id>.item.xml (original RSS item)
@@ -156,6 +170,29 @@ data/feeds/<feed_id>/assets/            Artwork, chapters, transcripts
 
 The descriptor is rewritten after every change of intent and is what `copycast rebuild`
 reads. Nothing outside the worker writes into `media/` or `tmp/`.
+
+## YouTube and other sites that need a login
+
+YouTube answers requests from a server's address (a Linode or Hetzner IP, say) with
+"Sign in to confirm you're not a bot", and the item fails permanently. The fix yt-dlp
+recommends is the cookies of a logged-in browser session:
+
+1. In a browser, open a private window and sign in to youtube.com.
+2. Export its cookies with a "Get cookies.txt LOCALLY" extension (Netscape format).
+3. Close the private window without signing out, so YouTube does not rotate the session.
+4. Paste or pick the file on the **Settings** page (`PUT /api/engine/cookies`).
+5. **Retry** the failed Episodes from the Catalog.
+
+The file is stored at `data/engine/cookies.txt` with mode 0600, never shown again, and
+handed to yt-dlp as `cookiefile` on every listing and fetch, in both processes. Each call
+works on a private copy and the stored file is replaced atomically when the site rotated a
+cookie, so two jobs never tear it. An explicit `cookiefile` under `[engine.options]` still
+wins. Remove the file from the same page to go back to anonymous fetches. An agent cannot
+read or replace it: the three capabilities have routes but no MCP tools.
+
+Thumbnails never fail an archive: a CDN that serves a JPEG under a `.png` URL is detected
+from the bytes and renamed before ffmpeg converts it, and an image ffmpeg still refuses only
+costs the embedded artwork, with a warning in the job log.
 
 ## Kubernetes
 

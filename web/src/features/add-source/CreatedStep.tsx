@@ -37,7 +37,7 @@ export function CreatedStep({ mirror }: { mirror: MirrorRead }) {
         In your podcast app choose “Add by URL” (sometimes “Add a show by URL” or “Subscribe to
         feed”) and paste this address. Episodes appear there as they are archived.
       </p>
-      <FeedCredentials feed={mirror} />
+      <FeedCredentials feed={mirror} canRotate={false} />
       <div className="rounded-lg border bg-card p-3">
         {selection ? (
           <p className="text-sm">

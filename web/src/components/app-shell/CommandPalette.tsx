@@ -1,5 +1,15 @@
 import { useNavigate } from "@tanstack/react-router";
-import { Info, Inbox, KeyRound, Plus, Radio, RefreshCw, Search, Send } from "lucide-react";
+import {
+  Info,
+  Inbox,
+  KeyRound,
+  Plus,
+  Radio,
+  RefreshCw,
+  Search,
+  Send,
+  Settings,
+} from "lucide-react";
 import { useState } from "react";
 
 import { $api } from "@/api/client";
@@ -110,6 +120,9 @@ export function CommandPalette({
           </CommandItem>
           <CommandItem onSelect={() => go(() => void navigate({ to: "/keys" }))}>
             <KeyRound /> API keys
+          </CommandItem>
+          <CommandItem onSelect={() => go(() => void navigate({ to: "/settings" }))}>
+            <Settings /> Settings
           </CommandItem>
           <CommandItem onSelect={() => go(() => void navigate({ to: "/about" }))}>
             <Info /> About

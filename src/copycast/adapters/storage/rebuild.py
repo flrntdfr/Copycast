@@ -173,6 +173,9 @@ async def _rebuild(
     on_disk = layout.feed_ids_on_disk()
     counters.data["feeds_on_disk"] = len(on_disk)
     rebuilt: set[str] = set()
+    # Descriptors written before feeds carried a Basic pair: the row's pair (kept or minted)
+    # is written back at the end so the next rebuild finds it on disk.
+    stale_pair: set[str] = set()
 
     for feed_id in on_disk:
         path = layout.descriptor_path(feed_id)
@@ -193,6 +196,8 @@ async def _rebuild(
             async with sessionmaker() as session, session.begin():
                 await _rebuild_feed(session, layout, descriptor, yes, counters)
             rebuilt.add(feed_id)
+            if not _carries_pair(descriptor):
+                stale_pair.add(feed_id)
         except Exception as exc:
             log.exception("rebuild.feed_failed", feed_id=feed_id)
             counters.skipped.append(SkippedDir(feed_id=feed_id, reason=f"error: {exc}"))
@@ -212,9 +217,15 @@ async def _rebuild(
 
     async with sessionmaker() as session:
         for feed_id in [*rebuilt, counters.data["default_inbox_id"]]:
-            if feed_id and not layout.descriptor_path(feed_id).is_file():
+            if not feed_id:
+                continue
+            if feed_id in stale_pair or not layout.descriptor_path(feed_id).is_file():
                 await export_descriptor(session, layout, feed_id, force=True)
     return counters.report()
+
+
+def _carries_pair(descriptor: FeedDescriptor) -> bool:
+    return descriptor.feed.auth_username is not None and descriptor.feed.auth_password is not None
 
 
 # --------------------------------------------------------------------------- one feed
@@ -336,6 +347,8 @@ async def _upsert_feed(session: AsyncSession, layout: Layout, descriptor: FeedDe
         "source_dedup_key": feed.source_dedup_key,
         "source_kind": feed.source_kind.value if feed.source_kind else None,
         "service": feed.service,
+        # A descriptor without a pair (written before ADR 0011) mints one for a new row only:
+        # an existing row keeps the pair podcast clients already hold (see ``set_`` below).
         "auth_username": feed.auth_username or new_feed_username(),
         "auth_password": feed.auth_password or new_feed_password(),
         "backfill_mode": policy.backfill_mode.value if policy.backfill_mode else None,
@@ -348,11 +361,14 @@ async def _upsert_feed(session: AsyncSession, layout: Layout, descriptor: FeedDe
         "intent_version": descriptor.intent_version,
         "created_at": feed.created_at,
     }
+    untouched = ("id", "created_at")
+    if not _carries_pair(descriptor):
+        untouched += ("auth_username", "auth_password")
     stmt = insert(Feed).values(**values)
     await session.execute(
         stmt.on_conflict_do_update(
             index_elements=[Feed.id],
-            set_={k: v for k, v in values.items() if k not in ("id", "created_at")},
+            set_={k: v for k, v in values.items() if k not in untouched},
         )
     )
     layout.ensure_feed_dirs(feed.id)

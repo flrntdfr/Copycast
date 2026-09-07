@@ -14,6 +14,13 @@ describe("FeedCredentials", () => {
     expect(screen.queryByTestId("feed-credentials")).not.toBeInTheDocument();
   });
 
+  it("hides Rotate where the feed is a snapshot that would not refresh", () => {
+    const feed = mirror({ feed_credentials: { username: "k7mpq2xz", password: "p".repeat(24) } });
+    renderWithProviders(<FeedCredentials feed={feed} canRotate={false} />);
+    expect(screen.getByLabelText("Username")).toHaveValue("k7mpq2xz");
+    expect(screen.queryByRole("button", { name: "Rotate…" })).not.toBeInTheDocument();
+  });
+
   it("shows the pair and rotates it after confirmation", async () => {
     const feed = mirror({
       id: "mirror-1",

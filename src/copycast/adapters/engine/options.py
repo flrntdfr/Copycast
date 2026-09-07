@@ -21,7 +21,6 @@ LIVE_CHAT_EXCLUDE: Final = "-live_chat"
 DEFAULT_SUBTITLE_LANGUAGE: Final = "en"
 
 POSTPROCESSORS: Final[list[dict[str, Any]]] = [
-    {"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"},
     {"key": "FFmpegExtractAudio", "preferredcodec": "best"},
     {
         "key": "FFmpegMetadata",
@@ -29,8 +28,10 @@ POSTPROCESSORS: Final[list[dict[str, Any]]] = [
         "add_chapters": True,
         "add_infojson": False,
     },
-    {"key": "EmbedThumbnail", "already_have_thumbnail": True},
 ]
+"""The audio steps. The thumbnail convertor and embedder are added by the engine itself
+(``ytdlp.ThumbnailConvertor`` / ``ytdlp.ThumbnailEmbedder``) so a bad image warns instead
+of failing the whole fetch."""
 
 BASE_OPTIONS: Final[dict[str, Any]] = {
     "format": YTDLP_FORMAT,
@@ -71,6 +72,14 @@ LISTING_OPTIONS: Final[dict[str, Any]] = {
     "socket_timeout": 30,
     "retries": 3,
 }
+
+
+def with_cookiefile(options: Mapping[str, Any] | None, cookies_path: Path | None) -> dict[str, Any]:
+    """Add the stored cookie file as ``cookiefile`` unless the options already name one."""
+    merged = dict(options or {})
+    if cookies_path is not None and "cookiefile" not in merged and cookies_path.is_file():
+        merged["cookiefile"] = str(cookies_path)
+    return merged
 
 
 def strip_owned(options: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -156,4 +165,5 @@ __all__ = [
     "merge_options",
     "strip_owned",
     "subtitle_languages",
+    "with_cookiefile",
 ]

@@ -22,7 +22,16 @@ import { useInvalidateFeed } from "@/features/feeds/mutations";
  * The feed's own username and password (present only while authentication is on),
  * for podcast apps with separate fields such as Overcast, plus the Rotate action.
  */
-export function FeedCredentials({ feed, className }: { feed: FeedRead; className?: string }) {
+export function FeedCredentials({
+  feed,
+  className,
+  canRotate = true,
+}: {
+  feed: FeedRead;
+  className?: string;
+  /** False where `feed` is a snapshot that would not refresh after a rotation. */
+  canRotate?: boolean;
+}) {
   const pair = feed.feed_credentials;
   const invalidate = useInvalidateFeed();
   const [confirming, setConfirming] = useState(false);
@@ -48,15 +57,17 @@ export function FeedCredentials({ feed, className }: { feed: FeedRead; className
       <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
         <CopyField label="Username" value={pair.username} />
         <CopyField label="Password" value={pair.password} />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="sm:mb-px"
-          onClick={() => setConfirming(true)}
-        >
-          <RotateCw /> Rotate…
-        </Button>
+        {canRotate ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="sm:mb-px"
+            onClick={() => setConfirming(true)}
+          >
+            <RotateCw /> Rotate…
+          </Button>
+        ) : null}
       </div>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>

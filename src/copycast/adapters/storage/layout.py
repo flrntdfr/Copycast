@@ -3,6 +3,7 @@
 ::
 
     {data_dir}/LAYOUT_VERSION                       "1\\n"
+    {data_dir}/engine/cookies.txt                   the Engine's cookie file (optional, 0600)
     {data_dir}/feeds/{feed_id}/feed.json            descriptor
       source/feed.xml | source/listing.json         verbatim Source XML | last flat listing
       media/{item_id}.{ext}                         audio, {item_id}.info.json, {item_id}.item.xml
@@ -32,6 +33,8 @@ from copycast.settings import SettingsError
 LAYOUT_VERSION: Final = "1"
 LAYOUT_VERSION_FILE: Final = "LAYOUT_VERSION"
 FEEDS_DIR: Final = "feeds"
+ENGINE_DIR: Final = "engine"
+COOKIES_NAME: Final = "cookies.txt"
 DESCRIPTOR_NAME: Final = "feed.json"
 SOURCE_XML_NAME: Final = "feed.xml"
 SOURCE_LISTING_NAME: Final = "listing.json"
@@ -80,6 +83,14 @@ class Layout:
     @property
     def version_file(self) -> Path:
         return self.root / LAYOUT_VERSION_FILE
+
+    @property
+    def engine_dir(self) -> Path:
+        return self.root / ENGINE_DIR
+
+    def cookies_path(self) -> Path:
+        """``engine/cookies.txt``: handed to yt-dlp as ``cookiefile`` when present."""
+        return self.engine_dir / COOKIES_NAME
 
     @property
     def feeds_dir(self) -> Path:

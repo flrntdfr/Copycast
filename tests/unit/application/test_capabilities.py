@@ -36,8 +36,12 @@ OPERATOR_ONLY = {
     "list_api_keys",
     "create_api_key",
     "revoke_api_key",
+    "get_engine_cookies",
+    "set_engine_cookies",
+    "delete_engine_cookies",
 }
-"""Routed for the UI, never tools: keys must not mint keys, agents must not rotate feeds."""
+"""Routed for the UI, never tools: keys must not mint keys, agents must not rotate feeds
+or touch the cookie file (a browser session)."""
 
 PLAN_ROUTES = (
     PLAN_TOOLS
