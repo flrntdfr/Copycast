@@ -9,9 +9,9 @@ import { ServiceBadge } from "@/components/common/ServiceBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { RangeInput } from "@/features/catalog/RangeInput";
+import { ModeTabs } from "@/features/mirrors/ModeTabs";
 import {
   DEFAULT_POLICY,
   policySchema,
@@ -54,6 +54,7 @@ export function PolicyStep({
 
   const total = candidate.item_count;
   const submit = form.handleSubmit(onSubmit);
+  const errors = form.formState.errors;
 
   return (
     <form onSubmit={submit} className="space-y-6">
@@ -75,100 +76,66 @@ export function PolicyStep({
 
       <fieldset className="space-y-3">
         <legend className="text-sm font-medium">Backfill</legend>
-        <p className="text-sm text-muted-foreground">
-          Which of the items already listed get archived now.
-        </p>
+        <p className="text-sm text-muted-foreground">Which items get archived, and when.</p>
         <Controller
           control={form.control}
           name="mode"
           render={({ field }) => (
-            <RadioGroup
-              value={field.value}
-              onValueChange={field.onChange}
-              className="gap-3"
-              aria-label="Backfill"
-            >
-              <div className="flex items-start gap-3">
-                <RadioGroupItem value="all" id="backfill-all" className="mt-0.5" />
-                <Label
-                  htmlFor="backfill-all"
-                  className="flex flex-col items-start gap-0.5 font-normal"
-                >
-                  <span className="font-medium">
-                    Everything{total != null ? ` (${total.toLocaleString()})` : ""}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    Every item the Source lists, oldest first.
-                  </span>
-                </Label>
-              </div>
-              <div className="flex items-start gap-3">
-                <RadioGroupItem value="latest" id="backfill-latest" className="mt-0.5" />
-                <div className="flex flex-1 flex-col gap-2">
-                  <Label
-                    htmlFor="backfill-latest"
-                    className="flex flex-col items-start gap-0.5 font-normal"
-                  >
-                    <span className="font-medium">Latest N</span>
-                    <span className="text-xs text-muted-foreground">
-                      Only the newest items; older ones stay Available.
-                    </span>
-                  </Label>
-                  {mode === "latest" ? (
-                    <div className="flex items-center gap-2">
-                      <Label htmlFor="backfill-latest-n" className="sr-only">
-                        How many
-                      </Label>
-                      <Input
-                        id="backfill-latest-n"
-                        type="number"
-                        min={1}
-                        max={total ?? undefined}
-                        className="w-28"
-                        {...form.register("latest_n", { valueAsNumber: true })}
-                        aria-invalid={!!form.formState.errors.latest_n}
-                      />
-                      <span className="text-sm text-muted-foreground">items</span>
-                    </div>
-                  ) : null}
-                  {form.formState.errors.latest_n ? (
-                    <p className="text-xs text-destructive">
-                      {form.formState.errors.latest_n.message}
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-              <div className="flex items-start gap-3">
-                <RadioGroupItem value="selection" id="backfill-selection" className="mt-0.5" />
-                <div className="flex flex-1 flex-col gap-2">
-                  <Label
-                    htmlFor="backfill-selection"
-                    className="flex flex-col items-start gap-0.5 font-normal"
-                  >
-                    <span className="font-medium">Selection</span>
-                    <span className="text-xs text-muted-foreground">
-                      Episode numbers such as “1-42, 180”. Leave empty to pick from the Catalog
-                      later.
-                    </span>
-                  </Label>
-                  {mode === "selection" ? (
-                    <Controller
-                      control={form.control}
-                      name="selection"
-                      render={({ field, fieldState }) => (
-                        <RangeInput
-                          id="backfill-selection-expression"
-                          value={field.value ?? ""}
-                          onChange={field.onChange}
-                          error={fieldState.error?.message}
-                          placeholder="1-42, 180"
-                        />
-                      )}
+            <ModeTabs value={field.value} onValueChange={field.onChange} total={total}>
+              {(active) =>
+                active === "rolling" ? (
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="backfill-latest-n">Keep the newest</Label>
+                    <Input
+                      id="backfill-latest-n"
+                      type="number"
+                      min={1}
+                      max={total ?? undefined}
+                      className="w-28"
+                      {...form.register("latest_n", { valueAsNumber: true })}
+                      aria-invalid={!!errors.latest_n}
                     />
-                  ) : null}
-                </div>
-              </div>
-            </RadioGroup>
+                    <span className="text-sm text-muted-foreground">items</span>
+                    {errors.latest_n ? (
+                      <p className="text-xs text-destructive">{errors.latest_n.message}</p>
+                    ) : null}
+                  </div>
+                ) : active === "automatic" ? (
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="backfill-retention-days">Keep downloaded for</Label>
+                    <Input
+                      id="backfill-retention-days"
+                      type="number"
+                      min={1}
+                      className="w-28"
+                      placeholder="forever"
+                      {...form.register("retention_days", { valueAsNumber: true })}
+                      aria-invalid={!!errors.retention_days}
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      days after the last download (empty keeps forever)
+                    </span>
+                    {errors.retention_days ? (
+                      <p className="text-xs text-destructive">{errors.retention_days.message}</p>
+                    ) : null}
+                  </div>
+                ) : active === "selection" ? (
+                  <Controller
+                    control={form.control}
+                    name="selection"
+                    render={({ field: selection, fieldState }) => (
+                      <RangeInput
+                        id="backfill-selection-expression"
+                        value={selection.value ?? ""}
+                        onChange={selection.onChange}
+                        error={fieldState.error?.message}
+                        placeholder="1-42, 180"
+                      />
+                    )}
+                  />
+                ) : null
+              }
+            </ModeTabs>
           )}
         />
       </fieldset>
@@ -181,6 +148,7 @@ export function PolicyStep({
           <p className="text-xs text-muted-foreground">
             Archive new items automatically after each Refresh.
             {mode === "selection" ? " Off by default for a Selection." : ""}
+            {mode === "automatic" ? " Not needed: Automatic archives on request." : ""}
           </p>
         </div>
         <Switch

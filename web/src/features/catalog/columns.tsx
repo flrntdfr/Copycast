@@ -1,5 +1,5 @@
 import type { ColumnDef, Row } from "@tanstack/react-table";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Info } from "lucide-react";
 
 import type { ItemRead } from "@/api/types";
 import { Button } from "@/components/ui/button";
@@ -7,13 +7,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { RowActions } from "./RowActions";
 import { StateBadge } from "./StateBadge";
-import { catalogStateOf, displayNumber } from "./catalog-state";
+import { catalogStateOf, displayNumber, isBelowMinimum } from "./catalog-state";
 import {
   formatBytes,
   formatDate,
   formatDateTime,
   formatDuration,
   formatNumber,
+  secondsToMinutes,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,8 @@ export interface CatalogColumnContext {
   feedId: string;
   feedTitle: string;
   feedKind: "mirror" | "inbox";
+  /** The Mirror's effective minimum length, and where it comes from; null when none. */
+  minimum?: { seconds: number; source: "mirror" | "default" } | null;
   /** Shift-click range selection needs the last row toggled. */
   onToggleRow: (row: Row<ItemRead>, checked: boolean, shiftKey: boolean) => void;
 }
@@ -37,6 +40,13 @@ export const COLUMN_LABELS: Record<string, string> = {
 
 /** Columns that can be hidden from the toolbar; `select`, `title`, `state` and `actions` stay. */
 export const TOGGLEABLE_COLUMNS = ["number", "published", "duration", "size", "downloads"] as const;
+
+export function minimumHint(minimum: NonNullable<CatalogColumnContext["minimum"]>): string {
+  const minutes = secondsToMinutes(minimum.seconds);
+  const where =
+    minimum.source === "mirror" ? "this Mirror's Minimum length" : "the Minimum length in Settings";
+  return `Ignored: shorter than ${where} (${minutes} min). Archive it on purpose to override.`;
+}
 
 export function buildColumns(ctx: CatalogColumnContext): ColumnDef<ItemRead>[] {
   const columns: ColumnDef<ItemRead>[] = [
@@ -104,6 +114,7 @@ export function buildColumns(ctx: CatalogColumnContext): ColumnDef<ItemRead>[] {
       cell: ({ row }) => {
         const item = row.original;
         const state = catalogStateOf(item);
+        const ignored = isBelowMinimum(item, ctx.minimum?.seconds);
         const sub =
           state === "delisted"
             ? "Delisted; kept in the Mirror Feed"
@@ -128,14 +139,31 @@ export function buildColumns(ctx: CatalogColumnContext): ColumnDef<ItemRead>[] {
               {row.getIsExpanded() ? <ChevronDown /> : <ChevronRight />}
             </Button>
             <div className="min-w-0">
-              <div
-                className={cn(
-                  "truncate font-medium",
-                  state === "hidden" && "text-muted-foreground line-through",
-                )}
-                title={item.title}
-              >
-                {item.title || <span className="text-muted-foreground italic">Untitled</span>}
+              <div className="flex min-w-0 items-center gap-1.5">
+                <div
+                  className={cn(
+                    "truncate font-medium",
+                    state === "hidden" && "text-muted-foreground line-through",
+                    ignored && "text-muted-foreground",
+                  )}
+                  title={item.title}
+                >
+                  {item.title || <span className="text-muted-foreground italic">Untitled</span>}
+                </div>
+                {ignored && ctx.minimum ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        className="inline-flex shrink-0 text-muted-foreground"
+                        aria-label="Ignored by the policy"
+                        data-testid="ignored-hint"
+                      >
+                        <Info className="size-3.5" aria-hidden />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>{minimumHint(ctx.minimum)}</TooltipContent>
+                  </Tooltip>
+                ) : null}
               </div>
               {sub ? (
                 <div

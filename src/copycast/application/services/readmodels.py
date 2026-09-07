@@ -107,7 +107,9 @@ def mirror_read(
         paused=feed.paused,
         follow=feed.follow,
         backfill=BackfillPolicy(
-            mode=BackfillMode(feed.backfill_mode), latest_n=feed.backfill_latest_n
+            mode=BackfillMode(feed.backfill_mode),
+            latest_n=feed.backfill_latest_n,
+            retention_days=feed.retention_days,
         ),
         engine_options=dict(feed.engine_options or {}),
         last_refresh_attempt_at=feed.last_refresh_attempt_at,

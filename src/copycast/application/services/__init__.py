@@ -31,6 +31,7 @@ from copycast.application.models import (
     ItemRead,
     JobPage,
     JobRead,
+    MirrorChangePreview,
     MirrorCreate,
     MirrorDefaults,
     MirrorRead,
@@ -58,6 +59,7 @@ from copycast.application.services import items as _items
 from copycast.application.services import jobs as _jobs
 from copycast.application.services import keys as _keys
 from copycast.application.services import mirrors as _mirrors
+from copycast.application.services import policy as _policy
 from copycast.application.services import sources as _sources
 from copycast.application.services.context import (
     FeedSort,
@@ -181,6 +183,9 @@ class Services:
         self, feed_id: str, body: SelectionRequest, *, trigger: JobTrigger = JobTrigger.ui
     ) -> SelectionResult:
         return await _mirrors.select_items(self.ctx, feed_id, body, trigger=trigger)
+
+    async def preview_mirror_update(self, feed_id: str, body: MirrorUpdate) -> MirrorChangePreview:
+        return await _policy.preview_mirror_update(self.ctx, feed_id, body)
 
     # inboxes and requests
     async def create_inbox(self, body: InboxCreate) -> InboxRead:

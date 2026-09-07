@@ -30,7 +30,7 @@ import { CatalogToolbar } from "./CatalogToolbar";
 import { RowDetails } from "./RowDetails";
 import { SelectionBar } from "./SelectionBar";
 import { buildColumns } from "./columns";
-import { catalogStateOf } from "./catalog-state";
+import { catalogStateOf, isBelowMinimum } from "./catalog-state";
 import { useBulkActions } from "./mutations";
 import { CATALOG_PAGE_SIZE, type CatalogSearch, toListItemsQuery } from "./search";
 import { cn } from "@/lib/utils";
@@ -114,9 +114,23 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
     [rows],
   );
 
+  // The Mirror's effective minimum length greys out the items the policy ignores.
+  const defaults = $api.useQuery("get", "/api/settings/defaults", undefined, {
+    enabled: feed.kind === "mirror",
+    staleTime: 60_000,
+  });
+  const minimum = useMemo(() => {
+    if (feed.kind !== "mirror") return null;
+    if (feed.min_duration_seconds)
+      return { seconds: feed.min_duration_seconds, source: "mirror" as const };
+    if (defaults.data?.min_duration_seconds)
+      return { seconds: defaults.data.min_duration_seconds, source: "default" as const };
+    return null;
+  }, [feed, defaults.data]);
+
   const columns = useMemo(
-    () => buildColumns({ feedId: feed.id, feedTitle: feed.title, feedKind, onToggleRow }),
-    [feed.id, feed.title, feedKind, onToggleRow],
+    () => buildColumns({ feedId: feed.id, feedTitle: feed.title, feedKind, minimum, onToggleRow }),
+    [feed.id, feed.title, feedKind, minimum, onToggleRow],
   );
 
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table's instance is not memoized by design
@@ -257,7 +271,11 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
                     data-state={row.getIsSelected() ? "selected" : undefined}
                     data-testid="catalog-row"
                     data-item-id={row.original.id}
-                    className="cursor-pointer"
+                    data-ignored={isBelowMinimum(row.original, minimum?.seconds) || undefined}
+                    className={cn(
+                      "cursor-pointer",
+                      isBelowMinimum(row.original, minimum?.seconds) && "opacity-60",
+                    )}
                     onClick={() => row.toggleExpanded()}
                   >
                     {row.getVisibleCells().map((cell) => {

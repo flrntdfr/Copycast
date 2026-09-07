@@ -90,7 +90,7 @@ describe("AddSourceWizard", () => {
     expect(await screen.findByText("Everything (2)")).toBeInTheDocument();
     const follow = screen.getByRole("switch", { name: "Follow" });
     expect(follow).toHaveAttribute("aria-checked", "true");
-    await user.click(screen.getByLabelText(/^Selection/));
+    await user.click(screen.getByRole("tab", { name: "Selection" }));
     await waitFor(() => expect(follow).toHaveAttribute("aria-checked", "false"));
     const expression = screen.getByPlaceholderText("1-42, 180");
     await user.type(expression, "1-42, 180");

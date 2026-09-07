@@ -39,6 +39,7 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "set_paused",
         "request_refresh",
         "select_items",
+        "preview_mirror_update",
         # inboxes and requests
         "create_inbox",
         "update_inbox",
@@ -92,6 +93,8 @@ TOOL_EXEMPT: Final[frozenset[str]] = frozenset(
         # Operator defaults are policy, set on the Settings page.
         "get_mirror_defaults",
         "set_mirror_defaults",
+        # The confirmation dialog's dry run; an agent reads the Mirror instead.
+        "preview_mirror_update",
     }
 )
 """Capabilities with a route but deliberately no MCP tool."""

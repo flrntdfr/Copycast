@@ -34,6 +34,7 @@ from copycast.domain.enums import (
     AssetKind,
     AssetProvenance,
     AssetState,
+    BackfillMode,
     FeedKind,
     SourceKind,
 )
@@ -111,11 +112,22 @@ class ItemView:
     media_mime: str | None = None
     media_bytes: int | None = None
     source_item_xml: str | None = None
+    archivable: bool = True
     assets: tuple[AssetView, ...] = ()
 
     @property
     def renderable(self) -> bool:
         return self.archive_state is ArchiveState.archived and bool(self.media_ext)
+
+    @property
+    def on_demand(self) -> bool:
+        """Listed and archivable but not archived: an Automatic feed still lists it."""
+        return (
+            self.listed
+            and self.archivable
+            and self.archive_state is not ArchiveState.archived
+            and self.archive_state is not ArchiveState.deleted
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +146,12 @@ class FeedView:
     source_kind: SourceKind | None = None
     source_channel_xml: str | None = None
     last_modified: datetime | None = None
+    backfill_mode: BackfillMode | None = None
     assets: tuple[AssetView, ...] = ()
+
+    @property
+    def automatic(self) -> bool:
+        return self.backfill_mode is BackfillMode.automatic
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,11 +175,16 @@ def render_feed(
     """The feed document for ``feed`` and its archived ``items``.
 
     Items are ordered ``published_at DESC NULLS LAST, ordinal DESC``;
-    tombstoned and never-archived items are excluded, Delisted ones kept.
+    tombstoned and never-archived items are excluded, Delisted ones kept. An
+    Automatic feed also lists what is not archived yet, with a placeholder
+    enclosure the media route fills on the first request.
     """
     current = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
     last_modified = (feed.last_modified or current).astimezone(UTC).replace(microsecond=0)
-    renderable = sorted((item for item in items if item.renderable), key=_order_key)
+    renderable = sorted(
+        (item for item in items if item.renderable or (feed.automatic and item.on_demand)),
+        key=_order_key,
+    )
     self_url = feed_url(base_url, feed.id)
     feed_artwork = _local_url(base_url, feed.id, _pick_artwork(feed.assets)) or feed.artwork_url
 
@@ -301,11 +323,7 @@ def _preserved_item(feed: FeedView, item: ItemView, base_url: str) -> Element | 
     if etree.QName(element).localname != "item":
         return None
     assert item.media_ext is not None
-    enclosure = etree.Element("enclosure")
-    enclosure.set("url", media_url(base_url, feed.id, item.id, item.media_ext))
-    enclosure.set("length", str(item.media_bytes or 0))
-    enclosure.set("type", item.media_mime or "application/octet-stream")
-    _replace_all(element, [enclosure], (None, "enclosure"))
+    _replace_all(element, [_enclosure(base_url, feed, item)], (None, "enclosure"))
 
     chapters = _pick_chapters(item.assets)
     if chapters is not None:
@@ -335,10 +353,25 @@ def with_source_link(description: str | None, source_url: str | None) -> str | N
     return f"{text}\n\n{source_url}" if text else source_url
 
 
+PLACEHOLDER_EXT = "mp3"
+PLACEHOLDER_MIME = "audio/mpeg"
+
+
+def _enclosure(base_url: str, feed: FeedView, item: ItemView) -> Element:
+    """The enclosure of an archived item, or a placeholder an Automatic feed serves on demand."""
+    enclosure = etree.Element("enclosure")
+    enclosure.set("url", media_url(base_url, feed.id, item.id, item.media_ext or PLACEHOLDER_EXT))
+    enclosure.set("length", str(item.media_bytes or 0))
+    enclosure.set(
+        "type",
+        item.media_mime or (PLACEHOLDER_MIME if not item.media_ext else "application/octet-stream"),
+    )
+    return enclosure
+
+
 def _synthesized_item(
     feed: FeedView, item: ItemView, base_url: str, feed_artwork: str | None, now: datetime
 ) -> Element:
-    assert item.media_ext is not None
     element = etree.Element("item")
     _sub(element, "title", item.title)
     description = with_source_link(item.description, item.source_url)
@@ -350,10 +383,7 @@ def _synthesized_item(
     guid.set("isPermaLink", "false")
     published = item.first_seen_at if feed.kind is FeedKind.inbox else item.published_at
     _sub(element, "pubDate", rfc2822(published or item.first_seen_at or now))
-    enclosure = etree.SubElement(element, "enclosure")
-    enclosure.set("url", media_url(base_url, feed.id, item.id, item.media_ext))
-    enclosure.set("length", str(item.media_bytes or 0))
-    enclosure.set("type", item.media_mime or "application/octet-stream")
+    element.append(_enclosure(base_url, feed, item))
     if item.duration_seconds is not None:
         _sub(element, tag(NS_ITUNES, "duration"), str(int(item.duration_seconds)))
     number = item.source_number if item.source_number is not None else item.ordinal

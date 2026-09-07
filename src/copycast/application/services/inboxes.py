@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
 from copycast.application.capabilities import capability
-from copycast.application.events import FeedEvent, ItemEvent, JobEvent, RequestEvent
+from copycast.application.events import FeedEvent, JobEvent, RequestEvent
 from copycast.application.models import (
     InboxCreate,
     InboxRead,
@@ -25,12 +25,11 @@ from copycast.application.services.context import (
     ServiceContext,
     UnitOfWorkPort,
 )
-from copycast.application.services.episodes import delete_episode
 from copycast.application.services.feeds import require_inbox
 from copycast.application.services.items import PRIORITY_MANUAL, expand_dedup_key
+from copycast.application.services.policy import delete_rows, expire_automatic
 from copycast.application.services.readmodels import inbox_read, job_read, request_read
 from copycast.domain.enums import (
-    ArchiveState,
     DeleteReason,
     FeedKind,
     JobKind,
@@ -168,16 +167,7 @@ async def _estimate_bytes(uow: UnitOfWorkPort, rows: Sequence[ItemRow]) -> int:
 async def _delete_rows(
     uow: UnitOfWorkPort, feed: FeedRow, rows: Sequence[ItemRow], reason: DeleteReason
 ) -> PruneResult:
-    freed = 0
-    for row in rows:
-        deleted = await delete_episode(uow, row.id, reason)
-        freed += deleted.bytes_freed
-        await uow.publish(ItemEvent(feed_id=feed.id, item_id=row.id, state=ArchiveState.deleted))
-    if rows:
-        await uow.publish(
-            FeedEvent(feed_id=feed.id, revision=feed.revision, reason=f"prune:{reason.value}")
-        )
-    return PruneResult(matched=len(rows), deleted_count=len(rows), bytes_freed=freed, dry_run=False)
+    return await delete_rows(uow, feed, rows, reason)
 
 
 @capability("prune_inbox", request=PruneRequest, response=PruneResult)
@@ -211,10 +201,14 @@ async def autoprune(
     """The worker's scheduled prune: Episodes first downloaded ``autoprune_days`` ago or earlier.
 
     Never-downloaded Episodes are exempt by construction; ``last_autoprune_at``
-    is set even when nothing matched.
+    is set even when nothing matched. For an Automatic Mirror this is its
+    Retention instead (:func:`policy.expire_automatic`).
     """
     now = now or _now()
     async with ctx.uow_factory() as uow:
+        row = await uow.feeds.require(feed_id)
+        if row.kind == FeedKind.mirror:
+            return await expire_automatic(ctx, feed_id, now=now)
         feed = await require_inbox(uow, feed_id)
         if feed.autoprune_days is None:
             raise Conflict(f"Inbox {feed_id!r} has no Retention")

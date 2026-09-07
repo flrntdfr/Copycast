@@ -60,6 +60,7 @@ def mirror_row(**overrides: Any) -> Any:
         "backfill_mode": "all",
         "backfill_latest_n": None,
         "min_duration_seconds": None,
+        "retention_days": None,
         "preferred_language": None,
         "follow": True,
         "paused": False,

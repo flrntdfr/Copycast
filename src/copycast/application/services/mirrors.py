@@ -29,6 +29,7 @@ from copycast.application.services.items import (
     enqueue_archive,
     refresh_dedup_key,
 )
+from copycast.application.services.policy import apply_policy, defaults_for, shortest_for
 from copycast.application.services.readmodels import job_read, mirror_read, one_feed_read
 from copycast.application.services.sources import probe_snapshots
 from copycast.domain.enums import (
@@ -150,6 +151,7 @@ def _feed_values(snapshot: SourceSnapshot, dedup_key: str, body: MirrorCreate) -
         "source_channel_xml": snapshot.channel_xml,
         "backfill_mode": body.backfill.mode.value,
         "backfill_latest_n": body.backfill.latest_n,
+        "retention_days": body.backfill.retention_days,
         "follow": body.effective_follow,
         "paused": False,
         "engine_options": dict(body.engine_options),
@@ -311,6 +313,7 @@ async def update_mirror(
     ``min_duration_seconds: null`` present in the body clear the value.
     """
     fields = body.model_fields_set
+    defaults = defaults_for(ctx)
     snapshot: SourceSnapshot | None = None
     if "source_url" in fields and body.source_url is not None:
         snapshot = await _resolve_snapshot(ctx, body.source_url, None, cancel=cancel)
@@ -331,7 +334,15 @@ async def update_mirror(
         if "backfill" in fields and body.backfill is not None:
             feed.backfill_mode = body.backfill.mode.value
             feed.backfill_latest_n = body.backfill.latest_n
-            if body.backfill.mode is BackfillMode.selection:
+            feed.retention_days = body.backfill.retention_days
+            if body.backfill.mode is BackfillMode.rolling:
+                # The window applies now: the operator confirmed what rolls out.
+                await uow.flush()
+                await apply_policy(uow, feed, min_duration_seconds=shortest_for(feed, defaults))
+                refresh_needed = True
+            elif body.backfill.mode is BackfillMode.automatic:
+                feed.policy_applied_at = feed.policy_applied_at or _now()
+            elif body.backfill.mode is BackfillMode.selection:
                 feed.policy_applied_at = feed.policy_applied_at or _now()
                 expression = body.backfill.selection
                 if expression and expression.strip():

@@ -171,6 +171,27 @@ data/feeds/<feed_id>/assets/            Artwork, chapters, transcripts
 The descriptor is rewritten after every change of intent and is what `copycast rebuild`
 reads. Nothing outside the worker writes into `media/` or `tmp/`.
 
+## Mirror modes
+
+A Mirror's Settings tab (and the wizard) offers the Backfill as tabs:
+
+| Mode | Archives | Deletes |
+|---|---|---|
+| Everything | every listed item, then whatever Follow brings | never |
+| Rolling N | the newest N by publication, at every Refresh | archived items outside the window, at the next Refresh and at once when you switch to it |
+| Automatic | nothing until a podcast app asks for an Episode's media; the request waits up to two minutes, then answers `503 Retry-After: 30` while the download continues | Episodes idle for *Retention* days after their last download (7 by default; empty keeps forever), checked by the worker's prune pass |
+| Selection | exactly the numbers given | never |
+
+Switching modes previews the change (`POST /api/mirrors/{id}/preview`) and asks for
+confirmation when archived Episodes would be deleted; rolled-out and expired Episodes leave
+Tombstones and can be archived again on purpose. Over MCP, `create_mirror` and
+`update_mirror` refuse Rolling and expiring Automatic modes without a `full` key. Latest N
+stays on Mirrors that already use it but is no longer offered ([ADR 0012](adr/0012-mirror-modes-rolling-and-automatic.md)).
+
+An Automatic Mirror's feed lists every item the Source lists; the ones not archived yet carry
+a placeholder `.mp3` enclosure of length 0, and the media route serves the real file (any
+container) under that URL once archived.
+
 ## Settings page: defaults every Mirror may override
 
 Two settings live in the data directory (`data/engine/defaults.json`, `PUT

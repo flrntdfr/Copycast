@@ -73,8 +73,16 @@ A Feed's permanent, opaque identity. For a Mirror it is derived from the Source'
 _Avoid_: Slug, name, feed name
 
 **Backfill**:
-The part of a Mirror's policy that says which items already listed at creation get archived: everything, the latest N, or an explicit selection. Applied once, at the first Refresh (immediately for a selection).
-_Avoid_: Initial sync, history, catch-up
+The part of a Mirror's policy that says which items get archived: everything, a Rolling window, on demand (Automatic), or an explicit selection (Latest N remains for Mirrors that already use it). Everything and Latest N apply once, at the first Refresh (immediately for a selection).
+_Avoid_: Initial sync, history, catch-up, mode (in prose; the UI shows the modes as tabs)
+
+**Rolling**:
+The Backfill mode that keeps exactly the newest N items by publication archived: applied at every Refresh and at once when chosen; archived items that fall outside the window are tombstoned (ADR 0012).
+_Avoid_: Sliding window, keep-last, FIFO
+
+**Automatic**:
+The Backfill mode that archives nothing ahead of time: the Mirror Feed lists every item the Source lists, an Episode is archived when a podcast app first asks for its media (the request waits up to two minutes, then says retry), and it expires after the Mirror's Retention.
+_Avoid_: Lazy, on-demand mode (say "archived on demand" for the act), streaming
 
 **Follow**:
 The part of a Mirror's policy that says whether items the Source lists after creation are archived automatically. Off by default when the Backfill is a selection.
@@ -89,7 +97,7 @@ The state of a Mirror that no longer Refreshes but keeps serving its Mirror Feed
 _Avoid_: Disabled, stopped, archived
 
 **Retention**:
-An Inbox's rule for deleting Episodes it no longer needs: automatically N days after their first download, or on demand by criterion. Mirrors have no Retention. Episodes never downloaded are never auto-pruned.
+An Inbox's rule for deleting Episodes it no longer needs: automatically N days after their first download, or on demand by criterion; for an Automatic Mirror, the days after an Episode's last download before it is tombstoned (7 by default, none keeps forever). Other Mirrors have no Retention. Inbox Episodes never downloaded are never auto-pruned.
 _Avoid_: Expiry, TTL, cleanup, garbage collection
 
 **Download count**:
@@ -211,3 +219,4 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0009](docs/adr/0009-never-delete-tombstones.md) | Copycast never deletes from a Mirror; user deletions leave Tombstones |
 | [0010](docs/adr/0010-download-counting-rule.md) | What counts as a download |
 | [0011](docs/adr/0011-optional-authentication-for-direct-deployments.md) | Optional authentication: operator password, feed credentials, MCP API keys |
+| [0012](docs/adr/0012-mirror-modes-rolling-and-automatic.md) | Mirror modes: Rolling windows and Automatic archives narrow ADR 0009 |

@@ -1,6 +1,6 @@
 # 0009 Copycast never deletes from a Mirror; user deletions leave Tombstones
 
-Status: accepted (v1)
+Status: accepted (v1); narrowed by [ADR 0012](0012-mirror-modes-rolling-and-automatic.md): a Mirror in Rolling or Automatic mode deletes on its own, by explicit choice
 
 ## Context
 

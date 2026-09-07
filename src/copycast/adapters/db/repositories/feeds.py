@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from copycast.adapters.db.base import rows_affected, utcnow
 from copycast.adapters.db.models import Asset, CatalogItem, Feed
 from copycast.application.models import Totals
-from copycast.domain.enums import ArchiveState, AssetState, FeedKind
+from copycast.domain.enums import ArchiveState, AssetState, BackfillMode, FeedKind
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import inbox_id
 
@@ -105,6 +105,20 @@ class FeedRepository:
                 (Feed.last_refresh_attempt_at.is_(None)) | (Feed.last_refresh_attempt_at < before),
             )
             .order_by(Feed.last_refresh_attempt_at.asc().nulls_first(), Feed.id)
+        )
+        return list((await self._session.execute(stmt)).scalars())
+
+    async def mirrors_due_expiry(self, before: datetime) -> list[Feed]:
+        """Automatic Mirrors with a Retention whose last expiry pass is absent or older."""
+        stmt = (
+            select(Feed)
+            .where(
+                Feed.kind == FeedKind.mirror.value,
+                Feed.backfill_mode == BackfillMode.automatic.value,
+                Feed.retention_days.is_not(None),
+                (Feed.last_autoprune_at.is_(None)) | (Feed.last_autoprune_at < before),
+            )
+            .order_by(Feed.id)
         )
         return list((await self._session.execute(stmt)).scalars())
 

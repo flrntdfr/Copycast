@@ -73,6 +73,15 @@ describe("policy form", () => {
       policySchema.safeParse({ ...DEFAULT_POLICY, mode: "latest", latest_n: "" }).success,
     ).toBe(false);
     expect(
+      policySchema.safeParse({ ...DEFAULT_POLICY, mode: "rolling", latest_n: "" }).success,
+    ).toBe(false);
+    expect(
+      policySchema.safeParse({ ...DEFAULT_POLICY, mode: "automatic", retention_days: "" }).success,
+    ).toBe(true);
+    expect(
+      policySchema.safeParse({ ...DEFAULT_POLICY, mode: "automatic", retention_days: 0 }).success,
+    ).toBe(false);
+    expect(
       policySchema.safeParse({ ...DEFAULT_POLICY, mode: "latest", latest_n: "5" }).success,
     ).toBe(true);
     const bad = policySchema.safeParse({ ...DEFAULT_POLICY, mode: "selection", selection: "1-x" });
@@ -93,6 +102,19 @@ describe("policy form", () => {
     });
     expect(toBackfill({ mode: "selection", selection: "", follow: false })).toEqual({
       mode: "selection",
+    });
+    expect(toBackfill({ mode: "rolling", latest_n: 10, follow: true })).toEqual({
+      mode: "rolling",
+      latest_n: 10,
+    });
+    expect(toBackfill({ mode: "automatic", retention_days: 30, follow: true })).toEqual({
+      mode: "automatic",
+      retention_days: 30,
+    });
+    // An empty retention keeps forever (null), never the server default.
+    expect(toBackfill({ mode: "automatic", follow: true })).toEqual({
+      mode: "automatic",
+      retention_days: null,
     });
     expect(toBackfill({ mode: "latest", latest_n: 5, follow: true })).toEqual({
       mode: "latest",

@@ -31,8 +31,10 @@ from copycast.adapters.api.cache import CachedFeed, FeedCache
 from copycast.adapters.api.container import ApiContainer
 from copycast.adapters.api.deps import ContainerDep, FeedCacheDep, ServicesDep
 from copycast.adapters.api.problems import problem_response
+from copycast.application.models import ItemRead
 from copycast.application.services import Services
-from copycast.domain.enums import FeedKind, JobTrigger
+from copycast.domain.enums import ArchiveState, FeedKind, JobTrigger
+from copycast.domain.exceptions import Conflict, Unsupported
 from copycast.logging import get_logger
 
 router = APIRouter(tags=["public"], dependencies=[FeedAccess])
@@ -41,6 +43,10 @@ log = get_logger(__name__)
 FEED_CACHE_CONTROL = "no-cache"
 MEDIA_CACHE_CONTROL = "public, max-age=86400"
 MEDIA_NAME_RE = re.compile(r"^(?P<item_id>[0-9a-f]{16})\.(?P<ext>[A-Za-z0-9]{1,8})$")
+PLACEHOLDER_EXT = "mp3"
+ON_DEMAND_WAIT_SECONDS = 120.0
+ON_DEMAND_POLL_SECONDS = 2.0
+ON_DEMAND_RETRY_AFTER = 30
 ASSET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 
 
@@ -171,8 +177,22 @@ async def media(
     item_id, ext = match.group("item_id"), match.group("ext")
     item = await services.get_item(feed_id, item_id)
     if item.media is None or item.media.ext != ext:
-        return problem_response(request, status=404, slug="not-found", detail="no such media")
-    path: Path = container.layout.media_path(feed_id, item_id, ext)
+        # An Automatic feed lists unarchived items under a placeholder ".mp3" URL:
+        # archive on the first request, and serve whatever container the archive got.
+        head = await container.renderer.head(feed_id)
+        automatic = head is not None and head.automatic and ext == PLACEHOLDER_EXT
+        if not automatic or not _on_demand(item):
+            return problem_response(request, status=404, slug="not-found", detail="no such media")
+        item = await _archive_on_demand(services, feed_id, item_id)
+        if item.media is None:
+            return problem_response(
+                request,
+                status=503,
+                slug="archiving",
+                detail="the episode is being archived; try again shortly",
+                headers={"Retry-After": str(ON_DEMAND_RETRY_AFTER)},
+            )
+    path: Path = container.layout.media_path(feed_id, item_id, item.media.ext)
     if not await _is_file(path):
         return problem_response(request, status=404, slug="not-found", detail="media missing")
     background: BackgroundTask | None = None
@@ -185,6 +205,32 @@ async def media(
         content_disposition_type="inline",
         background=background,
     )
+
+
+def _on_demand(item: ItemRead) -> bool:
+    """Listed and not tombstoned; an archived item lands here only under the wrong extension."""
+    return item.listed and item.state is not ArchiveState.deleted
+
+
+async def _archive_on_demand(services: Services, feed_id: str, item_id: str) -> ItemRead:
+    """Queue the archive (a no-op when one is running) and wait for it, up to the deadline.
+
+    The job keeps running when the wait ends; the client is told to retry.
+    """
+    try:
+        await services.archive_item(feed_id, item_id, trigger=JobTrigger.feed_fetch)
+    except Conflict:
+        pass  # archived or being archived meanwhile: the poll below settles it
+    except Unsupported:
+        return await services.get_item(feed_id, item_id)
+    deadline = asyncio.get_running_loop().time() + ON_DEMAND_WAIT_SECONDS
+    while True:
+        item = await services.get_item(feed_id, item_id)
+        if item.media is not None or item.state is ArchiveState.failed:
+            return item
+        if asyncio.get_running_loop().time() >= deadline:
+            return item
+        await asyncio.sleep(ON_DEMAND_POLL_SECONDS)
 
 
 async def asset(request: Request, container: ContainerDep, feed_id: str, filename: str) -> Response:

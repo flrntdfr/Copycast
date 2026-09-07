@@ -9,6 +9,7 @@ from copycast.adapters.api.deps import RebuildGuard, ServicesDep, run_cancellabl
 from copycast.adapters.api.problems import problem_responses
 from copycast.application.models import (
     JobRead,
+    MirrorChangePreview,
     MirrorCreate,
     MirrorRead,
     MirrorUpdate,
@@ -97,6 +98,20 @@ async def resume_mirror(services: ServicesDep, feed_id: str) -> MirrorRead:
 )
 async def request_refresh(services: ServicesDep, feed_id: str) -> JobRead | None:
     return await services.request_refresh(feed_id, JobTrigger.manual)
+
+
+@router.post(
+    "/mirrors/{feed_id}/preview",
+    operation_id="preview_mirror_update",
+    openapi_extra={"x-capability": "preview_mirror_update"},
+    response_model=MirrorChangePreview,
+    responses=problem_responses(404, 422),
+    summary="What an update would delete or archive, without applying it",
+)
+async def preview_mirror_update(
+    services: ServicesDep, feed_id: str, body: MirrorUpdate
+) -> MirrorChangePreview:
+    return await services.preview_mirror_update(feed_id, body)
 
 
 @router.post(

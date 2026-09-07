@@ -101,14 +101,25 @@ class CatalogRepository:
         )
         return list(result.scalars())
 
-    async def for_render(self, feed_id: str) -> list[CatalogItem]:
-        """Archived items in feed order: ``published_at DESC NULLS LAST, ordinal DESC``."""
+    async def for_render(self, feed_id: str, *, include_listed: bool = False) -> list[CatalogItem]:
+        """Archived items in feed order: ``published_at DESC NULLS LAST, ordinal DESC``.
+
+        ``include_listed`` (Automatic Mirrors) adds every listed, archivable item that is
+        not tombstoned, so a podcast app can ask for it.
+        """
+        condition = CatalogItem.archive_state == ArchiveState.archived.value
+        if include_listed:
+            condition = or_(
+                condition,
+                and_(
+                    CatalogItem.listed.is_(True),
+                    CatalogItem.archivable.is_(True),
+                    CatalogItem.archive_state != ArchiveState.deleted.value,
+                ),
+            )
         result = await self._session.execute(
             select(CatalogItem)
-            .where(
-                CatalogItem.feed_id == feed_id,
-                CatalogItem.archive_state == ArchiveState.archived.value,
-            )
+            .where(CatalogItem.feed_id == feed_id, condition)
             .order_by(*PUBLISHED_ORDER)
         )
         return list(result.scalars())
@@ -279,6 +290,33 @@ class CatalogRepository:
             stmt = stmt.limit(latest_n)
         return list((await self._session.execute(stmt)).scalars())
 
+    async def window_ids(
+        self, feed_id: str, size: int, *, min_duration_seconds: int | None = None
+    ) -> list[str]:
+        """The newest ``size`` listed, archivable, not tombstoned items (a rolling window).
+
+        Newest by ``published_at`` (nulls last), then ordinal, whatever their state.
+        """
+        stmt = (
+            select(CatalogItem.id)
+            .where(
+                CatalogItem.feed_id == feed_id,
+                CatalogItem.listed.is_(True),
+                CatalogItem.archivable.is_(True),
+                CatalogItem.archive_state != ArchiveState.deleted.value,
+            )
+            .order_by(*PUBLISHED_ORDER)
+            .limit(max(0, size))
+        )
+        if min_duration_seconds is not None:
+            stmt = stmt.where(
+                or_(
+                    CatalogItem.duration_seconds.is_(None),
+                    CatalogItem.duration_seconds >= min_duration_seconds,
+                )
+            )
+        return list((await self._session.execute(stmt)).scalars())
+
     async def ids_in_state(self, feed_id: str, state: ArchiveState) -> list[str]:
         stmt = (
             select(CatalogItem.id)
@@ -294,14 +332,21 @@ class CatalogRepository:
         downloaded: bool = False,
         added_before: datetime | None = None,
         downloaded_before: datetime | None = None,
+        last_activity_before: datetime | None = None,
     ) -> list[CatalogItem]:
         """Archived items matching every given criterion (AND); at least one is required.
 
         ``downloaded``: downloaded at least once. ``added_before``: ``first_seen_at`` older.
         ``downloaded_before``: ``first_downloaded_at`` older (autoprune; never-downloaded
-        items are exempt by construction).
+        items are exempt by construction). ``last_activity_before``: the last download,
+        else the archive time, older (Automatic Mirrors' expiry).
         """
-        if not downloaded and added_before is None and downloaded_before is None:
+        if (
+            not downloaded
+            and added_before is None
+            and downloaded_before is None
+            and last_activity_before is None
+        ):
             raise ValueError("prunable() needs at least one criterion")
         stmt = select(CatalogItem).where(
             CatalogItem.feed_id == feed_id,
@@ -313,6 +358,11 @@ class CatalogRepository:
             stmt = stmt.where(CatalogItem.first_seen_at <= added_before)
         if downloaded_before is not None:
             stmt = stmt.where(CatalogItem.first_downloaded_at <= downloaded_before)
+        if last_activity_before is not None:
+            stmt = stmt.where(
+                func.coalesce(CatalogItem.last_downloaded_at, CatalogItem.archived_at)
+                <= last_activity_before
+            )
         result = await self._session.execute(stmt.order_by(CatalogItem.ordinal))
         return list(result.scalars())
 

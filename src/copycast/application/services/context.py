@@ -101,6 +101,7 @@ class FeedRow(Protocol):
     backfill_latest_n: int | None
     min_duration_seconds: int | None
     preferred_language: str | None
+    retention_days: int | None
     follow: bool
     paused: bool
     policy_applied_at: datetime | None
@@ -313,6 +314,7 @@ class FeedRepositoryPort(Protocol):
     async def require(self, feed_id: str) -> FeedRow: ...
     async def get_for_update(self, feed_id: str) -> FeedRow: ...
     async def by_dedup_key(self, dedup_key: str) -> FeedRow | None: ...
+    async def mirrors_due_expiry(self, before: datetime) -> Sequence[FeedRow]: ...
     async def list(
         self, kind: FeedKind | None = None, *, sort: FeedSort = "title", order: Order = "asc"
     ) -> Sequence[FeedRow]: ...
@@ -365,6 +367,17 @@ class CatalogRepositoryPort(Protocol):
         numbering: Numbering = Numbering.source,
     ) -> ResolvedSelection: ...
     async def ids_in_state(self, feed_id: str, state: ArchiveState) -> Sequence[str]: ...
+    async def available_ids(
+        self,
+        feed_id: str,
+        *,
+        first_seen_after: datetime | None = None,
+        latest_n: int | None = None,
+        min_duration_seconds: int | None = None,
+    ) -> Sequence[str]: ...
+    async def window_ids(
+        self, feed_id: str, size: int, *, min_duration_seconds: int | None = None
+    ) -> Sequence[str]: ...
     async def prunable(
         self,
         feed_id: str,
@@ -372,6 +385,7 @@ class CatalogRepositoryPort(Protocol):
         downloaded: bool = False,
         added_before: datetime | None = None,
         downloaded_before: datetime | None = None,
+        last_activity_before: datetime | None = None,
     ) -> Sequence[ItemRow]: ...
     async def upsert_listing(
         self,

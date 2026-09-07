@@ -57,7 +57,10 @@ class RequestModel(BaseModel):
 
 class BackfillPolicy(ReadModel):
     mode: BackfillMode
-    latest_n: int | None = None
+    latest_n: int | None = Field(default=None, description="N for latest and rolling")
+    retention_days: int | None = Field(
+        default=None, description="Automatic: days after the last download before expiry"
+    )
 
 
 class FeedHealth(ReadModel):
@@ -304,11 +307,24 @@ class VideoSearchPage(ReadModel):
 # --------------------------------------------------------------------------- mirrors
 
 
+DEFAULT_RETENTION_DAYS = 7
+WINDOW_MODES = frozenset({BackfillMode.latest, BackfillMode.rolling})
+
+
 class BackfillRequest(RequestModel):
-    """Backfill policy at creation; ``selection`` implies mode ``selection``."""
+    """The archive policy; ``selection`` implies mode ``selection``.
+
+    ``all``: everything, then Follow. ``rolling``: the newest ``latest_n`` only, older
+    Episodes tombstoned as newer ones arrive. ``automatic``: nothing ahead of time; an
+    Episode is downloaded when a podcast app first asks for it and expires
+    ``retention_days`` (default 7) after its last download. ``selection``: exactly
+    the Episodes named. ``latest`` (N at creation, then Follow) remains for existing
+    Mirrors.
+    """
 
     mode: BackfillMode = BackfillMode.all
-    latest_n: int | None = Field(default=None, ge=1)
+    latest_n: int | None = Field(default=None, ge=1, description="N for latest and rolling")
+    retention_days: int | None = Field(default=None, ge=1, description="Automatic only")
     selection: str | None = Field(default=None, max_length=SELECTION_MAX_LEN)
 
     @model_validator(mode="after")
@@ -317,10 +333,14 @@ class BackfillRequest(RequestModel):
             if "mode" in self.model_fields_set and self.mode is not BackfillMode.selection:
                 raise ValueError("selection given: backfill.mode must be 'selection'")
             self.mode = BackfillMode.selection
-        if self.mode is BackfillMode.latest and self.latest_n is None:
-            raise ValueError("backfill.mode 'latest' requires latest_n")
-        if self.mode is not BackfillMode.latest:
+        if self.mode in WINDOW_MODES and self.latest_n is None:
+            raise ValueError(f"backfill.mode '{self.mode.value}' requires latest_n")
+        if self.mode not in WINDOW_MODES:
             self.latest_n = None
+        if self.mode is not BackfillMode.automatic:
+            self.retention_days = None
+        elif "retention_days" not in self.model_fields_set:
+            self.retention_days = DEFAULT_RETENTION_DAYS  # an explicit None keeps forever
         return self
 
 
@@ -414,6 +434,14 @@ class SelectionRequest(RequestModel):
         if not (self.selection and self.selection.strip()) and not self.item_ids:
             raise ValueError("give a selection expression or item_ids")
         return self
+
+
+class MirrorChangePreview(ReadModel):
+    """What applying a ``MirrorUpdate`` would do to archived content before it is applied."""
+
+    would_delete_count: int = 0
+    would_delete_bytes: int = 0
+    would_archive_count: int = 0
 
 
 class SelectionResult(ReadModel):
@@ -677,6 +705,7 @@ __all__ = [
     "JobPage",
     "JobProgress",
     "JobRead",
+    "MirrorChangePreview",
     "MirrorCreate",
     "MirrorDefaults",
     "MirrorRead",

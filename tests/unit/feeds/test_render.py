@@ -41,6 +41,7 @@ from copycast.domain.enums import (
     AssetKind,
     AssetProvenance,
     AssetState,
+    BackfillMode,
     FeedKind,
     SourceKind,
 )
@@ -553,6 +554,43 @@ def test_artwork_local(rich: ParsedFeed) -> None:
 
 
 # --------------------------------------------------------------------------- behaviour
+
+
+def test_automatic_feed_lists_unarchived_items_with_a_placeholder() -> None:
+    feed = FeedView(
+        id=FEED_ID,
+        kind=FeedKind.mirror,
+        title="On demand",
+        source_kind=SourceKind.ytdlp,
+        backfill_mode=BackfillMode.automatic,
+    )
+    items = [
+        item("aaaaaaaaaaaaaaaa", 1, "Archived", published_at=NOW),
+        item(
+            "bbbbbbbbbbbbbbbb",
+            2,
+            "Pending",
+            state=ArchiveState.available,
+            media_ext=None,  # type: ignore[arg-type]
+            media_mime=None,  # type: ignore[arg-type]
+            media_bytes=0,
+            published_at=NOW - timedelta(days=1),
+        ),
+        item("cccccccccccccccc", 3, "Gone", state=ArchiveState.deleted, published_at=NOW),
+        item("dddddddddddddddd", 4, "No media", state=ArchiveState.available, archivable=False),
+    ]
+    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    enclosures = etree.fromstring(rendered.body).findall(".//item/enclosure")
+    assert [(e.get("type"), e.get("length")) for e in enclosures] == [
+        ("audio/mpeg", "5155"),
+        ("audio/mpeg", "0"),
+    ]
+    assert (enclosures[1].get("url") or "").endswith("/bbbbbbbbbbbbbbbb.mp3")
+    # The same items under any other mode: only the archived one.
+    plain = render_feed(
+        FeedView(id=FEED_ID, kind=FeedKind.mirror, title="x"), items, base_url=BASE_URL, now=NOW
+    )
+    assert len(etree.fromstring(plain.body).findall(".//item")) == 1
 
 
 def test_order_is_published_desc_nulls_last_then_ordinal_desc() -> None:

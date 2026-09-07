@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { describeCounts, refreshCounts, refreshDuration } from "./RefreshesTable";
 import {
+  currentBackfill,
   formatEngineOptions,
   mirrorSettingsSchema,
   parseEngineOptions,
+  retentionSummary,
   settingsDefaults,
   toMirrorUpdate,
 } from "./settings-form";
@@ -68,6 +70,40 @@ describe("settings form", () => {
     expect(
       toMirrorUpdate(overridden, { ...parsed, language: "", min_duration_minutes: undefined }),
     ).toEqual({ preferred_language: null, min_duration_seconds: null });
+  });
+
+  it("tells a real mode change apart for Rolling and Automatic", () => {
+    const rolling = mirror({ backfill: { mode: "rolling", latest_n: 10, retention_days: null } });
+    const parsed = mirrorSettingsSchema.parse(settingsDefaults(rolling));
+    expect(toMirrorUpdate(rolling, parsed)).toEqual({});
+    expect(toMirrorUpdate(rolling, { ...parsed, latest_n: 5 })).toEqual({
+      backfill: { mode: "rolling", latest_n: 5 },
+    });
+    expect(toMirrorUpdate(rolling, { ...parsed, mode: "automatic", retention_days: 7 })).toEqual({
+      backfill: { mode: "automatic", retention_days: 7 },
+    });
+
+    const forever = mirror({
+      backfill: { mode: "automatic", latest_n: null, retention_days: null },
+    });
+    const defaults = settingsDefaults(forever);
+    expect(defaults.retention_days).toBeUndefined();
+    expect(toMirrorUpdate(forever, mirrorSettingsSchema.parse(defaults))).toEqual({});
+    expect(
+      toMirrorUpdate(forever, { ...mirrorSettingsSchema.parse(defaults), retention_days: 3 }),
+    ).toEqual({ backfill: { mode: "automatic", retention_days: 3 } });
+    expect(currentBackfill({ mode: "latest", latest_n: 4 })).toEqual({
+      mode: "latest",
+      latest_n: 4,
+    });
+    expect(currentBackfill({ mode: "all" })).toEqual({ mode: "all" });
+
+    expect(retentionSummary("all")).toMatch(/never deletes/);
+    expect(retentionSummary("rolling")).toMatch(/outside the newest N/);
+    expect(retentionSummary("automatic", 1)).toBe(
+      "Episodes expire 1 day after their last download.",
+    );
+    expect(retentionSummary("automatic")).toMatch(/^Never/);
   });
 
   it("always sends a Selection with numbers so they get archived", () => {

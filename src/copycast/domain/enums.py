@@ -16,9 +16,18 @@ class SourceKind(StrEnum):
 
 
 class BackfillMode(StrEnum):
+    """A Mirror's archive policy: what gets archived, and for Rolling and Automatic, what goes.
+
+    ``latest`` (N at creation, then Follow) is kept for existing Mirrors; the UI offers
+    ``all``, ``rolling`` (the newest N, older ones tombstoned), ``automatic`` (downloaded on
+    the first request, expired after ``retention_days``) and ``selection``.
+    """
+
     all = "all"
     latest = "latest"
     selection = "selection"
+    rolling = "rolling"
+    automatic = "automatic"
 
 
 class ArchiveState(StrEnum):
@@ -202,6 +211,8 @@ class EngineChannel(StrEnum):
 class DeleteReason(StrEnum):
     user = "user"
     prune = "prune"
+    rolled = "rolled"
+    expired = "expired"
 
 
 class PruneMode(StrEnum):

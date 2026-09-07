@@ -110,6 +110,10 @@ Tools cover everything the UI does: `search_podcasts` (iTunes Search, no key nee
   synchronously.
 - "Archive episodes 1 to 42 and 180 of that show" → `create_mirror` with
   `backfill.mode = selection` (Follow off) → exactly 43 episodes, nothing more.
+- "Keep the last ten of this daily show" → `backfill.mode = rolling`, `latest_n = 10`; older
+  episodes roll out as new ones arrive. "Just make this channel playable" →
+  `backfill.mode = automatic`: episodes download when your app first plays them and expire a
+  week after the last listen (both need a `full` key, since they delete).
 - "Save this talk for my commute" → `add_to_inbox` → it lands in the Copycast Inbox feed.
 
 ## Good to know

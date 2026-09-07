@@ -12,10 +12,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from copycast.adapters.assets.mirror import AssetError, feed_artwork_asset, mirror_asset
-from copycast.adapters.db.models import Feed
 from copycast.adapters.db.uow import UnitOfWork
 from copycast.adapters.sources import rss
 from copycast.adapters.sources.http import SourceError
@@ -30,18 +29,18 @@ from copycast.application.ports import (
     EngineLog,
     PermanentError,
 )
+from copycast.application.services.context import FeedRow, UnitOfWorkPort
 from copycast.application.services.defaults import effective, load_defaults
+from copycast.application.services.policy import apply_policy, shortest_for
 from copycast.domain.enums import (
     ArchiveState,
     AssetKind,
     AssetState,
-    BackfillMode,
     FeedKind,
     JobTrigger,
     ProgressPhase,
     RefreshRunStatus,
     SourceKind,
-    WantedReason,
 )
 from copycast.domain.listing import SourceListing
 from copycast.logging import get_logger
@@ -118,42 +117,6 @@ def write_source_snapshot(layout: Layout, feed_id: str, listed: Listed) -> Path 
     if listed.listing is not None and listed.listing.raw is not None:
         return write_json_atomic(layout.source_listing_path(feed_id), listed.listing.raw)
     return None
-
-
-async def apply_policy(uow: UnitOfWork, feed: Feed, *, now: datetime | None = None) -> list[str]:
-    """Backfill once (``policy_applied_at`` null), then follow; returns the ids made wanted.
-
-    all: every listed archivable Available item; latest: the N highest ordinals;
-    selection: nothing. Follow wants Available items first seen after the policy
-    was applied, so deleted (tombstoned) and failed items are never re-wanted.
-    Items shorter than the Mirror's ``min_duration_seconds`` stay Available.
-    """
-    now = now or datetime.now(UTC)
-    shortest = effective(
-        load_defaults(uow.layout),
-        language=feed.preferred_language,
-        min_duration_seconds=feed.min_duration_seconds,
-    ).min_duration_seconds
-    if feed.policy_applied_at is None:
-        mode = BackfillMode(feed.backfill_mode or BackfillMode.all)
-        if mode is BackfillMode.all:
-            ids = await uow.catalog.available_ids(feed.id, min_duration_seconds=shortest)
-        elif mode is BackfillMode.latest:
-            ids = await uow.catalog.available_ids(
-                feed.id, latest_n=feed.backfill_latest_n, min_duration_seconds=shortest
-            )
-        else:
-            ids = []
-        changed = await uow.catalog.set_wanted(ids, WantedReason.backfill)
-        feed.policy_applied_at = now
-        await uow.flush()
-        return changed
-    if feed.follow:
-        ids = await uow.catalog.available_ids(
-            feed.id, first_seen_after=feed.policy_applied_at, min_duration_seconds=shortest
-        )
-        return await uow.catalog.set_wanted(ids, WantedReason.follow)
-    return []
 
 
 async def run(ctx: JobContext) -> JobOutcome:
@@ -236,7 +199,13 @@ async def run(ctx: JobContext) -> JobOutcome:
             await uow.flush()
         if artwork is not None:
             await _record_artwork(uow, feed_id, artwork)
-        wanted = await apply_policy(uow, feed)
+        # The worker holds the concrete UnitOfWork; the policy is written against the ports.
+        feed_row = cast("FeedRow", feed)
+        wanted = await apply_policy(
+            cast("UnitOfWorkPort", uow),
+            feed_row,
+            min_duration_seconds=shortest_for(feed_row, load_defaults(ctx.container.layout)),
+        )
         wanted_rows = await uow.catalog.get_many(
             await uow.catalog.ids_in_state(feed_id, ArchiveState.wanted)
         )

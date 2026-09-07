@@ -38,3 +38,16 @@ export function displayNumber(item: Pick<ItemRead, "source_number" | "ordinal">)
   if (item.source_number != null) return { value: item.source_number, source: true };
   return { value: item.ordinal, source: false };
 }
+
+/**
+ * Listed but shorter than the Mirror's minimum length (its own or the Default): the policy
+ * ignores it. An archived, queued or failed item is never "ignored", whatever its length.
+ */
+export function isBelowMinimum(
+  item: Pick<ItemRead, "duration_seconds" | "state">,
+  minDurationSeconds: number | null | undefined,
+): boolean {
+  if (!minDurationSeconds || item.duration_seconds == null) return false;
+  if (item.state !== "available" && item.state !== "deleted") return false;
+  return item.duration_seconds < minDurationSeconds;
+}

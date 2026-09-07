@@ -34,7 +34,11 @@ async def test_create_mirror_populates_catalog_synchronously(
     assert response.headers["location"].endswith(api(f"/feeds/{mirror['id']}"))
     assert mirror["kind"] == "mirror" and mirror["source_kind"] == "rss"
     assert mirror["feed_url"] == f"http://testserver/feeds/{mirror['id']}.xml"
-    assert mirror["follow"] is True and mirror["backfill"] == {"mode": "all", "latest_n": None}
+    assert mirror["follow"] is True and mirror["backfill"] == {
+        "mode": "all",
+        "latest_n": None,
+        "retention_days": None,
+    }
     assert mirror["counts"]["wanted"] + mirror["counts"]["available"] == 3
     assert mirror["health"]["status"] == "never"
     items = await items_of(client, mirror["id"], sort="ordinal", order="asc")
@@ -99,7 +103,7 @@ async def test_latest_n_archives_only_the_newest(
 ) -> None:
     url = source.write_rss("latest", items=[5, 4, 3, 2, 1], artwork=False)
     mirror = await create_mirror(client, url, mode="latest", latest_n=2)
-    assert mirror["backfill"] == {"mode": "latest", "latest_n": 2}
+    assert mirror["backfill"] == {"mode": "latest", "latest_n": 2, "retention_days": None}
     archived = await archived_items(client, runner, mirror["id"])
     assert sorted(i["source_number"] for i in archived) == [4, 5]
     available = await items_of(client, mirror["id"], state="available")

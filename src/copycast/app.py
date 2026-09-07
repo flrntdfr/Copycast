@@ -27,6 +27,7 @@ from copycast.domain.enums import (
     AssetKind,
     AssetProvenance,
     AssetState,
+    BackfillMode,
     FeedKind,
     SourceKind,
 )
@@ -208,6 +209,11 @@ class FeedHead:
     revision: int
     follow: bool
     paused: bool
+    backfill_mode: BackfillMode | None = None
+
+    @property
+    def automatic(self) -> bool:
+        return self.backfill_mode is BackfillMode.automatic
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +248,7 @@ class FeedRendererAdapter:
                 revision=int(feed.revision),
                 follow=bool(feed.follow),
                 paused=bool(feed.paused),
+                backfill_mode=BackfillMode(feed.backfill_mode) if feed.backfill_mode else None,
             )
 
     async def render(self, feed_id: str) -> RenderedFeedDocument | None:
@@ -251,7 +258,8 @@ class FeedRendererAdapter:
             feed = await uow.feeds.get(feed_id)
             if feed is None:
                 return None
-            items = await uow.catalog.for_render(feed_id)
+            automatic = feed.backfill_mode == BackfillMode.automatic
+            items = await uow.catalog.for_render(feed_id, include_listed=automatic)
             assets = await uow.assets.for_feed(feed_id)
             by_item: dict[str | None, list[Any]] = {}
             for asset in assets:
@@ -269,6 +277,7 @@ class FeedRendererAdapter:
                 source_kind=SourceKind(feed.source_kind) if feed.source_kind else None,
                 source_channel_xml=feed.source_channel_xml,
                 last_modified=feed.updated_at,
+                backfill_mode=BackfillMode(feed.backfill_mode) if feed.backfill_mode else None,
                 assets=tuple(by_item.get(None, [])),
             )
             item_views = [
@@ -291,6 +300,7 @@ class FeedRendererAdapter:
                     media_mime=item.media_mime,
                     media_bytes=item.media_bytes,
                     source_item_xml=item.source_item_xml,
+                    archivable=bool(item.archivable),
                     assets=tuple(by_item.get(item.id, [])),
                 )
                 for item in items

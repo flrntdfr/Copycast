@@ -1272,6 +1272,69 @@
         "x-capability": "request_refresh"
       }
     },
+    "/api/mirrors/{feed_id}/preview": {
+      "post": {
+        "tags": [
+          "mirrors"
+        ],
+        "summary": "What an update would delete or archive, without applying it",
+        "operationId": "preview_mirror_update",
+        "parameters": [
+          {
+            "name": "feed_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feed Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MirrorUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MirrorChangePreview"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "preview_mirror_update"
+      }
+    },
     "/api/mirrors/{feed_id}/selections": {
       "post": {
         "tags": [
@@ -2780,9 +2843,12 @@
         "enum": [
           "all",
           "latest",
-          "selection"
+          "selection",
+          "rolling",
+          "automatic"
         ],
-        "title": "BackfillMode"
+        "title": "BackfillMode",
+        "description": "A Mirror's archive policy: what gets archived, and for Rolling and Automatic, what goes.\n\n``latest`` (N at creation, then Follow) is kept for existing Mirrors; the UI offers\n``all``, ``rolling`` (the newest N, older ones tombstoned), ``automatic`` (downloaded on\nthe first request, expired after ``retention_days``) and ``selection``."
       },
       "BackfillPolicy": {
         "properties": {
@@ -2798,7 +2864,20 @@
                 "type": "null"
               }
             ],
-            "title": "Latest N"
+            "title": "Latest N",
+            "description": "N for latest and rolling"
+          },
+          "retention_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Days",
+            "description": "Automatic: days after the last download before expiry"
           }
         },
         "type": "object",
@@ -2823,7 +2902,21 @@
                 "type": "null"
               }
             ],
-            "title": "Latest N"
+            "title": "Latest N",
+            "description": "N for latest and rolling"
+          },
+          "retention_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Days",
+            "description": "Automatic only"
           },
           "selection": {
             "anyOf": [
@@ -2841,7 +2934,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "BackfillRequest",
-        "description": "Backfill policy at creation; ``selection`` implies mode ``selection``."
+        "description": "The archive policy; ``selection`` implies mode ``selection``.\n\n``all``: everything, then Follow. ``rolling``: the newest ``latest_n`` only, older\nEpisodes tombstoned as newer ones arrive. ``automatic``: nothing ahead of time; an\nEpisode is downloaded when a podcast app first asks for it and expires\n``retention_days`` (default 7) after its last download. ``selection``: exactly\nthe Episodes named. ``latest`` (N at creation, then Follow) remains for existing\nMirrors."
       },
       "CatalogCounts": {
         "properties": {
@@ -3810,6 +3903,28 @@
         ],
         "title": "KeyScope",
         "description": "What an API key may do over MCP: read < write < full (destructive tools included)."
+      },
+      "MirrorChangePreview": {
+        "properties": {
+          "would_delete_count": {
+            "type": "integer",
+            "title": "Would Delete Count",
+            "default": 0
+          },
+          "would_delete_bytes": {
+            "type": "integer",
+            "title": "Would Delete Bytes",
+            "default": 0
+          },
+          "would_archive_count": {
+            "type": "integer",
+            "title": "Would Archive Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "MirrorChangePreview",
+        "description": "What applying a ``MirrorUpdate`` would do to archived content before it is applied."
       },
       "MirrorCreate": {
         "properties": {

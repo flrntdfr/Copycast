@@ -7,28 +7,40 @@ import { toast } from "sonner";
 import { Link } from "@tanstack/react-router";
 
 import { $api, ApiProblem, describeProblem } from "@/api/client";
-import type { MirrorRead } from "@/api/types";
+import type { MirrorChangePreview, MirrorRead, MirrorUpdate } from "@/api/types";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { RangeInput } from "@/features/catalog/RangeInput";
 import { DeleteFeedDialog } from "@/features/feeds/DeleteFeedDialog";
 import { useInvalidateFeed } from "@/features/feeds/mutations";
 import { EngineOptionsEditor } from "./EngineOptionsEditor";
+import { MODE_LABELS, ModeTabs } from "./ModeTabs";
 import {
   isEmptyUpdate,
   mirrorSettingsSchema,
+  retentionSummary,
   settingsDefaults,
   toMirrorUpdate,
   type MirrorSettingsInput,
   type MirrorSettingsValues,
 } from "./settings-form";
-import { secondsToMinutes } from "@/lib/format";
+import { formatBytes, secondsToMinutes } from "@/lib/format";
+import { count } from "@/lib/labels";
 
-/** Follow, Backfill, Source URL, Engine options (per-key errors), read-only retention and the danger zone. */
+/** Follow, Backfill as mode tabs (previewed, confirmed when it deletes), Source URL, Engine options, overrides and the danger zone. */
 export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
   const invalidate = useInvalidateFeed();
   const [rejectedKeys, setRejectedKeys] = useState<string[]>([]);
@@ -40,6 +52,7 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
     mode: "onBlur",
   });
   const mode = useWatch({ control: form.control, name: "mode" });
+  const retentionDays = useWatch({ control: form.control, name: "retention_days" });
   const sourceUrl = useWatch({ control: form.control, name: "source_url" });
   const retargeting = sourceUrl.trim() !== mirror.source_url;
   const defaults = $api.useQuery("get", "/api/settings/defaults");
@@ -91,13 +104,38 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
     },
   });
 
-  const submit = form.handleSubmit((values) => {
+  const preview = $api.useMutation("post", "/api/mirrors/{feed_id}/preview", {
+    meta: { silent: true },
+  });
+  const [pending, setPending] = useState<{
+    body: MirrorUpdate;
+    preview: MirrorChangePreview;
+  } | null>(null);
+
+  const submit = form.handleSubmit(async (values) => {
     const body = toMirrorUpdate(mirror, values);
     if (isEmptyUpdate(body)) {
       toast.info("Nothing changed");
       return;
     }
     setRejectedKeys([]);
+    // A policy change is previewed first: when it would delete archived Episodes, ask.
+    if (body.backfill) {
+      try {
+        const result = await preview.mutateAsync({
+          params: { path: { feed_id: mirror.id } },
+          body,
+        });
+        if (result.would_delete_count > 0) {
+          setPending({ body, preview: result });
+          return;
+        }
+      } catch (error) {
+        const { title, description } = describeProblem(error);
+        toast.error(title, { description });
+        return;
+      }
+    }
     update.mutate({ params: { path: { feed_id: mirror.id } }, body });
   });
 
@@ -128,85 +166,80 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
         <fieldset className="space-y-3">
           <legend className="text-sm font-medium">Backfill</legend>
           <p className="text-xs text-muted-foreground">
-            Changing the policy applies it at the next Refresh; a Selection with numbers archives
-            those now.
+            Everything and Latest N apply at the next Refresh; Rolling N applies now (you are asked
+            first when it deletes); a Selection with numbers archives those now.
           </p>
           <Controller
             control={form.control}
             name="mode"
             render={({ field }) => (
-              <RadioGroup
+              <ModeTabs
                 value={field.value}
                 onValueChange={field.onChange}
-                className="gap-3"
-                aria-label="Backfill"
+                legacyLatest={mirror.backfill.mode === "latest"}
               >
-                <div className="flex items-center gap-3">
-                  <RadioGroupItem value="all" id="settings-backfill-all" />
-                  <Label htmlFor="settings-backfill-all" className="font-normal">
-                    Everything
-                  </Label>
-                </div>
-                <div className="flex items-start gap-3">
-                  <RadioGroupItem value="latest" id="settings-backfill-latest" className="mt-0.5" />
-                  <div className="flex flex-1 flex-col gap-2">
-                    <Label htmlFor="settings-backfill-latest" className="font-normal">
-                      Latest N
-                    </Label>
-                    {mode === "latest" ? (
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor="settings-latest-n" className="sr-only">
-                          How many
-                        </Label>
-                        <Input
-                          id="settings-latest-n"
-                          type="number"
-                          min={1}
-                          className="w-28"
-                          {...form.register("latest_n", { valueAsNumber: true })}
-                          aria-invalid={!!errors.latest_n}
-                        />
-                        <span className="text-sm text-muted-foreground">items</span>
-                      </div>
-                    ) : null}
-                    {errors.latest_n ? (
-                      <p className="text-xs text-destructive">{errors.latest_n.message}</p>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="flex items-start gap-3">
-                  <RadioGroupItem
-                    value="selection"
-                    id="settings-backfill-selection"
-                    className="mt-0.5"
-                  />
-                  <div className="flex flex-1 flex-col gap-2">
-                    <Label htmlFor="settings-backfill-selection" className="font-normal">
-                      Selection
-                      {mirror.backfill.mode === "selection" && mirror.selection ? (
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          {mirror.selection.count.toLocaleString()} selected so far
-                        </span>
+                {(active) =>
+                  active === "rolling" || active === "latest" ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Label htmlFor="settings-latest-n">
+                        {active === "rolling" ? "Keep the newest" : "How many"}
+                      </Label>
+                      <Input
+                        id="settings-latest-n"
+                        type="number"
+                        min={1}
+                        className="w-28"
+                        {...form.register("latest_n", { valueAsNumber: true })}
+                        aria-invalid={!!errors.latest_n}
+                      />
+                      <span className="text-sm text-muted-foreground">items</span>
+                      {errors.latest_n ? (
+                        <p className="text-xs text-destructive">{errors.latest_n.message}</p>
                       ) : null}
-                    </Label>
-                    {mode === "selection" ? (
+                    </div>
+                  ) : active === "automatic" ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Label htmlFor="settings-retention-days">Keep downloaded for</Label>
+                      <Input
+                        id="settings-retention-days"
+                        type="number"
+                        min={1}
+                        className="w-28"
+                        placeholder="forever"
+                        {...form.register("retention_days", { valueAsNumber: true })}
+                        aria-invalid={!!errors.retention_days}
+                      />
+                      <span className="text-sm text-muted-foreground">
+                        days after the last download (empty keeps forever)
+                      </span>
+                      {errors.retention_days ? (
+                        <p className="text-xs text-destructive">{errors.retention_days.message}</p>
+                      ) : null}
+                    </div>
+                  ) : active === "selection" ? (
+                    <div className="space-y-2">
+                      {mirror.backfill.mode === "selection" && mirror.selection ? (
+                        <p className="text-xs text-muted-foreground">
+                          {mirror.selection.count.toLocaleString()} selected so far
+                        </p>
+                      ) : null}
                       <Controller
                         control={form.control}
                         name="selection"
-                        render={({ field, fieldState }) => (
+                        render={({ field: selection, fieldState }) => (
                           <RangeInput
                             id="settings-selection"
-                            value={field.value ?? ""}
-                            onChange={field.onChange}
+                            value={selection.value ?? ""}
+                            onChange={selection.onChange}
                             error={fieldState.error?.message}
                             placeholder="Numbers to archive now, e.g. 1-42, 180 (optional)"
                           />
                         )}
                       />
-                    ) : null}
-                  </div>
-                </div>
-              </RadioGroup>
+                    </div>
+                  ) : null
+                }
+              </ModeTabs>
             )}
           />
         </fieldset>
@@ -304,13 +337,18 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
         <div className="space-y-1.5">
           <span className="text-sm font-medium">Retention</span>
           <p className="text-sm text-muted-foreground">
-            None. Copycast never deletes from a Mirror on its own.
+            {retentionSummary(
+              mode,
+              typeof retentionDays === "number" && !Number.isNaN(retentionDays)
+                ? retentionDays
+                : undefined,
+            )}
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          <Button type="submit" disabled={update.isPending}>
-            {update.isPending ? <Loader2 className="animate-spin" /> : null}
+          <Button type="submit" disabled={update.isPending || preview.isPending}>
+            {update.isPending || preview.isPending ? <Loader2 className="animate-spin" /> : null}
             Save changes
           </Button>
           <Button
@@ -343,8 +381,53 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
         </Button>
         <DeleteFeedDialog feed={mirror} open={deleting} onOpenChange={setDeleting} />
       </section>
+
+      <AlertDialog open={pending !== null} onOpenChange={(open) => !open && setPending(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {count(pending?.preview.would_delete_count ?? 0, "archived Episode")}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pending ? describeChange(pending.body, pending.preview) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={update.isPending}>Keep them</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={update.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!pending) return;
+                update.mutate(
+                  { params: { path: { feed_id: mirror.id } }, body: pending.body },
+                  { onSettled: () => setPending(null) },
+                );
+              }}
+            >
+              {update.isPending ? <Loader2 className="animate-spin" /> : null}
+              Delete and switch
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
+}
+
+/** The confirmation text: what the new policy keeps, what goes now, what it archives next. */
+export function describeChange(body: MirrorUpdate, preview: MirrorChangePreview): string {
+  const backfill = body.backfill;
+  const target =
+    backfill?.mode === "rolling"
+      ? `Rolling ${backfill.latest_n ?? 1} keeps only the newest ${count(backfill.latest_n ?? 1, "Episode")}.`
+      : `Switching to ${MODE_LABELS[backfill?.mode ?? "all"]}.`;
+  const deletes = `${count(preview.would_delete_count, "archived Episode")} (${formatBytes(preview.would_delete_bytes)}) will be deleted now; they leave Tombstones and can be archived again on purpose.`;
+  const archives =
+    preview.would_archive_count > 0
+      ? ` ${count(preview.would_archive_count, "Episode")} will be archived.`
+      : "";
+  return `${target} ${deletes}${archives}`;
 }
 
 /** A setting a Mirror may override: the field, the global value it diverges from, and a reset. */

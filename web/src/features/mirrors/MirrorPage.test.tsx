@@ -71,6 +71,16 @@ function handlers(calls: { method: string; path: string; body?: unknown }[] = []
       await record(request);
       return HttpResponse.json({ ...feed, paused: true });
     }),
+    http.post("/api/mirrors/:feedId/preview", async ({ request }) => {
+      await record(request);
+      const body = calls.at(-1)?.body as MirrorUpdate;
+      const deletes = body.backfill?.mode === "rolling" ? 3 - (body.backfill.latest_n ?? 0) : 0;
+      return HttpResponse.json({
+        would_delete_count: deletes,
+        would_delete_bytes: deletes * 1_000_000,
+        would_archive_count: 0,
+      });
+    }),
     http.patch("/api/mirrors/:feedId", async ({ request }) => {
       await record(request);
       const body = calls.at(-1)?.body as MirrorUpdate;
@@ -174,6 +184,57 @@ describe("Mirror page", () => {
     const rejected = await screen.findByRole("list", { name: "Rejected engine options" });
     expect(rejected).toHaveTextContent("outtmpl");
     expect(rejected).toHaveTextContent("not allowed for a feed");
+  });
+
+  it("previews a mode change and asks before archived Episodes are deleted", async () => {
+    const calls: { method: string; path: string; body?: unknown }[] = [];
+    server.use(...handlers(calls));
+    const user = userEvent.setup();
+    renderApp("/mirrors/mirror-1?tab=settings");
+    const form = await screen.findByRole("form", { name: "Mirror settings" });
+    expect(within(form).getByRole("tab", { name: "Everything" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    // Latest N is not offered for a Mirror that does not use it.
+    expect(within(form).queryByRole("tab", { name: "Latest N" })).not.toBeInTheDocument();
+
+    // A change that deletes nothing goes straight through.
+    await user.click(within(form).getByRole("tab", { name: "Automatic" }));
+    expect(within(form).getByLabelText("Keep downloaded for")).toHaveValue(7);
+    expect(within(form).getByText(/expire 7 days after/)).toBeInTheDocument();
+    await user.click(within(form).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    expect(calls.map((c) => c.method).filter((m) => m !== "GET")).toEqual(["POST", "PATCH"]);
+    expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({
+      backfill: { mode: "automatic", retention_days: 7 },
+    });
+
+    // Rolling 1 would delete two of the three archived Episodes: confirm first.
+    await user.click(within(form).getByRole("tab", { name: "Rolling N" }));
+    const keep = within(form).getByLabelText("Keep the newest");
+    await user.clear(keep);
+    await user.type(keep, "1");
+    expect(within(form).getByText(/outside the newest N are deleted/)).toBeInTheDocument();
+    await user.click(within(form).getByRole("button", { name: "Save changes" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Delete 2 archived Episodes?");
+    expect(dialog).toHaveTextContent("Rolling 1 keeps only the newest 1 Episode.");
+    expect(dialog).toHaveTextContent("2 archived Episodes (2.0 MB) will be deleted now");
+    await user.click(within(dialog).getByRole("button", { name: "Keep them" }));
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
+
+    await user.click(within(form).getByRole("button", { name: "Save changes" }));
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Delete and switch",
+      }),
+    );
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
+    expect(calls.filter((c) => c.method === "PATCH")[1]?.body).toEqual({
+      backfill: { mode: "rolling", latest_n: 1 },
+    });
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
   });
 
   it("deletes the Mirror from the Danger zone and returns to the list", async () => {

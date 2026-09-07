@@ -92,6 +92,94 @@ describe("CatalogTable", () => {
     expect(screen.getByText("1–4 of 4")).toBeInTheDocument();
   });
 
+  it("greys out items shorter than the minimum length and says why", async () => {
+    const short = item({
+      id: "item-5",
+      feed_id: feed.id,
+      ordinal: 5,
+      title: "A Short",
+      state: "available",
+      duration_seconds: 45,
+    });
+    const archivedShort = item({
+      id: "item-6",
+      feed_id: feed.id,
+      ordinal: 6,
+      title: "Kept Short",
+      state: "archived",
+      duration_seconds: 45,
+    });
+    server.use(
+      http.get("/api/settings/defaults", () =>
+        HttpResponse.json({ language: null, min_duration_seconds: 300 }),
+      ),
+      http.get("/api/feeds/:feedId/items", () =>
+        HttpResponse.json({
+          items: [...rows, short, archivedShort],
+          total: 6,
+          limit: 100,
+          offset: 0,
+        }),
+      ),
+    );
+    renderWithProviders(
+      <CatalogTable feed={feed} search={search()} onSearchChange={() => undefined} />,
+    );
+    const row = (await screen.findByText("A Short")).closest("tr");
+    await waitFor(() => expect(row).toHaveAttribute("data-ignored", "true"));
+    expect(row).toHaveClass("opacity-60");
+    expect(screen.getByText("Kept Short").closest("tr")).not.toHaveAttribute("data-ignored");
+    expect(screen.getByText("Second").closest("tr")).not.toHaveAttribute("data-ignored");
+    const user = userEvent.setup();
+    await user.hover(within(row as HTMLElement).getByLabelText("Ignored by the policy"));
+    expect(
+      await screen.findByText(/shorter than the Minimum length in Settings \(5 min\)/),
+    ).toBeInTheDocument();
+  });
+
+  it("uses the Mirror's own minimum over the default", async () => {
+    const own = mirror({ id: "mirror-2", min_duration_seconds: 120 });
+    server.use(
+      http.get("/api/settings/defaults", () =>
+        HttpResponse.json({ language: null, min_duration_seconds: 300 }),
+      ),
+      http.get("/api/feeds/:feedId/items", () =>
+        HttpResponse.json({
+          items: [
+            item({
+              id: "s1",
+              feed_id: own.id,
+              title: "Ninety",
+              state: "available",
+              duration_seconds: 90,
+            }),
+            item({
+              id: "s2",
+              feed_id: own.id,
+              title: "Four min",
+              state: "available",
+              duration_seconds: 240,
+            }),
+          ],
+          total: 2,
+          limit: 100,
+          offset: 0,
+        }),
+      ),
+    );
+    renderWithProviders(
+      <CatalogTable feed={own} search={search()} onSearchChange={() => undefined} />,
+    );
+    expect((await screen.findByText("Ninety")).closest("tr")).toHaveAttribute(
+      "data-ignored",
+      "true",
+    );
+    expect(screen.getByText("Four min").closest("tr")).not.toHaveAttribute("data-ignored");
+    const user = userEvent.setup();
+    await user.hover(screen.getByLabelText("Ignored by the policy"));
+    expect(await screen.findByText(/this Mirror's Minimum length \(2 min\)/)).toBeInTheDocument();
+  });
+
   it("selects rows (shift-click ranges) and shows the SelectionBar with Archive for archivable rows", async () => {
     const bodies: SelectionRequest[] = [];
     server.use(

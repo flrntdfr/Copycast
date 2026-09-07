@@ -31,6 +31,7 @@ export const OPS = {
   set_paused: ["post", "/api/mirrors/{feed_id}/pause"],
   request_refresh: ["post", "/api/mirrors/{feed_id}/refresh"],
   select_items: ["post", "/api/mirrors/{feed_id}/selections"],
+  preview_mirror_update: ["post", "/api/mirrors/{feed_id}/preview"],
   create_inbox: ["post", "/api/inboxes"],
   update_inbox: ["patch", "/api/inboxes/{inbox_id}"],
   add_request: ["post", "/api/inboxes/{inbox_id}/requests"],

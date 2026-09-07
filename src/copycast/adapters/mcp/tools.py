@@ -22,6 +22,7 @@ from copycast.adapters.mcp.errors import guarded, refuse
 from copycast.application.capabilities import DESTRUCTIVE
 from copycast.application.models import (
     AboutRead,
+    BackfillRequest,
     FeedList,
     FeedRead,
     InboxCreate,
@@ -48,6 +49,7 @@ from copycast.application.models import (
 from copycast.domain.credentials import required_scope
 from copycast.domain.enums import (
     ArchiveState,
+    BackfillMode,
     FeedKind,
     JobKind,
     JobStatus,
@@ -73,6 +75,16 @@ def _annotations(capability: str, *, read_only: bool = False) -> ToolAnnotations
 
 
 ToolFn = Callable[..., Awaitable[Any]]
+
+
+def _check_deleting_mode(backfill: BackfillRequest | None, tool: str) -> None:
+    """Rolling windows and expiring Automatic Mirrors delete on a schedule: ``full`` only."""
+    if backfill is None:
+        return
+    if backfill.mode is BackfillMode.rolling or (
+        backfill.mode is BackfillMode.automatic and backfill.retention_days is not None
+    ):
+        check_scope(KeyScope.full, f"{tool} (backfill.mode {backfill.mode.value})")
 
 
 def with_scope(fn: ToolFn, name: str, scope: KeyScope) -> ToolFn:
@@ -121,10 +133,14 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
     async def create_mirror(mirror: MirrorCreate) -> MirrorRead:
         """Create a Mirror of a Source; returns the Mirror with its ``feed_url`` synchronously.
 
-        ``backfill.mode``: ``all`` (everything), ``latest`` with ``latest_n``,
-        or ``selection`` with ``selection`` such as ``"1-42, 180"`` (follow
-        then defaults to false). Several candidates -> pass ``candidate_token``.
+        ``backfill.mode``: ``all`` (everything), ``rolling`` with ``latest_n`` (only
+        the newest N stay archived), ``automatic`` (downloaded when a podcast app first
+        asks, expiring ``retention_days`` after the last download, null keeps forever),
+        or ``selection`` with ``selection`` such as ``"1-42, 180"`` (follow then
+        defaults to false). Rolling and expiring modes delete on their own, so they
+        need a ``full`` key. Several candidates -> pass ``candidate_token``.
         """
+        _check_deleting_mode(mirror.backfill, "create_mirror")
         return await container.services.create_mirror(mirror, trigger=JobTrigger.mcp)
 
     async def list_feeds(kind: FeedKind | None = None) -> FeedList:
@@ -192,7 +208,12 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         return await container.services.set_paused(feed_id, paused)
 
     async def update_mirror(feed_id: str, patch: MirrorUpdate) -> MirrorRead:
-        """Change a Mirror's follow flag, backfill, engine options or Source URL."""
+        """Change a Mirror's follow flag, backfill, engine options or Source URL.
+
+        Switching to ``rolling``, or to ``automatic`` with a ``retention_days``,
+        schedules deletions, so it needs a ``full`` key.
+        """
+        _check_deleting_mode(patch.backfill, "update_mirror")
         return await container.services.update_mirror(feed_id, patch)
 
     # ------------------------------------------------------------------ inboxes

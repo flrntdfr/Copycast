@@ -95,7 +95,11 @@ class Scheduler:
     async def _due_autoprunes(self, now: datetime) -> int:
         count = 0
         async with uow_of(self._container.uow_factory()) as uow:
-            for feed in await uow.feeds.inboxes_due_autoprune(now - AUTOPRUNE_INTERVAL):
+            due = [
+                *await uow.feeds.inboxes_due_autoprune(now - AUTOPRUNE_INTERVAL),
+                *await uow.feeds.mirrors_due_expiry(now - AUTOPRUNE_INTERVAL),
+            ]
+            for feed in due:
                 job = await uow.jobs.enqueue(
                     JobKind.prune,
                     JobTrigger.scheduled,

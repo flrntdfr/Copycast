@@ -25,6 +25,7 @@ export type MirrorCreate = Schemas["MirrorCreate"];
 export type MirrorUpdate = Schemas["MirrorUpdate"];
 export type BackfillRequest = Schemas["BackfillRequest"];
 export type BackfillPolicy = Schemas["BackfillPolicy"];
+export type MirrorChangePreview = Schemas["MirrorChangePreview"];
 export type SelectionRequest = Schemas["SelectionRequest"];
 export type SelectionResult = Schemas["SelectionResult"];
 export type SelectionSummary = Schemas["SelectionSummary"];

@@ -99,6 +99,16 @@ def test_latest_requires_n_and_n_is_dropped_otherwise() -> None:
         BackfillRequest(mode=BackfillMode.latest, latest_n=0)
     assert BackfillRequest(mode=BackfillMode.latest, latest_n=5).latest_n == 5
     assert BackfillRequest(mode=BackfillMode.all, latest_n=5).latest_n is None
+    with pytest.raises(ValidationError):
+        BackfillRequest(mode=BackfillMode.rolling)
+    assert BackfillRequest(mode=BackfillMode.rolling, latest_n=10).retention_days is None
+    automatic = BackfillRequest(mode=BackfillMode.automatic)
+    assert automatic.retention_days == 7 and automatic.latest_n is None
+    assert BackfillRequest(mode=BackfillMode.automatic, retention_days=None).retention_days is None
+    assert BackfillRequest(mode=BackfillMode.automatic, retention_days=30).retention_days == 30
+    with pytest.raises(ValidationError):
+        BackfillRequest(mode=BackfillMode.automatic, retention_days=0)
+    assert BackfillRequest(mode=BackfillMode.all, retention_days=30).retention_days is None
 
 
 def test_mirror_create_rejects_owned_and_global_only_engine_options() -> None:

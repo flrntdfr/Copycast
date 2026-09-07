@@ -42,6 +42,7 @@ OPERATOR_ONLY = {
     "delete_engine_cookies",
     "get_mirror_defaults",
     "set_mirror_defaults",
+    "preview_mirror_update",
 }
 """Routed for the UI, never tools: keys must not mint keys, agents must not rotate feeds
 or touch the cookie file (a browser session)."""

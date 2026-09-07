@@ -174,6 +174,22 @@ async def test_tools_are_gated_by_the_key_scope(
             )
         with pytest.raises(ToolError, match=r"create_inbox \(autoprune_days\) needs .* 'full'"):
             await mcp.call_tool("create_inbox", {"inbox": {"name": "Pruned", "autoprune_days": 7}})
+        # So are the Mirror modes that delete on their own.
+        with pytest.raises(ToolError, match=r"update_mirror \(backfill.mode rolling\) needs"):
+            await mcp.call_tool(
+                "update_mirror",
+                {"feed_id": "any", "patch": {"backfill": {"mode": "rolling", "latest_n": 3}}},
+            )
+        with pytest.raises(ToolError, match=r"create_mirror \(backfill.mode automatic\) needs"):
+            await mcp.call_tool(
+                "create_mirror",
+                {
+                    "mirror": {
+                        "source_url": "https://x.example/f.xml",
+                        "backfill": {"mode": "automatic"},
+                    }
+                },
+            )
         renamed = structured(
             await mcp.call_tool(
                 "update_inbox", {"inbox_id": inbox["id"], "patch": {"name": "Soon"}}

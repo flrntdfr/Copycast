@@ -4,10 +4,15 @@
  */
 import { z } from "zod";
 
-import type { BackfillRequest, MirrorRead, MirrorUpdate } from "@/api/types";
-import { optionalCount } from "@/features/add-source/policy-form";
+import type { BackfillPolicy, BackfillRequest, MirrorRead, MirrorUpdate } from "@/api/types";
+import {
+  DEFAULT_RETENTION_DAYS,
+  backfillOf,
+  modeFields,
+  optionalCount,
+  refineMode,
+} from "@/features/add-source/policy-form";
 import { minutesToSeconds, secondsToMinutes } from "@/lib/format";
-import { parseSelection, selectionIsValid } from "@/lib/selection";
 
 export type EngineOptions = Record<string, unknown>;
 
@@ -41,9 +46,7 @@ export const mirrorSettingsSchema = z
   .object({
     source_url: z.string().trim().min(1, "A Source URL is required").max(2048),
     follow: z.boolean(),
-    mode: z.enum(["all", "latest", "selection"]),
-    latest_n: optionalCount,
-    selection: z.string().max(4096).optional(),
+    ...modeFields,
     engine_options: z.string(),
     language: z
       .string()
@@ -53,23 +56,7 @@ export const mirrorSettingsSchema = z
     min_duration_minutes: optionalCount,
   })
   .superRefine((value, ctx) => {
-    if (value.mode === "latest" && !value.latest_n) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["latest_n"],
-        message: "How many of the latest items?",
-      });
-    }
-    if (value.mode === "selection" && value.selection?.trim()) {
-      const parsed = parseSelection(value.selection);
-      if (!selectionIsValid(parsed)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["selection"],
-          message: `Cannot read ${parsed.invalid.map((t) => `"${t}"`).join(", ")}`,
-        });
-      }
-    }
+    refineMode(value, ctx);
     const options = parseEngineOptions(value.engine_options);
     if (options.error)
       ctx.addIssue({ code: "custom", path: ["engine_options"], message: options.error });
@@ -79,11 +66,17 @@ export type MirrorSettingsInput = z.input<typeof mirrorSettingsSchema>;
 export type MirrorSettingsValues = z.output<typeof mirrorSettingsSchema>;
 
 export function settingsDefaults(mirror: MirrorRead): MirrorSettingsInput {
+  const { backfill } = mirror;
   return {
     source_url: mirror.source_url,
     follow: mirror.follow,
-    mode: mirror.backfill.mode,
-    latest_n: mirror.backfill.latest_n ?? 10,
+    mode: backfill.mode,
+    latest_n: backfill.latest_n ?? 10,
+    // Under Automatic an empty field means "keep forever"; elsewhere the field is unused.
+    retention_days:
+      backfill.mode === "automatic"
+        ? (backfill.retention_days ?? undefined)
+        : DEFAULT_RETENTION_DAYS,
     selection: "",
     engine_options: formatEngineOptions(mirror.engine_options),
     language: mirror.preferred_language ?? "",
@@ -97,16 +90,16 @@ function sameJson(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function backfillOf(values: MirrorSettingsValues): BackfillRequest {
-  switch (values.mode) {
-    case "all":
-      return { mode: "all" };
+/** The Mirror's current policy in `BackfillRequest` shape, to tell a real change apart. */
+export function currentBackfill(policy: BackfillPolicy): BackfillRequest {
+  switch (policy.mode) {
     case "latest":
-      return { mode: "latest", latest_n: values.latest_n ?? 1 };
-    case "selection": {
-      const expression = values.selection?.trim();
-      return expression ? { mode: "selection", selection: expression } : { mode: "selection" };
-    }
+    case "rolling":
+      return { mode: policy.mode, latest_n: policy.latest_n ?? 1 };
+    case "automatic":
+      return { mode: "automatic", retention_days: policy.retention_days ?? null };
+    default:
+      return { mode: policy.mode };
   }
 }
 
@@ -120,11 +113,8 @@ export function toMirrorUpdate(mirror: MirrorRead, values: MirrorSettingsValues)
   if (values.follow !== mirror.follow) update.follow = values.follow;
 
   const backfill = backfillOf(values);
-  const currentBackfill: BackfillRequest =
-    mirror.backfill.mode === "latest"
-      ? { mode: "latest", latest_n: mirror.backfill.latest_n ?? 1 }
-      : { mode: mirror.backfill.mode };
-  if (backfill.selection || !sameJson(backfill, currentBackfill)) update.backfill = backfill;
+  if (backfill.selection || !sameJson(backfill, currentBackfill(mirror.backfill)))
+    update.backfill = backfill;
 
   const options = parseEngineOptions(values.engine_options);
   if (options.value && !sameJson(options.value, mirror.engine_options ?? {}))
@@ -140,4 +130,18 @@ export function toMirrorUpdate(mirror: MirrorRead, values: MirrorSettingsValues)
 
 export function isEmptyUpdate(update: MirrorUpdate): boolean {
   return Object.keys(update).length === 0;
+}
+
+/** What the Retention line under the form says for the mode being edited. */
+export function retentionSummary(mode: BackfillPolicy["mode"], retentionDays?: number): string {
+  switch (mode) {
+    case "rolling":
+      return "Archived Episodes outside the newest N are deleted at each Refresh.";
+    case "automatic":
+      return retentionDays
+        ? `Episodes expire ${retentionDays} ${retentionDays === 1 ? "day" : "days"} after their last download.`
+        : "Never. Downloaded Episodes stay until you delete them.";
+    default:
+      return "None. Copycast never deletes from a Mirror on its own.";
+  }
 }

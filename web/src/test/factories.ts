@@ -46,7 +46,7 @@ export function mirror(overrides: Partial<MirrorRead> = {}): MirrorRead {
     min_duration_seconds: null,
     paused: false,
     follow: true,
-    backfill: { mode: "all", latest_n: null },
+    backfill: { mode: "all", latest_n: null, retention_days: null },
     engine_options: {},
     last_refresh_attempt_at: "2024-01-15T09:00:00Z",
     last_refresh_success_at: "2024-01-15T09:00:00Z",

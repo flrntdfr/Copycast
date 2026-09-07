@@ -63,6 +63,7 @@ class Feed(TimestampMixin, Base):
     backfill_latest_n: Mapped[int | None] = mapped_column(Integer)
     min_duration_seconds: Mapped[int | None] = mapped_column(Integer)
     preferred_language: Mapped[str | None] = mapped_column(String(16))
+    retention_days: Mapped[int | None] = mapped_column(Integer)
     follow: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true"), default=True
     )
@@ -106,6 +107,7 @@ class Feed(TimestampMixin, Base):
         CheckConstraint(
             "min_duration_seconds IS NULL OR min_duration_seconds > 0", name="min_duration_seconds"
         ),
+        CheckConstraint("retention_days IS NULL OR retention_days > 0", name="retention_days"),
         Index(
             "ix_feeds_is_default",
             "is_default",
