@@ -43,6 +43,28 @@ class RequestContextMiddleware:
             unbind_context("request_id")
 
 
+ROBOTS_TAG = "noindex, nofollow, noarchive"
+
+
+class NoRobotsMiddleware:
+    """``X-Robots-Tag`` on every response: a personal archive is nothing to index."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_tagged(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message)["x-robots-tag"] = ROBOTS_TAG
+            await send(message)
+
+        await self.app(scope, receive, send_tagged)
+
+
 class NoStoreJsonMiddleware:
     """``Cache-Control: no-store`` on every JSON response that did not choose otherwise."""
 
@@ -68,6 +90,8 @@ class NoStoreJsonMiddleware:
 __all__ = [
     "NO_STORE_TYPES",
     "REQUEST_ID_HEADER",
+    "ROBOTS_TAG",
+    "NoRobotsMiddleware",
     "NoStoreJsonMiddleware",
     "RequestContextMiddleware",
 ]

@@ -40,6 +40,7 @@ class Feed(TimestampMixin, Base):
         Boolean, nullable=False, server_default=text("false"), default=False
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
+    title_override: Mapped[str | None] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
     author: Mapped[str | None] = mapped_column(Text)
     artwork_url: Mapped[str | None] = mapped_column(Text)

@@ -35,6 +35,7 @@ from copycast.application.models import ItemRead
 from copycast.application.services import Services
 from copycast.domain.enums import ArchiveState, FeedKind, JobTrigger
 from copycast.domain.exceptions import Conflict, Unsupported
+from copycast.domain.urls import COPYCAST_ARTWORK_PATH
 from copycast.logging import get_logger
 
 router = APIRouter(tags=["public"], dependencies=[FeedAccess])
@@ -208,8 +209,8 @@ async def media(
 
 
 def _on_demand(item: ItemRead) -> bool:
-    """Listed and not tombstoned; an archived item lands here only under the wrong extension."""
-    return item.listed and item.state is not ArchiveState.deleted
+    """Listed, so an Automatic feed offers it: expired or deleted Episodes download again."""
+    return item.listed
 
 
 async def _archive_on_demand(services: Services, feed_id: str, item_id: str) -> ItemRead:
@@ -254,6 +255,28 @@ async def asset(request: Request, container: ContainerDep, feed_id: str, filenam
         headers={"Cache-Control": MEDIA_CACHE_CONTROL},
         content_disposition_type="inline",
     )
+
+
+LOGO_FILE = Path(__file__).resolve().parents[1] / "copycast-artwork.png"
+LOGO_CACHE_CONTROL = "public, max-age=604800"
+open_router = APIRouter(tags=["public"])
+"""Routes under ``/feeds`` that take no credentials: the logo (artwork is public)."""
+
+
+async def logo() -> Response:
+    """The Copycast logo an Inbox feed shows as its artwork (public, like all artwork)."""
+    return FileResponse(
+        LOGO_FILE, media_type="image/png", headers={"Cache-Control": LOGO_CACHE_CONTROL}
+    )
+
+
+open_router.add_api_route(
+    COPYCAST_ARTWORK_PATH.removeprefix("/feeds"),
+    logo,
+    methods=["GET", "HEAD"],
+    response_class=Response,
+    include_in_schema=False,
+)
 
 
 def _get_and_head(path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:

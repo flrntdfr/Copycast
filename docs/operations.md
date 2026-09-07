@@ -182,15 +182,38 @@ A Mirror's Settings tab (and the wizard) offers the Backfill as tabs:
 | Automatic | nothing until a podcast app asks for an Episode's media; the request waits up to two minutes, then answers `503 Retry-After: 30` while the download continues | Episodes idle for *Retention* days after their last download (7 by default; empty keeps forever), checked by the worker's prune pass |
 | Selection | exactly the numbers given | never |
 
+New Mirrors start from the operator's default policy (*Policy for new Mirrors* on the Settings
+page, stored with the other defaults; Automatic with a 7-day retention out of the box), both in
+the wizard and for an MCP `create_mirror` without `backfill`.
+
 Switching modes previews the change (`POST /api/mirrors/{id}/preview`) and asks for
 confirmation when archived Episodes would be deleted; rolled-out and expired Episodes leave
-Tombstones and can be archived again on purpose. Over MCP, `create_mirror` and
+Tombstones and can be archived again on purpose. An Automatic feed keeps listing expired and
+deleted Episodes and downloads them again when a podcast app asks. The Mirror header menu
+offers *Archive all Available…* (queues everything not archived yet, Shorts and Tombstones
+included, with the option to switch the Mirror to Everything) and *Retry N failed*; the same
+actions are the `archive_available` and `retry_failed` tools and routes. Over MCP, `create_mirror` and
 `update_mirror` refuse Rolling and expiring Automatic modes without a `full` key. Latest N
 stays on Mirrors that already use it but is no longer offered ([ADR 0012](adr/0012-mirror-modes-rolling-and-automatic.md)).
 
 An Automatic Mirror's feed lists every item the Source lists; the ones not archived yet carry
 a placeholder `.mp3` enclosure of length 0, and the media route serves the real file (any
 container) under that URL once archived.
+
+## Titles, artwork and crawlers
+
+- A Mirror's Settings tab has a *Title* field: a title of your own is shown in the UI, the
+  Mirror Feed and MCP and survives Refreshes (`title_override`; the Source's title stays in
+  `source_title`); *Use Source title* clears it.
+- Artwork assets (`/feeds/{id}/assets/*.artwork.*`) and the Copycast logo
+  (`/feeds/copycast-artwork.png`, the artwork of an Inbox feed without its own) answer without
+  credentials even while authentication is on: podcast apps fetch images bare, and the URLs
+  stay unguessable. Media, feeds, chapters and transcripts keep the feed's pair.
+- `/robots.txt` disallows everything and every response carries
+  `X-Robots-Tag: noindex, nofollow, noarchive`; the UI shell adds the equivalent meta tag.
+- The About page's trash button next to the totals deletes every archived Episode of every
+  feed after a dry run (`POST /api/admin/purge`, `dry_run` true by default); feeds, Catalogs,
+  artwork and credentials stay, and the Episodes leave Tombstones.
 
 ## Settings page: defaults every Mirror may override
 
@@ -202,6 +225,7 @@ changes from the UI:
 |---|---|---|
 | Metadata language (`fr`, `pt-BR`) | yt-dlp asks YouTube for that language instead of English, so a French channel's titles and descriptions stay French | the Mirror's *Metadata language* field (`preferred_language`; `language` stays what the Source reports) |
 | Minimum length (minutes) | items shorter than that are listed but never archived by Backfill or Follow; unknown lengths pass; explicit selections still work (keeps Shorts out) | the Mirror's *Minimum length* field (`min_duration_seconds`) |
+| Policy for new Mirrors | the Backfill a new Mirror starts from: Automatic (with its retention), Everything or Rolling N | the wizard's tabs, or `backfill` in `create_mirror` |
 
 A Mirror's Settings tab shows "Using the default" when a field is empty, marks a value that
 diverges from the default, and offers *Use default*, which clears the override (sent as

@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
@@ -79,6 +80,34 @@ describe("AboutPage", () => {
       "/mirrors/mirror-1",
     );
     expect(rows[1]).toHaveTextContent("Inbox");
+  });
+
+  it("purges every archived Episode after a dry run and a confirmation", async () => {
+    const bodies: { dry_run?: boolean }[] = [];
+    server.use(
+      ...handlers(),
+      http.post("/api/admin/purge", async ({ request }) => {
+        const body = (await request.json()) as { dry_run?: boolean };
+        bodies.push(body);
+        return HttpResponse.json({
+          matched: 42,
+          deleted_count: body.dry_run ? 0 : 42,
+          bytes_freed: 1_500_000_000,
+          dry_run: body.dry_run ?? true,
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/about");
+    await screen.findByRole("heading", { name: "About" });
+    await user.click(screen.getByRole("button", { name: "Delete every archived Episode" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await waitFor(() => expect(dialog).toHaveTextContent("Delete 42 archived Episodes (1.5 GB)?"));
+    expect(bodies).toEqual([{ dry_run: true }]);
+    await user.click(within(dialog).getByRole("button", { name: "Delete 42" }));
+    await waitFor(() => expect(bodies).toEqual([{ dry_run: true }, { dry_run: false }]));
+    expect(await screen.findByText("42 Episodes deleted, 1.5 GB freed")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
   });
 
   it("warns when the worker was never seen, even though readiness answers 503", async () => {

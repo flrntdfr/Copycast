@@ -339,6 +339,7 @@ async def _upsert_feed(session: AsyncSession, layout: Layout, descriptor: FeedDe
         "kind": feed.kind.value,
         "is_default": feed.is_default,
         "title": feed.title,
+        "title_override": feed.title_override,
         "description": feed.description,
         "author": feed.author,
         "artwork_url": feed.artwork_url,

@@ -105,7 +105,11 @@ How many times an Episode's media was fetched by a client: a full GET or a Range
 _Avoid_: Plays, listens, hits
 
 **Tombstone**:
-The trace left by an Episode you deleted: the Catalog item stays, marked deleted, so the Mirror will not archive it again on its own; it shows as Available and can be re-archived on demand.
+The trace left by an Episode you deleted (or that rolled out, expired, or was purged): the Catalog item stays, marked deleted, so the Mirror will not archive it again on its own; it shows as Available and can be re-archived on demand, and an Automatic Mirror downloads it again when a podcast app asks.
+
+**Title override**:
+A Mirror's own title, kept over the Source's across Refreshes and shown in the UI, the Mirror Feed and MCP; clearing it restores the Source's title.
+_Avoid_: Rename (that is an Inbox), alias, custom name
 _Avoid_: Blacklist, ignore list, ban
 
 **Engine**:

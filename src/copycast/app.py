@@ -267,7 +267,8 @@ class FeedRendererAdapter:
             feed_view = render_module.FeedView(
                 id=feed.id,
                 kind=FeedKind(feed.kind),
-                title=feed.title,
+                title=feed.title_override or feed.title,
+                title_override=feed.title_override,
                 revision=int(feed.revision),
                 description=feed.description,
                 author=feed.author,

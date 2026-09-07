@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -30,11 +31,13 @@ from copycast.adapters.api.deps import get_container
 from copycast.adapters.api.problems import WWW_AUTHENTICATE, build_problem
 from copycast.domain.credentials import constant_time_equals
 from copycast.domain.exceptions import Unauthorized
+from copycast.domain.urls import COPYCAST_ARTWORK_PATH
 from copycast.settings import AuthSettings
 
 HEALTH_PATH = "/healthz"
 """Never gated: compose healthchecks and Kubernetes probes send no credentials."""
 FEEDS_PREFIX = "/feeds/"
+LOGO_PATH = COPYCAST_ARTWORK_PATH
 MCP_PATH = "/mcp"
 
 
@@ -74,11 +77,24 @@ def _under(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + "/")
 
 
+ROBOTS_PATH = "/robots.txt"
+ARTWORK_RE = re.compile(r"^/feeds/[^/]+/assets/[^/]+\.artwork\.[A-Za-z0-9]+$")
+
+
 def is_gated(path: str) -> bool:
-    """Paths the operator middleware challenges (everything but health, feeds and MCP)."""
-    if _under(path, HEALTH_PATH) or _under(path, MCP_PATH):
+    """Paths the operator middleware challenges (everything but health, feeds, MCP, robots)."""
+    if _under(path, HEALTH_PATH) or _under(path, MCP_PATH) or path == ROBOTS_PATH:
         return False
     return not path.startswith(FEEDS_PREFIX)
+
+
+def is_public_artwork(path: str) -> bool:
+    """Artwork assets answer without credentials: podcast apps fetch images bare.
+
+    The URLs stay unguessable (feed id and item id); media, feeds, chapters and
+    transcripts keep the feed's pair. The logo route is under the same rule.
+    """
+    return ARTWORK_RE.match(path) is not None or path == LOGO_PATH
 
 
 def unauthorized_response(path: str | None, detail: str) -> JSONResponse:
@@ -126,9 +142,9 @@ async def require_feed_access(
     container: Annotated[ApiContainer, Depends(get_container)],
     feed_id: str,
 ) -> None:
-    """The operator pair or this feed's own pair; a no-op while auth is off."""
+    """The operator pair or this feed's own pair; a no-op while auth is off or for artwork."""
     auth = container.settings.auth
-    if not auth.enabled:
+    if not auth.enabled or is_public_artwork(request.url.path):
         return
     credentials = parse_basic(request.headers.get("authorization"))
     if credentials is None:
@@ -154,7 +170,9 @@ FeedAccess = Depends(require_feed_access)
 __all__ = [
     "FEEDS_PREFIX",
     "HEALTH_PATH",
+    "LOGO_PATH",
     "MCP_PATH",
+    "ROBOTS_PATH",
     "BasicCredentials",
     "FeedAccess",
     "OperatorAuthMiddleware",

@@ -40,6 +40,8 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "request_refresh",
         "select_items",
         "preview_mirror_update",
+        "archive_available",
+        "retry_failed",
         # inboxes and requests
         "create_inbox",
         "update_inbox",
@@ -55,6 +57,7 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "subscribe_events",
         "about",
         "rebuild",
+        "purge_episodes",
         # api keys
         "list_api_keys",
         "create_api_key",
@@ -95,6 +98,8 @@ TOOL_EXEMPT: Final[frozenset[str]] = frozenset(
         "set_mirror_defaults",
         # The confirmation dialog's dry run; an agent reads the Mirror instead.
         "preview_mirror_update",
+        # Wipes every archive at once: an operator's button, never an agent's tool.
+        "purge_episodes",
     }
 )
 """Capabilities with a route but deliberately no MCP tool."""

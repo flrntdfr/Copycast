@@ -8,7 +8,14 @@ import {
   wizardReducer,
   type WizardState,
 } from "./wizard";
-import { DEFAULT_POLICY, policySchema, toBackfill, toMirrorCreate } from "./policy-form";
+import {
+  DEFAULT_POLICY,
+  policyFromDefaults,
+  policySchema,
+  toBackfill,
+  toMirrorCreate,
+} from "./policy-form";
+import { mirrorDefaults } from "@/test/factories";
 import { candidate, mirror, probeResult } from "@/test/factories";
 
 describe("wizardReducer", () => {
@@ -89,6 +96,26 @@ describe("policy form", () => {
     expect(
       policySchema.safeParse({ ...DEFAULT_POLICY, mode: "selection", selection: "" }).success,
     ).toBe(true);
+  });
+
+  it("starts from the operator's default policy, Automatic when none is stored", () => {
+    expect(DEFAULT_POLICY.mode).toBe("automatic");
+    expect(policyFromDefaults(undefined)).toEqual(DEFAULT_POLICY);
+    expect(policyFromDefaults(mirrorDefaults())).toMatchObject({
+      mode: "automatic",
+      retention_days: 7,
+    });
+    expect(
+      policyFromDefaults(mirrorDefaults({ backfill: { mode: "automatic", retention_days: null } }))
+        .retention_days,
+    ).toBeUndefined();
+    expect(policyFromDefaults(mirrorDefaults({ backfill: { mode: "all" } }))).toMatchObject({
+      mode: "all",
+      retention_days: 7,
+    });
+    expect(
+      policyFromDefaults(mirrorDefaults({ backfill: { mode: "rolling", latest_n: 4 } })),
+    ).toMatchObject({ mode: "rolling", latest_n: 4 });
   });
 
   it("builds the MirrorCreate body from the candidate and the policy", () => {

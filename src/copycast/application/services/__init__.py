@@ -41,6 +41,7 @@ from copycast.application.models import (
     ProbeResult,
     PruneRequest,
     PruneResult,
+    PurgeRequest,
     RebuildRequest,
     RequestCreate,
     RequestPage,
@@ -60,6 +61,7 @@ from copycast.application.services import jobs as _jobs
 from copycast.application.services import keys as _keys
 from copycast.application.services import mirrors as _mirrors
 from copycast.application.services import policy as _policy
+from copycast.application.services import purge as _purge
 from copycast.application.services import sources as _sources
 from copycast.application.services.context import (
     FeedSort,
@@ -187,6 +189,16 @@ class Services:
     async def preview_mirror_update(self, feed_id: str, body: MirrorUpdate) -> MirrorChangePreview:
         return await _policy.preview_mirror_update(self.ctx, feed_id, body)
 
+    async def archive_available(
+        self, feed_id: str, *, trigger: JobTrigger = JobTrigger.ui
+    ) -> SelectionResult:
+        return await _mirrors.archive_available(self.ctx, feed_id, trigger=trigger)
+
+    async def retry_failed(
+        self, feed_id: str, *, trigger: JobTrigger = JobTrigger.ui
+    ) -> SelectionResult:
+        return await _mirrors.retry_failed(self.ctx, feed_id, trigger=trigger)
+
     # inboxes and requests
     async def create_inbox(self, body: InboxCreate) -> InboxRead:
         return await _inboxes.create_inbox(self.ctx, body)
@@ -233,6 +245,9 @@ class Services:
 
     async def rebuild(self, body: RebuildRequest) -> JobRead:
         return await _jobs.rebuild(self.ctx, body)
+
+    async def purge_episodes(self, body: PurgeRequest) -> PruneResult:
+        return await _purge.purge_episodes(self.ctx, body)
 
     async def about(self) -> AboutRead:
         return await _about.about(self.ctx)

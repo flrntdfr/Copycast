@@ -45,6 +45,7 @@ export function formatEngineOptions(options: EngineOptions | null | undefined): 
 export const mirrorSettingsSchema = z
   .object({
     source_url: z.string().trim().min(1, "A Source URL is required").max(2048),
+    title: z.string().trim().max(512, "At most 512 characters"),
     follow: z.boolean(),
     ...modeFields,
     engine_options: z.string(),
@@ -69,6 +70,7 @@ export function settingsDefaults(mirror: MirrorRead): MirrorSettingsInput {
   const { backfill } = mirror;
   return {
     source_url: mirror.source_url,
+    title: mirror.title_override ?? "",
     follow: mirror.follow,
     mode: backfill.mode,
     latest_n: backfill.latest_n ?? 10,
@@ -110,6 +112,9 @@ export function currentBackfill(policy: BackfillPolicy): BackfillRequest {
 export function toMirrorUpdate(mirror: MirrorRead, values: MirrorSettingsValues): MirrorUpdate {
   const update: MirrorUpdate = {};
   if (values.source_url.trim() !== mirror.source_url) update.source_url = values.source_url.trim();
+  // An empty title means "the Source's", sent as null to clear the override.
+  const title = values.title.trim() || null;
+  if (title !== (mirror.title_override ?? null)) update.title = title;
   if (values.follow !== mirror.follow) update.follow = values.follow;
 
   const backfill = backfillOf(values);

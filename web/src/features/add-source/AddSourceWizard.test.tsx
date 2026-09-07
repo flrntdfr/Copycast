@@ -4,7 +4,15 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import type { MirrorCreate } from "@/api/types";
-import { candidate, inbox, job, mirror, probeResult, problem } from "@/test/factories";
+import {
+  candidate,
+  inbox,
+  job,
+  mirror,
+  mirrorDefaults,
+  probeResult,
+  problem,
+} from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
@@ -14,6 +22,9 @@ const bonusUrl = "https://bonus.example/feed.xml";
 function baseHandlers(created: MirrorCreate[] = []) {
   return [
     http.get("/api/feeds", () => HttpResponse.json({ feeds: [inbox({ id: "inbox-1" })] })),
+    http.get("/api/settings/defaults", () =>
+      HttpResponse.json(mirrorDefaults({ backfill: { mode: "rolling", latest_n: 3 } })),
+    ),
     http.get("/api/jobs", () =>
       HttpResponse.json({
         jobs: [job({ status: "running", feed_id: "mirror-new" })],
@@ -86,8 +97,16 @@ describe("AddSourceWizard", () => {
     await user.click(screen.getByText("Bonus Feed"));
     await user.click(screen.getByRole("button", { name: "Continue" }));
 
-    // Step 3: policy. Everything shows the count; Selection switches Follow off.
+    // Step 3: policy, starting from the operator's default (Rolling 3 here).
     expect(await screen.findByText("Everything (2)")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Rolling N" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
+    expect(screen.getByLabelText("Keep the newest")).toHaveValue(3);
+    // Selection switches Follow off.
     const follow = screen.getByRole("switch", { name: "Follow" });
     expect(follow).toHaveAttribute("aria-checked", "true");
     await user.click(screen.getByRole("tab", { name: "Selection" }));

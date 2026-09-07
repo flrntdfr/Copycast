@@ -512,6 +512,112 @@
         "x-capability": "rotate_feed_credentials"
       }
     },
+    "/api/feeds/{feed_id}/archive-available": {
+      "post": {
+        "tags": [
+          "feeds"
+        ],
+        "summary": "Queue every Available item of a Feed (the policy is untouched)",
+        "operationId": "archive_available",
+        "parameters": [
+          {
+            "name": "feed_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feed Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelectionResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "archive_available"
+      }
+    },
+    "/api/feeds/{feed_id}/retry-failed": {
+      "post": {
+        "tags": [
+          "feeds"
+        ],
+        "summary": "Queue every failed item of a Feed again",
+        "operationId": "retry_failed",
+        "parameters": [
+          {
+            "name": "feed_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feed Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelectionResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "retry_failed"
+      }
+    },
     "/api/feeds/{feed_id}/items": {
       "get": {
         "tags": [
@@ -2100,6 +2206,50 @@
           }
         },
         "x-capability": "rebuild"
+      }
+    },
+    "/api/admin/purge": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete every archived Episode everywhere; feeds stay; dry run by default",
+        "operationId": "purge_episodes",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurgeRequest",
+                "default": {
+                  "dry_run": true
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "purge_episodes"
       }
     },
     "/api/keys": {
@@ -3946,7 +4096,15 @@
             "title": "Candidate Token"
           },
           "backfill": {
-            "$ref": "#/components/schemas/BackfillRequest"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BackfillRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent: the operator's default policy (Settings page)"
           },
           "follow": {
             "anyOf": [
@@ -4026,6 +4184,10 @@
             ],
             "title": "Min Duration Seconds",
             "description": "Items shorter than this stay Available (Shorts)"
+          },
+          "backfill": {
+            "$ref": "#/components/schemas/BackfillRequest",
+            "description": "The policy a new Mirror gets unless the request names one"
           }
         },
         "additionalProperties": false,
@@ -4105,6 +4267,23 @@
             "const": "mirror",
             "title": "Kind",
             "default": "mirror"
+          },
+          "source_title": {
+            "type": "string",
+            "title": "Source Title",
+            "description": "The title the Source reports; ``title`` is yours when set"
+          },
+          "title_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title Override",
+            "description": "Your own title, if any"
           },
           "source_url": {
             "type": "string",
@@ -4236,6 +4415,7 @@
           "title",
           "feed_url",
           "created_at",
+          "source_title",
           "source_url",
           "source_kind",
           "backfill",
@@ -4257,6 +4437,19 @@
               }
             ],
             "title": "Source Url"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Your own title, kept over the Source's; null or blank uses the Source's"
           },
           "follow": {
             "anyOf": [
@@ -4677,6 +4870,19 @@
           "dry_run"
         ],
         "title": "PruneResult"
+      },
+      "PurgeRequest": {
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PurgeRequest",
+        "description": "Delete every archived Episode of every feed; feeds, Catalogs and artwork stay."
       },
       "ReadyCheck": {
         "properties": {

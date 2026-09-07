@@ -84,3 +84,13 @@ async def test_automatic_feed_lists_everything_and_archives_on_request(
     # A non-Automatic Mirror keeps 404ing unknown extensions (test_media covers it).
     other = await client.get(MEDIA_URL(mirror["id"], "0123456789abcdef", "mp3"))
     assert other.status_code == 404
+
+    # A deleted (or expired) Episode stays listed and downloads again on request.
+    gone = await client.delete(api(f"/feeds/{mirror['id']}/items/{newest['id']}"))
+    assert gone.status_code == 204
+    feed = await client.get(f"/feeds/{mirror['id']}.xml")
+    assert len(etree.fromstring(feed.content).findall(".//item/enclosure")) == 2
+    retry = await client.get(MEDIA_URL(mirror["id"], newest["id"], "mp3"))
+    assert retry.status_code == 503
+    await runner.run_until_idle()
+    assert (await client.get(MEDIA_URL(mirror["id"], newest["id"], "mp3"))).status_code == 200

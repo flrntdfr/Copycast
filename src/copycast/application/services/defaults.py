@@ -1,4 +1,4 @@
-"""Operator defaults every Mirror may override: language and minimum item length.
+"""Operator defaults every Mirror may override: language, minimum item length, default policy.
 
 They live in ``engine/defaults.json`` under the data directory so a rebuild
 keeps them, and both processes read them: the API to show and edit, the
@@ -54,6 +54,7 @@ def effective(
             if min_duration_seconds is not None
             else defaults.min_duration_seconds
         ),
+        backfill=defaults.backfill,
     )
 
 
@@ -68,7 +69,10 @@ async def set_mirror_defaults(ctx: ServiceContext, body: MirrorDefaults) -> Mirr
     """Replace the operator defaults; Mirrors with their own value are unaffected."""
     await asyncio.to_thread(store_defaults, ctx.layout.defaults_path(), body)
     log.info(
-        "defaults.stored", language=body.language, min_duration_seconds=body.min_duration_seconds
+        "defaults.stored",
+        language=body.language,
+        min_duration_seconds=body.min_duration_seconds,
+        backfill_mode=body.backfill.mode.value,
     )
     return body
 

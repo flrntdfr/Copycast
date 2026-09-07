@@ -3,12 +3,19 @@ import type { ReactNode } from "react";
 import type { BackfillMode } from "@/api/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-/** The modes offered as tabs; `latest` only shows on a Mirror that already uses it. */
+/** The modes offered as tabs, in order; `latest` only shows on a Mirror that already uses it. */
 export const OFFERED_MODES = [
+  "automatic",
   "all",
   "rolling",
-  "automatic",
   "selection",
+] as const satisfies readonly BackfillMode[];
+
+/** The modes an operator may make the default: a Selection needs numbers per Mirror. */
+export const DEFAULTABLE_MODES = [
+  "automatic",
+  "all",
+  "rolling",
 ] as const satisfies readonly BackfillMode[];
 
 export const MODE_LABELS: Record<BackfillMode, string> = {
@@ -39,6 +46,7 @@ export function ModeTabs({
   onValueChange,
   total,
   legacyLatest = false,
+  modes = OFFERED_MODES,
   children,
 }: {
   value: BackfillMode;
@@ -47,13 +55,15 @@ export function ModeTabs({
   total?: number | null;
   /** Keep a Latest N tab for a Mirror created with it. */
   legacyLatest?: boolean;
+  /** Which modes to offer, in order. */
+  modes?: readonly BackfillMode[];
   children: (mode: BackfillMode) => ReactNode;
 }) {
-  const modes: BackfillMode[] = legacyLatest ? [...OFFERED_MODES, "latest"] : [...OFFERED_MODES];
+  const offered: BackfillMode[] = legacyLatest ? [...modes, "latest"] : [...modes];
   return (
     <Tabs value={value} onValueChange={(next) => onValueChange(next as BackfillMode)}>
       <TabsList aria-label="Backfill" className="flex-wrap">
-        {modes.map((mode) => (
+        {offered.map((mode) => (
           <TabsTrigger key={mode} value={mode} data-testid={`mode-${mode}`}>
             {mode === "all" && total != null
               ? `${MODE_LABELS.all} (${total.toLocaleString()})`
@@ -61,7 +71,7 @@ export function ModeTabs({
           </TabsTrigger>
         ))}
       </TabsList>
-      {modes.map((mode) => (
+      {offered.map((mode) => (
         <TabsContent key={mode} value={mode} className="space-y-3 rounded-lg border p-3">
           <p className="text-xs text-muted-foreground">{MODE_HINTS[mode]}</p>
           {children(mode)}

@@ -59,6 +59,7 @@ class DescriptorFeed(_Strict):
     kind: FeedKind
     is_default: bool = False
     title: str
+    title_override: str | None = None
     description: str | None = None
     author: str | None = None
     artwork_url: str | None = None

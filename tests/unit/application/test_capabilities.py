@@ -17,6 +17,8 @@ PLAN_TOOLS = {
     "list_items",
     "get_item",
     "select_items",
+    "archive_available",
+    "retry_failed",
     "delete_item",
     "request_refresh",
     "set_paused",
@@ -43,6 +45,7 @@ OPERATOR_ONLY = {
     "get_mirror_defaults",
     "set_mirror_defaults",
     "preview_mirror_update",
+    "purge_episodes",
 }
 """Routed for the UI, never tools: keys must not mint keys, agents must not rotate feeds
 or touch the cookie file (a browser session)."""

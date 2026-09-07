@@ -415,7 +415,10 @@ def test_inbox() -> None:
     _, channel = channel_of(rendered)
     assert channel.findtext("title") == "Copycast"
     assert channel.findtext("link") == f"{BASE_URL}/"
-    assert channel.findtext("description") == "Copycast"
+    assert channel.findtext("description") == "Episodes saved to the Copycast Inbox with Copycast."
+    assert channel.findtext(tag(NS_ITUNES, "author")) == "Copycast"
+    logo = channel.find(tag(NS_ITUNES, "image"))
+    assert logo is not None and logo.get("href") == f"{BASE_URL}/feeds/copycast-artwork.png"
     self_link = channel.find(tag(NS_ATOM, "link"))
     assert (
         self_link is not None and self_link.get("href") == f"{BASE_URL}/feeds/copycast-abc234.xml"
@@ -576,16 +579,28 @@ def test_automatic_feed_lists_unarchived_items_with_a_placeholder() -> None:
             media_bytes=0,
             published_at=NOW - timedelta(days=1),
         ),
-        item("cccccccccccccccc", 3, "Gone", state=ArchiveState.deleted, published_at=NOW),
+        item(
+            "cccccccccccccccc",
+            3,
+            "Gone",
+            state=ArchiveState.deleted,
+            media_ext=None,  # type: ignore[arg-type]
+            media_mime=None,  # type: ignore[arg-type]
+            media_bytes=0,
+            published_at=NOW - timedelta(days=2),
+        ),
         item("dddddddddddddddd", 4, "No media", state=ArchiveState.available, archivable=False),
     ]
     rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
     enclosures = etree.fromstring(rendered.body).findall(".//item/enclosure")
+    # The archived one, the pending one and the Tombstone (downloaded again on request).
     assert [(e.get("type"), e.get("length")) for e in enclosures] == [
         ("audio/mpeg", "5155"),
         ("audio/mpeg", "0"),
+        ("audio/mpeg", "0"),
     ]
     assert (enclosures[1].get("url") or "").endswith("/bbbbbbbbbbbbbbbb.mp3")
+    assert (enclosures[2].get("url") or "").endswith("/cccccccccccccccc.mp3")
     # The same items under any other mode: only the archived one.
     plain = render_feed(
         FeedView(id=FEED_ID, kind=FeedKind.mirror, title="x"), items, base_url=BASE_URL, now=NOW

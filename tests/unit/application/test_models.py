@@ -13,6 +13,7 @@ from copycast.application.models import (
     InboxRead,
     InboxUpdate,
     MirrorCreate,
+    MirrorDefaults,
     MirrorRead,
     MirrorUpdate,
     Problem,
@@ -28,6 +29,7 @@ MIRROR: dict[str, Any] = {
     "id": "0123456789abcdef",
     "kind": "mirror",
     "title": "T",
+    "source_title": "T",
     "feed_url": "http://localhost:8080/feeds/0123456789abcdef.xml",
     "created_at": NOW,
     "source_url": "https://podcast.example/feed.xml",
@@ -63,27 +65,44 @@ def test_read_models_are_frozen() -> None:
         inbox.name = "x"  # type: ignore[misc]
 
 
-def test_mirror_create_defaults_follow_on_and_backfill_all() -> None:
+def test_mirror_create_without_a_policy_takes_the_operator_default() -> None:
     m = MirrorCreate(source_url=" https://podcast.example/feed.xml ")
     assert m.source_url == "https://podcast.example/feed.xml"
-    assert m.backfill.mode is BackfillMode.all
-    assert m.follow is True and m.effective_follow is True
+    assert m.backfill is None and m.follow is None
     assert m.engine_options == {}
+    backfill, follow = m.resolve(BackfillRequest(mode=BackfillMode.automatic))
+    assert backfill.mode is BackfillMode.automatic and follow is True
+    explicit = MirrorCreate(source_url="https://p.example/f.xml", backfill={"mode": "all"})
+    backfill, follow = explicit.resolve(BackfillRequest(mode=BackfillMode.automatic))
+    assert backfill.mode is BackfillMode.all and follow is True
+    # The operator default itself is Automatic and may never be a selection.
+    assert MirrorDefaults().backfill.mode is BackfillMode.automatic
+    assert MirrorDefaults().backfill.retention_days == 7
+    with pytest.raises(ValidationError):
+        MirrorDefaults(backfill={"mode": "selection"})
+    assert MirrorDefaults(backfill={"mode": "rolling", "latest_n": 3}).backfill.latest_n == 3
 
 
 def test_selection_implies_selection_mode_and_follow_off() -> None:
     m = MirrorCreate.model_validate(
         {"source_url": "https://p.example/f.xml", "backfill": {"selection": "1-42,180"}}
     )
-    assert m.backfill.mode is BackfillMode.selection
+    assert m.backfill is not None and m.backfill.mode is BackfillMode.selection
     assert m.backfill.selection == "1-42,180"
-    assert m.follow is False
+    assert m.resolve(BackfillRequest())[1] is False
+
+
+def test_mirror_update_title_is_stripped_and_blank_clears() -> None:
+    assert MirrorUpdate(title="  Mine  ").title == "Mine"
+    assert MirrorUpdate(title="   ").title is None
+    assert "title" in MirrorUpdate(title=None).model_fields_set
 
 
 def test_follow_can_still_be_forced_on_under_selection() -> None:
     m = MirrorCreate.model_validate(
         {"source_url": "https://p.example/f.xml", "backfill": {"selection": "1"}, "follow": True}
     )
+    assert m.resolve(BackfillRequest())[1] is True
     assert m.follow is True
 
 

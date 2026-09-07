@@ -104,18 +104,14 @@ class CatalogRepository:
     async def for_render(self, feed_id: str, *, include_listed: bool = False) -> list[CatalogItem]:
         """Archived items in feed order: ``published_at DESC NULLS LAST, ordinal DESC``.
 
-        ``include_listed`` (Automatic Mirrors) adds every listed, archivable item that is
-        not tombstoned, so a podcast app can ask for it.
+        ``include_listed`` (Automatic Mirrors) adds every listed, archivable item,
+        Tombstones included, so a podcast app can ask for it.
         """
         condition = CatalogItem.archive_state == ArchiveState.archived.value
         if include_listed:
             condition = or_(
                 condition,
-                and_(
-                    CatalogItem.listed.is_(True),
-                    CatalogItem.archivable.is_(True),
-                    CatalogItem.archive_state != ArchiveState.deleted.value,
-                ),
+                and_(CatalogItem.listed.is_(True), CatalogItem.archivable.is_(True)),
             )
         result = await self._session.execute(
             select(CatalogItem)
@@ -262,18 +258,23 @@ class CatalogRepository:
         first_seen_after: datetime | None = None,
         latest_n: int | None = None,
         min_duration_seconds: int | None = None,
+        include_deleted: bool = False,
     ) -> list[str]:
         """Listed, archivable, Available items, newest ordinal first (policy input).
 
         ``min_duration_seconds`` leaves out shorter items; an unknown length passes.
+        ``include_deleted`` adds Tombstones (an explicit request, never the policy).
         """
+        states = [ArchiveState.available.value]
+        if include_deleted:
+            states.append(ArchiveState.deleted.value)
         stmt = (
             select(CatalogItem.id)
             .where(
                 CatalogItem.feed_id == feed_id,
                 CatalogItem.listed.is_(True),
                 CatalogItem.archivable.is_(True),
-                CatalogItem.archive_state == ArchiveState.available.value,
+                CatalogItem.archive_state.in_(states),
             )
             .order_by(CatalogItem.ordinal.desc())
         )

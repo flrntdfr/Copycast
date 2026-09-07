@@ -2,12 +2,14 @@ import { Loader2, Save, SlidersHorizontal } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { $api } from "@/api/client";
-import type { MirrorDefaults } from "@/api/types";
+import type { BackfillMode, BackfillRequest, MirrorDefaults } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSetDefaults } from "./mutations";
+import { RetentionField, WindowField } from "@/features/mirrors/ModeFields";
+import { DEFAULTABLE_MODES, ModeTabs } from "@/features/mirrors/ModeTabs";
 import { minutesToSeconds, secondsToMinutes } from "@/lib/format";
 
 /** The operator defaults every Mirror inherits unless it sets its own value. */
@@ -37,6 +39,30 @@ export function DefaultsCard() {
   );
 }
 
+/** The default `BackfillRequest` for the chosen mode, or null while a count is missing. */
+export function policyOf(
+  mode: BackfillMode,
+  latestN: string,
+  retention: string,
+): BackfillRequest | null {
+  const asCount = (text: string): number | null => {
+    const value = Number(text);
+    return text.trim() !== "" && Number.isInteger(value) && value >= 1 ? value : null;
+  };
+  switch (mode) {
+    case "rolling": {
+      const n = asCount(latestN);
+      return n ? { mode: "rolling", latest_n: n } : null;
+    }
+    case "automatic":
+      return { mode: "automatic", retention_days: asCount(retention) };
+    case "all":
+      return { mode: "all" };
+    default:
+      return null;
+  }
+}
+
 /** Remounted (by key) whenever the stored defaults change, so the fields start from them. */
 function DefaultsForm({ stored }: { stored: MirrorDefaults }) {
   const save = useSetDefaults();
@@ -44,11 +70,26 @@ function DefaultsForm({ stored }: { stored: MirrorDefaults }) {
   const [minutes, setMinutes] = useState(
     stored.min_duration_seconds ? String(secondsToMinutes(stored.min_duration_seconds)) : "",
   );
+  const storedPolicy = stored.backfill;
+  const [mode, setMode] = useState<BackfillMode>(
+    storedPolicy && storedPolicy.mode !== "selection" && storedPolicy.mode !== "latest"
+      ? storedPolicy.mode
+      : "automatic",
+  );
+  const [latestN, setLatestN] = useState(String(storedPolicy?.latest_n ?? 10));
+  const [retention, setRetention] = useState(
+    storedPolicy?.mode === "automatic"
+      ? (storedPolicy.retention_days?.toString() ?? "")
+      : String(storedPolicy?.retention_days ?? 7),
+  );
+  const policy = policyOf(mode, latestN, retention);
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (!policy) return;
     const body: MirrorDefaults = {
       language: language.trim() || null,
       min_duration_seconds: minutesToSeconds(minutes),
+      backfill: policy,
     };
     save.mutate({ body });
   };
@@ -85,7 +126,38 @@ function DefaultsForm({ stored }: { stored: MirrorDefaults }) {
             </p>
           </div>
         </div>
-        <Button type="submit" disabled={save.isPending}>
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium">Policy for new Mirrors</legend>
+          <p className="text-xs text-muted-foreground">
+            What the Add Source wizard and agents start from; each Mirror can still choose.
+          </p>
+          <ModeTabs value={mode} onValueChange={setMode} modes={DEFAULTABLE_MODES}>
+            {(active) =>
+              active === "rolling" ? (
+                <WindowField
+                  id="defaults-latest-n"
+                  label="Keep the newest"
+                  error={policy ? undefined : "How many to keep?"}
+                  inputProps={{
+                    value: latestN,
+                    onChange: (event) => setLatestN(event.target.value),
+                    inputMode: "numeric",
+                  }}
+                />
+              ) : active === "automatic" ? (
+                <RetentionField
+                  id="defaults-retention-days"
+                  inputProps={{
+                    value: retention,
+                    onChange: (event) => setRetention(event.target.value),
+                    inputMode: "numeric",
+                  }}
+                />
+              ) : null
+            }
+          </ModeTabs>
+        </fieldset>
+        <Button type="submit" disabled={save.isPending || !policy}>
           {save.isPending ? <Loader2 className="animate-spin" /> : <Save />}
           Save defaults
         </Button>

@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { QrCodeButton } from "./QrCodeDialog";
 import { copyWithToast } from "@/lib/copy";
 import { cn } from "@/lib/utils";
 
-/** A read-only feed URL with a Copy button; what people paste into their podcast app. */
+/** A read-only feed URL with Copy and QR code buttons; what people paste into their podcast app. */
 export function FeedUrlField({
   url,
   label = "Feed URL",
@@ -58,6 +59,7 @@ export function FeedUrlField({
           </TooltipTrigger>
           <TooltipContent>Copy {label.toLowerCase()}</TooltipContent>
         </Tooltip>
+        <QrCodeButton value={url} label={label} />
       </div>
     </div>
   );

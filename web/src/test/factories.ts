@@ -39,6 +39,8 @@ export function mirror(overrides: Partial<MirrorRead> = {}): MirrorRead {
     revision: 1,
     created_at: "2024-01-10T10:00:00Z",
     source_url: "https://podcast.example/feed.xml",
+    source_title: overrides.title ?? "Example Podcast",
+    title_override: null,
     service: null,
     source_kind: "rss",
     language: null,
@@ -233,7 +235,12 @@ export function engineCookies(overrides: Partial<EngineCookiesRead> = {}): Engin
 }
 
 export function mirrorDefaults(overrides: Partial<MirrorDefaults> = {}): MirrorDefaults {
-  return { language: null, min_duration_seconds: null, ...overrides };
+  return {
+    language: null,
+    min_duration_seconds: null,
+    backfill: { mode: "automatic", latest_n: null, retention_days: 7, selection: null },
+    ...overrides,
+  };
 }
 
 export function videoResult(overrides: Partial<VideoSearchResult> = {}): VideoSearchResult {

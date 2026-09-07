@@ -38,6 +38,7 @@ from copycast.domain.enums import (
     FeedKind,
     SourceKind,
 )
+from copycast.domain.urls import COPYCAST_ARTWORK_PATH
 from copycast.version import APP_VERSION
 
 if TYPE_CHECKING:
@@ -46,6 +47,8 @@ else:  # lxml exposes no public element type at runtime
     Element = object
 
 GENERATOR: Final = f"Copycast {APP_VERSION}"
+INBOX_AUTHOR: Final = "Copycast"
+INBOX_DESCRIPTION: Final = "Episodes saved to the {title} Inbox with Copycast."
 CONTENT_TYPE: Final = "application/rss+xml; charset=utf-8"
 DEFAULT_LANGUAGE: Final = "en"
 CAPTION_FORMATS: Final = frozenset({AssetFormat.vtt, AssetFormat.srt})
@@ -121,13 +124,9 @@ class ItemView:
 
     @property
     def on_demand(self) -> bool:
-        """Listed and archivable but not archived: an Automatic feed still lists it."""
-        return (
-            self.listed
-            and self.archivable
-            and self.archive_state is not ArchiveState.archived
-            and self.archive_state is not ArchiveState.deleted
-        )
+        """Listed and archivable but not archived (Tombstones included): an Automatic feed
+        lists it and archives it on request."""
+        return self.listed and self.archivable and self.archive_state is not ArchiveState.archived
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +137,8 @@ class FeedView:
     kind: FeedKind
     title: str
     revision: int = 1
+    title_override: str | None = None
+    """Set when ``title`` is the operator's own: a preserved RSS channel gets it too."""
     description: str | None = None
     author: str | None = None
     artwork_url: str | None = None
@@ -187,6 +188,8 @@ def render_feed(
     )
     self_url = feed_url(base_url, feed.id)
     feed_artwork = _local_url(base_url, feed.id, _pick_artwork(feed.assets)) or feed.artwork_url
+    if feed_artwork is None and feed.kind is FeedKind.inbox:
+        feed_artwork = base_url.rstrip("/") + COPYCAST_ARTWORK_PATH
 
     preserved = (
         feed.kind is FeedKind.mirror
@@ -202,6 +205,8 @@ def render_feed(
         )
     if root is None or channel is None:
         root, channel = _synthesized_channel(feed, base_url, self_url, feed_artwork, last_modified)
+    elif feed.title_override:
+        _set_title(channel, feed.title)
 
     for item in renderable:
         element = _preserved_item(feed, item, base_url) if preserved else None
@@ -287,12 +292,18 @@ def _synthesized_channel(
     root = etree.Element("rss", nsmap=_merged_nsmap(None))
     root.set("version", "2.0")
     channel = etree.SubElement(root, "channel")
+    inbox = feed.kind is FeedKind.inbox
     _sub(channel, "title", feed.title)
     _sub(channel, "link", feed.link or base_url.rstrip("/") + "/")
-    _sub(channel, "description", feed.description or feed.title)
+    _sub(
+        channel,
+        "description",
+        feed.description or (INBOX_DESCRIPTION.format(title=feed.title) if inbox else feed.title),
+    )
     _sub(channel, "language", feed.language or DEFAULT_LANGUAGE)
-    if feed.author:
-        _sub(channel, tag(NS_ITUNES, "author"), feed.author)
+    author = feed.author or (INBOX_AUTHOR if inbox else None)
+    if author:
+        _sub(channel, tag(NS_ITUNES, "author"), author)
     if artwork:
         etree.SubElement(channel, tag(NS_ITUNES, "image")).set("href", artwork)
     _sub(channel, tag(NS_ITUNES, "type"), "episodic")
@@ -322,7 +333,7 @@ def _preserved_item(feed: FeedView, item: ItemView, base_url: str) -> Element | 
         return None
     if etree.QName(element).localname != "item":
         return None
-    assert item.media_ext is not None
+    # An Automatic feed lists unarchived items too: the enclosure is then the placeholder.
     _replace_all(element, [_enclosure(base_url, feed, item)], (None, "enclosure"))
 
     chapters = _pick_chapters(item.assets)
@@ -490,6 +501,18 @@ def _replace_all(parent: Element, replacements: list[Element], key: tuple[str | 
         parent.remove(child)
     for offset, replacement in enumerate(replacements):
         parent.insert(index + offset, replacement)
+
+
+def _set_title(channel: Element, title: str) -> None:
+    """Replace the channel's ``<title>`` (and ``itunes:title`` when present) with the operator's."""
+    element = channel.find("title")
+    if element is None:
+        element = etree.Element("title")
+        channel.insert(0, element)
+    element.text = title
+    itunes_title = channel.find(tag(NS_ITUNES, "title"))
+    if itunes_title is not None:
+        itunes_title.text = title
 
 
 def _set_artwork(parent: Element, url: str, *, create: bool) -> None:

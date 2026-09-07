@@ -40,6 +40,7 @@ def mirror_row(**overrides: Any) -> Any:
         "kind": "mirror",
         "is_default": False,
         "title": "Show",
+        "title_override": None,
         "description": None,
         "author": None,
         "artwork_url": None,

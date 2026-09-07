@@ -1,0 +1,112 @@
+"""Title override, the operator's default policy, bulk archive/retry, purge."""
+
+from __future__ import annotations
+
+import pytest
+
+from copycast.app import Container
+from copycast.application.models import MirrorDefaults, MirrorRead, MirrorUpdate, PurgeRequest
+from copycast.application.ports import PermanentError
+from copycast.domain.enums import ArchiveState, BackfillMode
+from copycast.worker.runner import Runner
+from tests.integration.worker.conftest import Source, create_mirror, uow
+from tests.support.fake_engine import FakeEngine
+
+pytestmark = pytest.mark.integration
+
+
+async def test_title_override_survives_refresh_and_clears(
+    container: Container, source: Source, runner: Runner
+) -> None:
+    url = source.write_rss("titled", items=[1], artwork=False, title="Source Title")
+    mirror = await create_mirror(container, url)
+    await runner.run_until_idle()
+    assert mirror.title == "Source Title" and mirror.title_override is None
+
+    mine = await container.services.update_mirror(mirror.id, MirrorUpdate(title="  My Show "))
+    assert mine.title == "My Show" and mine.source_title == "Source Title"
+    assert mine.title_override == "My Show"
+    listed = await container.services.list_feeds()
+    assert [f.title for f in listed.feeds if f.id == mirror.id] == ["My Show"]
+    rendered = await container.renderer.render(mirror.id)
+    assert rendered is not None and b"<title>My Show</title>" in rendered.body
+
+    # The Source's title keeps updating underneath; the override stays.
+    source.write_rss("titled", items=[1], artwork=False, title="Renamed at the Source")
+    job = await container.services.request_refresh(mirror.id)
+    assert job is not None
+    await runner.run_until_idle()
+    read = await container.services.get_feed(mirror.id)
+    assert isinstance(read, MirrorRead)
+    assert read.title == "My Show" and read.source_title == "Renamed at the Source"
+
+    # Blank or null restores the Source's title.
+    restored = await container.services.update_mirror(mirror.id, MirrorUpdate(title=None))
+    assert restored.title == "Renamed at the Source" and restored.title_override is None
+
+
+async def test_new_mirrors_take_the_operator_default_policy(
+    container: Container, source: Source, runner: Runner
+) -> None:
+    from copycast.application.models import MirrorCreate
+
+    url = source.write_rss("defaulted", items=[2, 1], artwork=False)
+    created = await container.services.create_mirror(MirrorCreate(source_url=url))
+    assert created.backfill.mode is BackfillMode.automatic
+    assert created.backfill.retention_days == 7 and created.follow is True
+    await runner.run_until_idle()
+    assert created.counts.archived == 0
+
+    await container.services.set_mirror_defaults(MirrorDefaults(backfill={"mode": "all"}))
+    other = source.write_rss("defaulted-all", items=[1], artwork=False)
+    everything = await container.services.create_mirror(MirrorCreate(source_url=other))
+    assert everything.backfill.mode is BackfillMode.all
+    await runner.run_until_idle()
+    assert (await container.services.get_feed(everything.id)).episode_count == 1
+
+
+async def test_archive_available_retry_failed_and_purge(
+    container: Container, source: Source, runner: Runner, engine: FakeEngine
+) -> None:
+    url = source.write_rss("bulk", items=[3, 2, 1], artwork=False)
+    mirror = await create_mirror(container, url, mode=BackfillMode.automatic)
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        states = {i.source_number: i.archive_state for i in await unit.catalog.for_feed(mirror.id)}
+    assert set(states.values()) == {ArchiveState.available}
+
+    # Everything Available is queued at once; the mode stays Automatic.
+    queued = await container.services.archive_available(mirror.id)
+    assert len(queued.resolved) == 3 and len(queued.jobs) == 3
+    await runner.run_until_idle()
+    read = await container.services.get_feed(mirror.id)
+    assert read.episode_count == 3
+    assert isinstance(read, MirrorRead) and read.backfill.mode is BackfillMode.automatic
+    again = await container.services.archive_available(mirror.id)
+    assert again.resolved == [] and again.jobs == []
+
+    # A purge tombstones every archived Episode of every feed; a dry run only counts.
+    preview = await container.services.purge_episodes(PurgeRequest(dry_run=True))
+    assert preview.matched == 3 and preview.deleted_count == 0 and preview.bytes_freed > 0
+    assert (await container.services.get_feed(mirror.id)).episode_count == 3
+    purged = await container.services.purge_episodes(PurgeRequest(dry_run=False))
+    assert purged.deleted_count == 3 and purged.bytes_freed == preview.bytes_freed
+    read = await container.services.get_feed(mirror.id)
+    assert read.episode_count == 0 and read.storage_bytes == 0
+    assert not list(container.layout.media_dir(mirror.id).glob("*.m4a"))
+    # Tombstones count as Available for an explicit request.
+    back = await container.services.archive_available(mirror.id)
+    assert len(back.resolved) == 3
+
+    # Failed downloads are retried in bulk.
+    for _ in range(3):
+        engine.fail_next(PermanentError("video is private"))
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        failed = await unit.catalog.ids_in_state(mirror.id, ArchiveState.failed)
+    assert len(failed) == 3
+    retried = await container.services.retry_failed(mirror.id)
+    assert sorted(retried.resolved) == sorted(failed)
+    await runner.run_until_idle()
+    assert (await container.services.get_feed(mirror.id)).episode_count == 3
+    assert (await container.services.retry_failed(mirror.id)).resolved == []

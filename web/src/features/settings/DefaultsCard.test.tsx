@@ -36,9 +36,26 @@ describe("Defaults card", () => {
     await user.type(language, "fr");
     await user.clear(minutes);
     await user.type(minutes, "2");
+    // The default policy starts from what is stored (Automatic, 7 days) and can change.
+    expect(within(form).getByRole("tab", { name: "Automatic" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(within(form).queryByRole("tab", { name: "Selection" })).not.toBeInTheDocument();
+    expect(within(form).getByLabelText("Keep downloaded for")).toHaveValue(7);
+    await user.click(within(form).getByRole("tab", { name: "Rolling N" }));
+    const keep = within(form).getByLabelText("Keep the newest");
+    await user.clear(keep);
+    await user.type(keep, "5");
     await user.click(within(form).getByRole("button", { name: "Save defaults" }));
     await waitFor(() =>
-      expect(state.saved).toEqual([{ language: "fr", min_duration_seconds: 120 }]),
+      expect(state.saved).toEqual([
+        {
+          language: "fr",
+          min_duration_seconds: 120,
+          backfill: { mode: "rolling", latest_n: 5 },
+        },
+      ]),
     );
     expect(await screen.findByText("Defaults saved")).toBeInTheDocument();
   });

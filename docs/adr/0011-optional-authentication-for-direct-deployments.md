@@ -1,6 +1,6 @@
 # 0011 Optional authentication for direct deployments
 
-Status: accepted (v1); narrows ADR 0004
+Status: accepted; amended (artwork is public, see the end) (v1); narrows ADR 0004
 
 ## Context
 
@@ -59,3 +59,11 @@ challenge.
   a separate provider on the same mount, not a change to this design.
 - The plain-text feed pairs and the operator password appear in `feed_url`; API responses are
   already `Cache-Control: no-store`.
+
+## Amendment: artwork answers without credentials
+
+Overcast and its peers fetch a feed's images without the feed's Basic pair, so feed and
+Episode artwork behind the pair simply never showed. Artwork assets
+(`/feeds/{id}/assets/*.artwork.*`) and the Copycast logo are therefore served without
+credentials; the URLs carry the feed id and item id and are not enumerable. Media, feeds,
+chapters and transcripts are unchanged.

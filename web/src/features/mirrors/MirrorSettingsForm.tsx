@@ -53,6 +53,7 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
   });
   const mode = useWatch({ control: form.control, name: "mode" });
   const retentionDays = useWatch({ control: form.control, name: "retention_days" });
+  const title = useWatch({ control: form.control, name: "title" });
   const sourceUrl = useWatch({ control: form.control, name: "source_url" });
   const retargeting = sourceUrl.trim() !== mirror.source_url;
   const defaults = $api.useQuery("get", "/api/settings/defaults");
@@ -243,6 +244,30 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
             )}
           />
         </fieldset>
+
+        <OverrideField
+          id="settings-title"
+          label="Title"
+          own={title.trim()}
+          global={mirror.source_title}
+          loaded
+          onReset={() => form.setValue("title", "", { shouldDirty: true })}
+          error={errors.title?.message}
+          hint={{
+            overriding:
+              "Shown in the UI and the Mirror Feed; the Source's title is kept underneath.",
+            following: `Using the Source's title: ${mirror.source_title}.`,
+          }}
+          resetLabel="Use Source title"
+        >
+          <Input
+            id="settings-title"
+            placeholder={mirror.source_title}
+            maxLength={512}
+            {...form.register("title")}
+            aria-invalid={!!errors.title}
+          />
+        </OverrideField>
 
         <div className="space-y-1.5">
           <Label htmlFor="settings-source-url">Source URL</Label>
@@ -439,6 +464,8 @@ function OverrideField({
   loaded,
   onReset,
   error,
+  hint,
+  resetLabel = "Use default",
   children,
 }: {
   id: string;
@@ -448,6 +475,9 @@ function OverrideField({
   loaded: boolean;
   onReset: () => void;
   error?: string;
+  /** Replaces the default wording under the field. */
+  hint?: { overriding: string; following: string };
+  resetLabel?: string;
   children: React.ReactNode;
 }) {
   const overriding = own !== "";
@@ -469,7 +499,7 @@ function OverrideField({
         {children}
         {overriding ? (
           <Button type="button" variant="outline" onClick={onReset}>
-            Use default
+            {resetLabel}
           </Button>
         ) : null}
       </div>
@@ -477,8 +507,8 @@ function OverrideField({
         {error ??
           (loaded
             ? overriding
-              ? "This Mirror ignores the default."
-              : `Using the default: ${global ?? "none"}.`
+              ? (hint?.overriding ?? "This Mirror ignores the default.")
+              : (hint?.following ?? `Using the default: ${global ?? "none"}.`)
             : "\u2026")}
       </p>
     </div>

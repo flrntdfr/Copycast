@@ -3,17 +3,17 @@ import { Inbox, Loader2 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 
-import type { ProbeCandidate } from "@/api/types";
+import type { MirrorDefaults, ProbeCandidate } from "@/api/types";
 import { Artwork } from "@/components/common/Artwork";
 import { ServiceBadge } from "@/components/common/ServiceBadge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { RangeInput } from "@/features/catalog/RangeInput";
+import { RetentionField, WindowField } from "@/features/mirrors/ModeFields";
 import { ModeTabs } from "@/features/mirrors/ModeTabs";
 import {
-  DEFAULT_POLICY,
+  policyFromDefaults,
   policySchema,
   type PolicyFormInput,
   type PolicyFormValues,
@@ -22,6 +22,7 @@ import { count } from "@/lib/labels";
 
 export function PolicyStep({
   candidate,
+  defaults,
   onSubmit,
   submitting,
   onBack,
@@ -30,6 +31,8 @@ export function PolicyStep({
   onCancelSubmit,
 }: {
   candidate: ProbeCandidate;
+  /** The operator's defaults (Settings page); the form starts from their policy. */
+  defaults?: MirrorDefaults;
   onSubmit: (values: PolicyFormValues) => void;
   submitting: boolean;
   onBack: () => void;
@@ -39,7 +42,7 @@ export function PolicyStep({
 }) {
   const form = useForm<PolicyFormInput, unknown, PolicyFormValues>({
     resolver: zodResolver(policySchema),
-    defaultValues: DEFAULT_POLICY,
+    defaultValues: policyFromDefaults(defaults),
     mode: "onChange",
   });
   const mode = useWatch({ control: form.control, name: "mode" });
@@ -84,41 +87,19 @@ export function PolicyStep({
             <ModeTabs value={field.value} onValueChange={field.onChange} total={total}>
               {(active) =>
                 active === "rolling" ? (
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="backfill-latest-n">Keep the newest</Label>
-                    <Input
-                      id="backfill-latest-n"
-                      type="number"
-                      min={1}
-                      max={total ?? undefined}
-                      className="w-28"
-                      {...form.register("latest_n", { valueAsNumber: true })}
-                      aria-invalid={!!errors.latest_n}
-                    />
-                    <span className="text-sm text-muted-foreground">items</span>
-                    {errors.latest_n ? (
-                      <p className="text-xs text-destructive">{errors.latest_n.message}</p>
-                    ) : null}
-                  </div>
+                  <WindowField
+                    id="backfill-latest-n"
+                    label="Keep the newest"
+                    max={total}
+                    error={errors.latest_n?.message}
+                    inputProps={form.register("latest_n", { valueAsNumber: true })}
+                  />
                 ) : active === "automatic" ? (
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="backfill-retention-days">Keep downloaded for</Label>
-                    <Input
-                      id="backfill-retention-days"
-                      type="number"
-                      min={1}
-                      className="w-28"
-                      placeholder="forever"
-                      {...form.register("retention_days", { valueAsNumber: true })}
-                      aria-invalid={!!errors.retention_days}
-                    />
-                    <span className="text-sm text-muted-foreground">
-                      days after the last download (empty keeps forever)
-                    </span>
-                    {errors.retention_days ? (
-                      <p className="text-xs text-destructive">{errors.retention_days.message}</p>
-                    ) : null}
-                  </div>
+                  <RetentionField
+                    id="backfill-retention-days"
+                    error={errors.retention_days?.message}
+                    inputProps={form.register("retention_days", { valueAsNumber: true })}
+                  />
                 ) : active === "selection" ? (
                   <Controller
                     control={form.control}

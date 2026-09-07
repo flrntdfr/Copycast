@@ -56,6 +56,11 @@ describe("settings form", () => {
       {},
     );
     expect(toMirrorUpdate(base, { ...parsed, engine_options: "" })).toEqual({ engine_options: {} });
+    // A title of your own is kept over the Source's; clearing it restores the Source's.
+    expect(toMirrorUpdate(base, { ...parsed, title: " Mine " })).toEqual({ title: "Mine" });
+    const titled = { ...base, title: "Mine", title_override: "Mine" };
+    expect(settingsDefaults(titled).title).toBe("Mine");
+    expect(toMirrorUpdate(titled, { ...parsed, title: "" })).toEqual({ title: null });
     // Overrides: a value sets it, clearing it sends null so the default applies again.
     expect(toMirrorUpdate(base, { ...parsed, language: " fr " })).toEqual({
       preferred_language: "fr",

@@ -66,7 +66,10 @@ def _item(http: httpx.Client, feed_id: str, item_id: str) -> dict[str, Any]:
 
 def _create_or_reuse_mirror(http: httpx.Client, source_url: str) -> dict[str, Any]:
     """POST the Mirror; a leftover from an earlier run answers 409 feed-exists."""
-    response = http.post("/api/mirrors", json={"source_url": source_url})
+    # Everything: the smoke waits for every item to be archived (the default is Automatic).
+    response = http.post(
+        "/api/mirrors", json={"source_url": source_url, "backfill": {"mode": "all"}}
+    )
     if response.status_code == 201:
         mirror: dict[str, Any] = response.json()
         # Location is built with request.url_for, so it is absolute (RFC 9110 allows both).

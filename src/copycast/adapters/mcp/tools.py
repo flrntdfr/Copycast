@@ -133,12 +133,13 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
     async def create_mirror(mirror: MirrorCreate) -> MirrorRead:
         """Create a Mirror of a Source; returns the Mirror with its ``feed_url`` synchronously.
 
-        ``backfill.mode``: ``all`` (everything), ``rolling`` with ``latest_n`` (only
-        the newest N stay archived), ``automatic`` (downloaded when a podcast app first
-        asks, expiring ``retention_days`` after the last download, null keeps forever),
-        or ``selection`` with ``selection`` such as ``"1-42, 180"`` (follow then
-        defaults to false). Rolling and expiring modes delete on their own, so they
-        need a ``full`` key. Several candidates -> pass ``candidate_token``.
+        ``backfill`` absent: the operator's default policy (Automatic unless changed on
+        the Settings page). ``backfill.mode``: ``all`` (everything), ``rolling`` with
+        ``latest_n`` (only the newest N stay archived), ``automatic`` (downloaded when a
+        podcast app first asks, expiring ``retention_days`` after the last download,
+        null keeps forever), or ``selection`` with ``selection`` such as ``"1-42, 180"``
+        (follow then defaults to false). Rolling and expiring modes delete on their own,
+        so they need a ``full`` key. Several candidates -> pass ``candidate_token``.
         """
         _check_deleting_mode(mirror.backfill, "create_mirror")
         return await container.services.create_mirror(mirror, trigger=JobTrigger.mcp)
@@ -203,13 +204,22 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         """Queue a Refresh of a Mirror now (ignores Paused and the fetch cooldown)."""
         return await container.services.request_refresh(feed_id, JobTrigger.manual)
 
+    async def archive_available(feed_id: str) -> SelectionResult:
+        """Queue every Available item of a Feed now, whatever its policy (Shorts included)."""
+        return await container.services.archive_available(feed_id, trigger=JobTrigger.mcp)
+
+    async def retry_failed(feed_id: str) -> SelectionResult:
+        """Queue every failed download of a Feed again."""
+        return await container.services.retry_failed(feed_id, trigger=JobTrigger.mcp)
+
     async def set_mirror_paused(feed_id: str, paused: bool) -> MirrorRead:
         """Pause or resume a Mirror; a Paused Mirror keeps serving its feed."""
         return await container.services.set_paused(feed_id, paused)
 
     async def update_mirror(feed_id: str, patch: MirrorUpdate) -> MirrorRead:
-        """Change a Mirror's follow flag, backfill, engine options or Source URL.
+        """Change a Mirror's title, follow flag, backfill, engine options or Source URL.
 
+        ``title`` is kept over the Source's across Refreshes; null restores the Source's.
         Switching to ``rolling``, or to ``automatic`` with a ``retention_days``,
         schedules deletions, so it needs a ``full`` key.
         """
@@ -285,6 +295,8 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         (list_items, "list_items", "list_items", True),
         (get_item, "get_item", "get_item", True),
         (archive_episodes, "archive_episodes", "select_items", False),
+        (archive_available, "archive_available", "archive_available", False),
+        (retry_failed, "retry_failed", "retry_failed", False),
         (delete_item, "delete_item", "delete_item", False),
         (refresh_mirror, "refresh_mirror", "request_refresh", False),
         (set_mirror_paused, "set_mirror_paused", "set_paused", False),

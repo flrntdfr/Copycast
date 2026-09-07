@@ -54,6 +54,9 @@ export function AddSourceWizard({
   const createAbort = useRef<AbortController | null>(null);
   const sendToInbox = useSendToInbox();
   $api.useQuery("get", "/api/feeds", { params: { query: { kind: "mirror" } } });
+  const defaults = $api.useQuery("get", "/api/settings/defaults", undefined, {
+    staleTime: 60_000,
+  });
 
   /** The known Mirrors, fetched if the list has not arrived yet; the server 409 stays the authority. */
   const knownMirrors = useCallback(async (): Promise<FeedRead[]> => {
@@ -243,7 +246,10 @@ export function AddSourceWizard({
       ) : null}
       {state.step === "policy" ? (
         <PolicyStep
+          // Remounted once the defaults arrive so the form starts from the operator's policy.
+          key={defaults.data ? "defaults" : "builtin"}
           candidate={state.candidate}
+          defaults={defaults.data}
           submitting={creating}
           onSubmit={(values) => void create(state.candidate, values)}
           onCancelSubmit={() => createAbort.current?.abort()}

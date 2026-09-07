@@ -59,6 +59,8 @@ export async function createFixtureMirror(page: Page): Promise<string> {
   await expect(page.getByRole("heading", { name: "What to archive" })).toBeVisible({
     timeout: 60_000,
   });
+  // Everything, so the worker archives every fixture item (the default is Automatic).
+  await page.getByRole("tab", { name: /^Everything/ }).click();
   await page.getByRole("button", { name: "Create Mirror" }).click();
   await expect(page.getByRole("heading", { name: "Mirror created" })).toBeVisible({
     timeout: 60_000,

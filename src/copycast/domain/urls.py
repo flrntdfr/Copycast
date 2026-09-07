@@ -6,6 +6,9 @@ import re
 from typing import Final
 from urllib.parse import urlsplit
 
+COPYCAST_ARTWORK_PATH: Final = "/feeds/copycast-artwork.png"
+"""Where the API serves the Copycast logo, the artwork of an Inbox feed without its own."""
+
 TRACKING_PARAMS: Final = frozenset(
     {"fbclid", "gclid", "mc_cid", "mc_eid", "igshid", "ref", "ref_src"}
 )

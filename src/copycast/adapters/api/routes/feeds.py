@@ -8,8 +8,8 @@ from fastapi import APIRouter, Query, Response
 
 from copycast.adapters.api.deps import RebuildGuard, ServicesDep
 from copycast.adapters.api.problems import problem_responses
-from copycast.application.models import FeedList, FeedRead
-from copycast.domain.enums import FeedKind
+from copycast.application.models import FeedList, FeedRead, SelectionResult
+from copycast.domain.enums import FeedKind, JobTrigger
 
 router = APIRouter(tags=["feeds"])
 
@@ -84,6 +84,34 @@ async def get_feed(services: ServicesDep, feed_id: str) -> FeedRead:
 )
 async def rotate_feed_credentials(services: ServicesDep, feed_id: str) -> FeedRead:
     return await services.rotate_feed_credentials(feed_id)
+
+
+@router.post(
+    "/feeds/{feed_id}/archive-available",
+    operation_id="archive_available",
+    openapi_extra={"x-capability": "archive_available"},
+    response_model=SelectionResult,
+    status_code=202,
+    dependencies=[RebuildGuard],
+    responses=problem_responses(404),
+    summary="Queue every Available item of a Feed (the policy is untouched)",
+)
+async def archive_available(services: ServicesDep, feed_id: str) -> SelectionResult:
+    return await services.archive_available(feed_id, trigger=JobTrigger.ui)
+
+
+@router.post(
+    "/feeds/{feed_id}/retry-failed",
+    operation_id="retry_failed",
+    openapi_extra={"x-capability": "retry_failed"},
+    response_model=SelectionResult,
+    status_code=202,
+    dependencies=[RebuildGuard],
+    responses=problem_responses(404),
+    summary="Queue every failed item of a Feed again",
+)
+async def retry_failed(services: ServicesDep, feed_id: str) -> SelectionResult:
+    return await services.retry_failed(feed_id, trigger=JobTrigger.ui)
 
 
 @router.delete(

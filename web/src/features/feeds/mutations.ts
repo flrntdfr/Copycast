@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { $api } from "@/api/client";
 import { OPS } from "@/api/ops";
 import type { FeedRead, MirrorRead } from "@/api/types";
+import { count } from "@/lib/labels";
 
 export function useInvalidateFeed() {
   const queryClient = useQueryClient();
@@ -51,6 +52,30 @@ export function useSetPaused() {
         : resume.mutateAsync({ params: { path: { feed_id: feedId } } }),
     isPending: pause.isPending || resume.isPending,
   };
+}
+
+export function useArchiveAvailable() {
+  const invalidate = useInvalidateFeed();
+  return $api.useMutation("post", "/api/feeds/{feed_id}/archive-available", {
+    onSuccess: (result, variables) => {
+      invalidate(variables.params.path.feed_id);
+      const queued = result.jobs?.length ?? 0;
+      toast.success(queued ? `${count(queued, "Episode")} queued` : "Nothing Available to archive");
+    },
+  });
+}
+
+export function useRetryFailed() {
+  const invalidate = useInvalidateFeed();
+  return $api.useMutation("post", "/api/feeds/{feed_id}/retry-failed", {
+    onSuccess: (result, variables) => {
+      invalidate(variables.params.path.feed_id);
+      const queued = result.jobs?.length ?? 0;
+      toast.success(
+        queued ? `${count(queued, "failed download")} queued again` : "Nothing failed to retry",
+      );
+    },
+  });
 }
 
 export function useDeleteFeed() {

@@ -107,6 +107,10 @@ class _FeedReadBase(ReadModel):
 
 class MirrorRead(_FeedReadBase):
     kind: Literal[FeedKind.mirror] = FeedKind.mirror
+    source_title: str = Field(
+        description="The title the Source reports; ``title`` is yours when set"
+    )
+    title_override: str | None = Field(default=None, description="Your own title, if any")
     source_url: str
     service: str | None = None
     source_kind: SourceKind
@@ -347,7 +351,9 @@ class BackfillRequest(RequestModel):
 class MirrorCreate(RequestModel):
     source_url: str = Field(min_length=1, max_length=2048)
     candidate_token: str | None = None
-    backfill: BackfillRequest = Field(default_factory=BackfillRequest)
+    backfill: BackfillRequest | None = Field(
+        default=None, description="Absent: the operator's default policy (Settings page)"
+    )
     follow: bool | None = Field(
         default=None, description="Defaults to true, or false under a selection backfill"
     )
@@ -379,26 +385,36 @@ class MirrorCreate(RequestModel):
     def _feed_scope(cls, value: dict[str, Any]) -> dict[str, Any]:
         return EngineOptions.validate(value, scope="feed")
 
-    @model_validator(mode="after")
-    def _follow_default(self) -> MirrorCreate:
-        if self.follow is None:
-            self.follow = self.backfill.mode is not BackfillMode.selection
-        return self
-
-    @property
-    def effective_follow(self) -> bool:
-        return bool(self.follow)
+    def resolve(self, default: BackfillRequest) -> tuple[BackfillRequest, bool]:
+        """The policy to apply and the Follow flag, filling both from ``default``."""
+        backfill = self.backfill if self.backfill is not None else default
+        follow = (
+            self.follow if self.follow is not None else backfill.mode is not BackfillMode.selection
+        )
+        return backfill, follow
 
 
 class MirrorUpdate(RequestModel):
     """PATCH body; only the fields present in ``model_fields_set`` are applied."""
 
     source_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    title: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Your own title, kept over the Source's; null or blank uses the Source's",
+    )
     follow: bool | None = None
     backfill: BackfillRequest | None = None
     engine_options: dict[str, Any] | None = None
     preferred_language: str | None = Field(default=None, max_length=16)
     min_duration_seconds: int | None = Field(default=None, ge=1)
+
+    @field_validator("title")
+    @classmethod
+    def _strip_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
 
     @field_validator("source_url")
     @classmethod
@@ -540,6 +556,12 @@ class PruneResult(ReadModel):
     dry_run: bool
 
 
+class PurgeRequest(RequestModel):
+    """Delete every archived Episode of every feed; feeds, Catalogs and artwork stay."""
+
+    dry_run: bool = True
+
+
 # --------------------------------------------------------------------------- mirror defaults
 
 
@@ -557,6 +579,17 @@ class MirrorDefaults(RequestModel):
     min_duration_seconds: int | None = Field(
         default=None, ge=1, description="Items shorter than this stay Available (Shorts)"
     )
+    backfill: BackfillRequest = Field(
+        default_factory=lambda: BackfillRequest(mode=BackfillMode.automatic),
+        description="The policy a new Mirror gets unless the request names one",
+    )
+
+    @field_validator("backfill")
+    @classmethod
+    def _no_selection_default(cls, value: BackfillRequest) -> BackfillRequest:
+        if value.mode is BackfillMode.selection:
+            raise ValueError("the default policy cannot be a selection")
+        return value
 
     @field_validator("language")
     @classmethod

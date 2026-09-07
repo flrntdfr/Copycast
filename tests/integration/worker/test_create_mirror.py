@@ -25,7 +25,7 @@ async def test_create_reuses_the_probe_cache(container: Container, source: Sourc
     hits_before = source.origin.hits("/rss/show.xml")
 
     mirror = await container.services.create_mirror(
-        MirrorCreate(source_url=url, candidate_token=token)
+        MirrorCreate(source_url=url, candidate_token=token, backfill={"mode": "all"})
     )
 
     assert source.origin.hits("/rss/show.xml") == hits_before, "the cached listing was reused"

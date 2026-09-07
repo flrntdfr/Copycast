@@ -84,6 +84,7 @@ class FeedRow(Protocol):
     def last_error(self) -> str | None: ...
 
     title: str
+    title_override: str | None
     description: str | None
     author: str | None
     artwork_url: str | None
@@ -374,6 +375,7 @@ class CatalogRepositoryPort(Protocol):
         first_seen_after: datetime | None = None,
         latest_n: int | None = None,
         min_duration_seconds: int | None = None,
+        include_deleted: bool = False,
     ) -> Sequence[str]: ...
     async def window_ids(
         self, feed_id: str, size: int, *, min_duration_seconds: int | None = None

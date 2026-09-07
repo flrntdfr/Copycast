@@ -18,22 +18,34 @@ async def test_defaults_round_trip_and_validation(
 ) -> None:
     empty = await client.get(api("/settings/defaults"))
     assert empty.status_code == 200
-    assert empty.json() == {"language": None, "min_duration_seconds": None}
+    automatic = {"mode": "automatic", "latest_n": None, "retention_days": 7, "selection": None}
+    assert empty.json() == {"language": None, "min_duration_seconds": None, "backfill": automatic}
 
     stored = await client.put(
-        api("/settings/defaults"), json={"language": " fr_ca ", "min_duration_seconds": 300}
+        api("/settings/defaults"),
+        json={"language": " fr_ca ", "min_duration_seconds": 300, "backfill": {"mode": "all"}},
     )
     assert stored.status_code == 200, stored.text
-    assert stored.json() == {"language": "fr-CA", "min_duration_seconds": 300}
+    assert stored.json() == {
+        "language": "fr-CA",
+        "min_duration_seconds": 300,
+        "backfill": {"mode": "all", "latest_n": None, "retention_days": None, "selection": None},
+    }
     assert container.layout.defaults_path().is_file()
     assert (await client.get(api("/settings/defaults"))).json()["language"] == "fr-CA"
 
-    for body in ({"language": "français"}, {"min_duration_seconds": 0}, {"bogus": 1}):
+    for body in (
+        {"language": "français"},
+        {"min_duration_seconds": 0},
+        {"bogus": 1},
+        {"backfill": {"mode": "selection"}},
+        {"backfill": {"mode": "rolling"}},
+    ):
         rejected = await client.put(api("/settings/defaults"), json=body)
         assert rejected.status_code == 422, body
 
     cleared = await client.put(api("/settings/defaults"), json={})
-    assert cleared.json() == {"language": None, "min_duration_seconds": None}
+    assert cleared.json() == {"language": None, "min_duration_seconds": None, "backfill": automatic}
 
 
 async def test_search_videos_lists_engine_hits(

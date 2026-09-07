@@ -127,6 +127,30 @@ async def test_feed_routes_take_the_feed_pair_or_the_operator_pair(
     assert (await client.get(media_path, headers=OPERATOR_HEADERS)).status_code == 200
 
 
+async def test_artwork_logo_and_robots_are_public(
+    client: httpx.AsyncClient, source: Source, runner: Runner
+) -> None:
+    url = source.write_rss("art", items=[1], artwork=True, assets=True)
+    client.headers.update(OPERATOR_HEADERS)
+    mirror = await create_mirror(client, url)
+    archived = await archived_items(client, runner, mirror["id"])
+    client.headers.pop("Authorization")
+    # Podcast apps fetch images bare: feed and Episode artwork answer without credentials.
+    assert (await client.get(f"/feeds/{mirror['id']}/assets/feed.artwork.jpg")).status_code == 200
+    item_art = next(a for a in archived[0]["assets"] if a["kind"] == "artwork")
+    assert (await client.get(item_art["url"])).status_code == 200
+    # Other assets keep the feed's pair.
+    chapters = next(a for a in archived[0]["assets"] if a["kind"] == "chapters")
+    assert (await client.get(chapters["url"])).status_code == 401
+    # The logo an Inbox feed shows, and robots.txt, are open too.
+    logo = await client.get("/feeds/copycast-artwork.png")
+    assert logo.status_code == 200 and logo.headers["content-type"] == "image/png"
+    robots = await client.get("/robots.txt")
+    assert robots.status_code == 200 and "Disallow: /" in robots.text
+    assert robots.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
+    assert (await client.get(api("/feeds"))).headers["x-robots-tag"].startswith("noindex")
+
+
 async def test_rotate_feed_credentials(
     client: httpx.AsyncClient, source: Source, container: Container
 ) -> None:

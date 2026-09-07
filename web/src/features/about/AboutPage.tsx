@@ -17,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { PurgeButton } from "./PurgeDialog";
 import { describeWorkerSeen, useWorkerStatus, workerSeenOf } from "./worker-status";
 import { formatBytes, formatDate, formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -65,9 +66,12 @@ export function AboutPage() {
         <dt className="text-muted-foreground">Layout version</dt>
         <dd>{info.layout_version}</dd>
         <dt className="text-muted-foreground">Totals</dt>
-        <dd>
-          {formatNumber(totals.feeds)} feeds · {formatNumber(totals.episodes)} Episodes ·{" "}
-          {formatBytes(totals.storage_bytes)}
+        <dd className="flex items-center gap-2">
+          <span>
+            {formatNumber(totals.feeds)} feeds · {formatNumber(totals.episodes)} Episodes ·{" "}
+            {formatBytes(totals.storage_bytes)}
+          </span>
+          <PurgeButton />
         </dd>
         <dt className="text-muted-foreground">Worker last seen</dt>
         <dd data-testid="about-worker" className={cn(workerWarn && "text-warning-foreground")}>

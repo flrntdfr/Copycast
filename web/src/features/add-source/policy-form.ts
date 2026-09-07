@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { BackfillRequest, MirrorCreate, ProbeCandidate } from "@/api/types";
+import type { BackfillRequest, MirrorCreate, MirrorDefaults, ProbeCandidate } from "@/api/types";
 import { parseSelection, selectionIsValid } from "@/lib/selection";
 
 /** Number inputs report NaN or "" when empty; treat those as "not given". */
@@ -76,12 +76,28 @@ export type PolicyFormValues = z.output<typeof policySchema>;
 export type PolicyFormInput = z.input<typeof policySchema>;
 
 export const DEFAULT_POLICY: PolicyFormValues = {
-  mode: "all",
+  mode: "automatic",
   latest_n: 10,
   retention_days: DEFAULT_RETENTION_DAYS,
   selection: "",
   follow: true,
 };
+
+/** The wizard's starting values: the operator's default policy from Settings, else the built-in. */
+export function policyFromDefaults(defaults: MirrorDefaults | undefined): PolicyFormValues {
+  const backfill = defaults?.backfill;
+  if (!backfill || backfill.mode === "selection" || backfill.mode === "latest")
+    return DEFAULT_POLICY;
+  return {
+    ...DEFAULT_POLICY,
+    mode: backfill.mode,
+    latest_n: backfill.latest_n ?? DEFAULT_POLICY.latest_n,
+    retention_days:
+      backfill.mode === "automatic"
+        ? (backfill.retention_days ?? undefined)
+        : DEFAULT_RETENTION_DAYS,
+  };
+}
 
 /** The `BackfillRequest` for the mode and its own fields (the others are dropped). */
 export function backfillOf(values: {

@@ -18,16 +18,21 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import PlainTextResponse
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from copycast.adapters.api.auth import OperatorAuthMiddleware
+from copycast.adapters.api.auth import ROBOTS_PATH, OperatorAuthMiddleware
 from copycast.adapters.api.cache import FeedCache
 from copycast.adapters.api.container import ApiContainer
 from copycast.adapters.api.events import EventHub, psycopg_conninfo
 from copycast.adapters.api.health import create_health_router
-from copycast.adapters.api.middleware import NoStoreJsonMiddleware, RequestContextMiddleware
+from copycast.adapters.api.middleware import (
+    NoRobotsMiddleware,
+    NoStoreJsonMiddleware,
+    RequestContextMiddleware,
+)
 from copycast.adapters.api.problems import install_exception_handlers, relabel_problem_content
 from copycast.adapters.api.routes import create_api_router
 from copycast.adapters.api.routes import public as public_routes
@@ -127,6 +132,14 @@ async def preflight(container: ApiContainer) -> None:
     await container.prepare_schema()
 
 
+ROBOTS_TXT = "User-agent: *\nDisallow: /\n"
+
+
+async def robots() -> PlainTextResponse:
+    """Crawlers are told to stay out; the header on every response says the same."""
+    return PlainTextResponse(ROBOTS_TXT, headers={"Cache-Control": "public, max-age=86400"})
+
+
 def _lifespan(settings: Settings, container: ApiContainer, mcp_app: Any) -> Any:
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -177,13 +190,16 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
     # Innermost: runs right before routing, inside the request-id and gzip layers.
     app.add_middleware(OperatorAuthMiddleware, auth=settings.auth)
     app.add_middleware(NoStoreJsonMiddleware)
+    app.add_middleware(NoRobotsMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
         GZipMiddleware, minimum_size=GZIP_MINIMUM_SIZE, exclude_content_types=GZIP_EXCLUDED_TYPES
     )
 
     app.include_router(create_api_router(), prefix=API_PREFIX)
+    app.include_router(public_routes.open_router, prefix=FEEDS_PREFIX)
     app.include_router(public_routes.router, prefix=FEEDS_PREFIX)
+    app.add_api_route(ROBOTS_PATH, robots, methods=["GET"], include_in_schema=False)
     app.include_router(create_health_router(), prefix=HEALTH_PREFIX)
     app.router.routes.append(Route(MCP_PREFIX, ExactMount(mcp_app, MCP_PREFIX), name="mcp-root"))
     app.mount(MCP_PREFIX, mcp_app, name="mcp")

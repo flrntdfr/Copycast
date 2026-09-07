@@ -4,7 +4,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import type { MirrorUpdate } from "@/api/types";
-import { item, job, mirror, problem } from "@/test/factories";
+import { item, job, mirror, problem, selectionResult } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
@@ -71,6 +71,18 @@ function handlers(calls: { method: string; path: string; body?: unknown }[] = []
       await record(request);
       return HttpResponse.json({ ...feed, paused: true });
     }),
+    http.post("/api/feeds/:feedId/archive-available", async ({ request }) => {
+      await record(request);
+      return HttpResponse.json(selectionResult({ resolved: ["a", "b"], jobs: [job(), job()] }), {
+        status: 202,
+      });
+    }),
+    http.post("/api/feeds/:feedId/retry-failed", async ({ request }) => {
+      await record(request);
+      return HttpResponse.json(selectionResult({ resolved: ["c"], jobs: [job()] }), {
+        status: 202,
+      });
+    }),
     http.post("/api/mirrors/:feedId/preview", async ({ request }) => {
       await record(request);
       const body = calls.at(-1)?.body as MirrorUpdate;
@@ -130,6 +142,63 @@ describe("Mirror page", () => {
     );
   });
 
+  it("archives everything Available from the menu, optionally switching to Everything", async () => {
+    const calls: { method: string; path: string; body?: unknown }[] = [];
+    server.use(
+      // Before the shared handlers: the first matching handler wins.
+      http.get("/api/feeds/:feedId", () =>
+        HttpResponse.json({
+          ...feed,
+          backfill: { mode: "automatic", latest_n: null, retention_days: 7 },
+          counts: { ...feed.counts, failed: 1 },
+        }),
+      ),
+      ...handlers(calls),
+    );
+    const user = userEvent.setup();
+    renderApp("/mirrors/mirror-1");
+    await screen.findByRole("heading", { name: "Example Podcast" });
+
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Archive all Available…" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Archive 2 Available Episodes now?");
+    await user.click(within(dialog).getByRole("checkbox"));
+    await user.click(within(dialog).getByRole("button", { name: "Archive 2" }));
+    await waitFor(() =>
+      expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(
+        expect.arrayContaining([
+          "POST /api/feeds/mirror-1/archive-available",
+          "PATCH /api/mirrors/mirror-1",
+        ]),
+      ),
+    );
+    expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ backfill: { mode: "all" } });
+    expect(await screen.findByText("2 Episodes queued")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Retry 1 failed" }));
+    await waitFor(() =>
+      expect(calls).toContainEqual(
+        expect.objectContaining({ path: "/api/feeds/mirror-1/retry-failed" }),
+      ),
+    );
+    expect(await screen.findByText("1 failed download queued again")).toBeInTheDocument();
+  });
+
+  it("shows the feed URL as a QR code only when asked", async () => {
+    server.use(...handlers());
+    const user = userEvent.setup();
+    renderApp("/mirrors/mirror-1");
+    await screen.findByRole("heading", { name: "Example Podcast" });
+    expect(screen.queryByTestId("qr-code")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show mirror feed url as a QR code" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByTestId("qr-code")).toBeInTheDocument();
+    expect(within(dialog).getByTestId("qr-code").querySelector("svg")).not.toBeNull();
+    expect(dialog).toHaveTextContent(feed.feed_url);
+  });
+
   it("lists Refreshes with trigger, duration, counts and errors", async () => {
     server.use(...handlers());
     renderApp("/mirrors/mirror-1?tab=refreshes");
@@ -159,6 +228,16 @@ describe("Mirror page", () => {
     expect(within(form).getByText("Using the default: fr.")).toBeInTheDocument();
     expect(within(form).getByText("Using the default: 5.")).toBeInTheDocument();
     expect(within(form).queryByRole("button", { name: "Use default" })).not.toBeInTheDocument();
+
+    // The title follows the Source until you type your own.
+    expect(within(form).getByLabelText("Title")).toHaveAttribute("placeholder", feed.source_title);
+    expect(
+      within(form).getByText(`Using the Source's title: ${feed.source_title}.`),
+    ).toBeInTheDocument();
+    await user.type(within(form).getByLabelText("Title"), "Mine");
+    expect(within(form).getByRole("button", { name: "Use Source title" })).toBeInTheDocument();
+    await user.click(within(form).getByRole("button", { name: "Use Source title" }));
+    expect(within(form).getByLabelText("Title")).toHaveValue("");
 
     await user.click(within(form).getByRole("switch", { name: "Follow" }));
     await user.click(within(form).getByRole("button", { name: "Save changes" }));

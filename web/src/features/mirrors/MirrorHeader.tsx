@@ -1,12 +1,14 @@
 import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
+  DownloadCloud,
   ExternalLink,
   Link2,
   MoreHorizontal,
   Pause,
   Play,
   RefreshCw,
+  RotateCcw,
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
@@ -28,7 +30,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { DeleteFeedDialog } from "@/features/feeds/DeleteFeedDialog";
-import { useRequestRefresh, useSetPaused } from "@/features/feeds/mutations";
+import { useRequestRefresh, useRetryFailed, useSetPaused } from "@/features/feeds/mutations";
+import { ArchiveAvailableDialog } from "./ArchiveAvailableDialog";
 import { formatBytes, formatNumber } from "@/lib/format";
 import { count } from "@/lib/labels";
 
@@ -37,6 +40,8 @@ export function MirrorHeader({ mirror, refreshing }: { mirror: MirrorRead; refre
   const refresh = useRequestRefresh();
   const { setPaused, isPending: pausing } = useSetPaused();
   const [deleting, setDeleting] = useState(false);
+  const [archivingAll, setArchivingAll] = useState(false);
+  const retry = useRetryFailed();
   const counts = mirror.counts;
   const failing = mirror.health.status === "error" && (mirror.last_error || mirror.health.reason);
 
@@ -96,6 +101,20 @@ export function MirrorHeader({ mirror, refreshing }: { mirror: MirrorRead; refre
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onSelect={() => setArchivingAll(true)}
+                disabled={(counts?.available ?? 0) === 0}
+              >
+                <DownloadCloud /> Archive all Available…
+              </DropdownMenuItem>
+              {counts?.failed ? (
+                <DropdownMenuItem
+                  onSelect={() => retry.mutate({ params: { path: { feed_id: mirror.id } } })}
+                  disabled={retry.isPending}
+                >
+                  <RotateCcw /> Retry {formatNumber(counts.failed)} failed
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuItem asChild>
                 <Link
                   to="/mirrors/$mirrorId"
@@ -125,6 +144,7 @@ export function MirrorHeader({ mirror, refreshing }: { mirror: MirrorRead; refre
       <FeedUrlField url={mirror.feed_url} label="Mirror Feed URL" className="max-w-2xl" />
       <FeedCredentials feed={mirror} className="max-w-2xl" />
       <DeleteFeedDialog feed={mirror} open={deleting} onOpenChange={setDeleting} />
+      <ArchiveAvailableDialog mirror={mirror} open={archivingAll} onOpenChange={setArchivingAll} />
     </header>
   );
 }

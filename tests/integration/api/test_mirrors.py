@@ -34,10 +34,11 @@ async def test_create_mirror_populates_catalog_synchronously(
     assert response.headers["location"].endswith(api(f"/feeds/{mirror['id']}"))
     assert mirror["kind"] == "mirror" and mirror["source_kind"] == "rss"
     assert mirror["feed_url"] == f"http://testserver/feeds/{mirror['id']}.xml"
+    # No policy given: the operator's default, Automatic with a week of retention.
     assert mirror["follow"] is True and mirror["backfill"] == {
-        "mode": "all",
+        "mode": "automatic",
         "latest_n": None,
-        "retention_days": None,
+        "retention_days": 7,
     }
     assert mirror["counts"]["wanted"] + mirror["counts"]["available"] == 3
     assert mirror["health"]["status"] == "never"

@@ -89,7 +89,9 @@ def mirror_read(
         raise ValueError(f"feed {feed.id} is not a Mirror")
     return MirrorRead(
         id=feed.id,
-        title=feed.title,
+        title=feed.title_override or feed.title,
+        source_title=feed.title,
+        title_override=feed.title_override,
         description=feed.description,
         artwork_url=feed.artwork_url,
         feed_url=urls.feed_url(feed.id, username=feed.auth_username, password=feed.auth_password),

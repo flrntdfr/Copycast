@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from copycast.application.capabilities import capability
 from copycast.application.events import FeedEvent, ItemEvent, JobEvent
 from copycast.application.models import (
+    BackfillRequest,
     JobRead,
     MirrorCreate,
     MirrorRead,
@@ -38,6 +40,7 @@ from copycast.domain.enums import (
     FeedKind,
     JobKind,
     JobTrigger,
+    Numbering,
     WantedReason,
 )
 from copycast.domain.exceptions import (
@@ -129,7 +132,13 @@ async def _resolve_snapshot(
     return snapshots[0]
 
 
-def _feed_values(snapshot: SourceSnapshot, dedup_key: str, body: MirrorCreate) -> dict[str, object]:
+def _feed_values(
+    snapshot: SourceSnapshot,
+    dedup_key: str,
+    body: MirrorCreate,
+    backfill: BackfillRequest,
+    follow: bool,
+) -> dict[str, object]:
     listing = snapshot.listing
     candidate = snapshot.candidate
     return {
@@ -149,10 +158,10 @@ def _feed_values(snapshot: SourceSnapshot, dedup_key: str, body: MirrorCreate) -
         "source_etag": snapshot.etag,
         "source_last_modified": snapshot.last_modified,
         "source_channel_xml": snapshot.channel_xml,
-        "backfill_mode": body.backfill.mode.value,
-        "backfill_latest_n": body.backfill.latest_n,
-        "retention_days": body.backfill.retention_days,
-        "follow": body.effective_follow,
+        "backfill_mode": backfill.mode.value,
+        "backfill_latest_n": backfill.latest_n,
+        "retention_days": backfill.retention_days,
+        "follow": follow,
         "paused": False,
         "engine_options": dict(body.engine_options),
     }
@@ -172,22 +181,26 @@ async def create_mirror(
     minutes) and probes otherwise; several candidates -> 422 candidates-ambiguous;
     a Mirror of the same normalized Source -> 409 feed-exists. A ``selection``
     backfill is applied synchronously (archive jobs queued, policy applied);
-    ``all`` and ``latest`` queue the first Refresh.
+    the other modes queue the first Refresh. Without ``backfill`` the operator's
+    default policy applies (Automatic out of the box).
     """
     snapshot = await _resolve_snapshot(ctx, body.source_url, body.candidate_token, cancel=cancel)
     dedup_key = normalize_source_url(snapshot.source_url)
+    backfill, follow = body.resolve(defaults_for(ctx).backfill)
     async with ctx.uow_factory() as uow:
         existing = await uow.feeds.by_dedup_key(dedup_key)
         if existing is None:
             existing = await uow.feeds.get(mirror_id(dedup_key))
         if existing is not None:
             raise FeedExists(existing.id, snapshot.source_url)
-        feed = await uow.feeds.add(ctx.rows.feed(**_feed_values(snapshot, dedup_key, body)))
+        feed = await uow.feeds.add(
+            ctx.rows.feed(**_feed_values(snapshot, dedup_key, body, backfill, follow))
+        )
         feed_id = feed.id
         ctx.layout.ensure_feed_dirs(feed_id)
         await uow.catalog.upsert_listing(feed_id, snapshot.listing)
-        if body.backfill.mode is BackfillMode.selection:
-            expression = body.backfill.selection
+        if backfill.mode is BackfillMode.selection:
+            expression = backfill.selection
             if expression and expression.strip():
                 await _apply_selection(
                     uow,
@@ -282,6 +295,53 @@ async def _apply_selection(
     )
 
 
+async def _archive_ids(
+    ctx: ServiceContext, feed_id: str, ids: Sequence[str], *, trigger: JobTrigger
+) -> SelectionResult:
+    async with ctx.uow_factory() as uow:
+        feed = await uow.feeds.require(feed_id)
+        if not ids:
+            return SelectionResult(
+                resolved=[],
+                unresolved=[],
+                numbering_used=Numbering.source,
+                already_archived_count=0,
+            )
+        return await _apply_selection(
+            uow, feed, SelectionRequest(item_ids=list(ids)), trigger=trigger, strict=False
+        )
+
+
+@capability("archive_available", response=SelectionResult)
+async def archive_available(
+    ctx: ServiceContext, feed_id: str, *, trigger: JobTrigger = JobTrigger.ui
+) -> SelectionResult:
+    """Queue every listed, archivable, Available item of a feed; the policy is untouched.
+
+    An explicit request: items shorter than the minimum length and Tombstones
+    are included, exactly as if each had been selected.
+    """
+    async with ctx.uow_factory() as uow:
+        await uow.feeds.require(feed_id)
+        ids = await uow.catalog.available_ids(feed_id, include_deleted=True)
+    result = await _archive_ids(ctx, feed_id, ids, trigger=trigger)
+    log.info("feed.archive_available", feed_id=feed_id, queued=len(result.jobs))
+    return result
+
+
+@capability("retry_failed", response=SelectionResult)
+async def retry_failed(
+    ctx: ServiceContext, feed_id: str, *, trigger: JobTrigger = JobTrigger.ui
+) -> SelectionResult:
+    """Queue every failed item of a feed again."""
+    async with ctx.uow_factory() as uow:
+        await uow.feeds.require(feed_id)
+        ids = await uow.catalog.ids_in_state(feed_id, ArchiveState.failed)
+    result = await _archive_ids(ctx, feed_id, ids, trigger=trigger)
+    log.info("feed.retry_failed", feed_id=feed_id, queued=len(result.jobs))
+    return result
+
+
 @capability("select_items", request=SelectionRequest, response=SelectionResult)
 async def select_items(
     ctx: ServiceContext,
@@ -307,10 +367,10 @@ async def update_mirror(
     *,
     cancel: CancelToken | None = None,
 ) -> MirrorRead:
-    """PATCH a Mirror's policy, language, minimum length, engine options or Source.
+    """PATCH a Mirror's title, policy, language, minimum length, engine options or Source.
 
-    Retargeting keeps the archive; a kind change is refused. ``language: null`` and
-    ``min_duration_seconds: null`` present in the body clear the value.
+    Retargeting keeps the archive; a kind change is refused. ``language: null``,
+    ``min_duration_seconds: null`` and ``title: null`` present in the body clear the value.
     """
     fields = body.model_fields_set
     defaults = defaults_for(ctx)
@@ -323,6 +383,8 @@ async def update_mirror(
         if snapshot is not None:
             await _retarget(uow, feed, snapshot)
             refresh_needed = True
+        if "title" in fields:
+            feed.title_override = body.title
         if "follow" in fields and body.follow is not None:
             feed.follow = body.follow
         if "engine_options" in fields and body.engine_options is not None:
