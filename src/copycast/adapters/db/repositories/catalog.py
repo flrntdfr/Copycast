@@ -17,6 +17,7 @@ from sqlalchemy import (
     Update,
     and_,
     bindparam,
+    case,
     func,
     or_,
     select,
@@ -632,12 +633,16 @@ class CatalogRepository:
         author: str | None = None,
         artwork_url: str | None = None,
     ) -> bool:
-        """Fill columns the listing left empty from the engine's full info (never overwrite)."""
+        """Fill columns the listing left empty from the engine's full info.
+
+        Text is never overwritten; ``published_at`` is, since the engine's date is
+        exact where a flat listing's was approximate.
+        """
         values: dict[str, Any] = {}
         if description:
             values["description"] = func.coalesce(CatalogItem.description, description)
         if published_at is not None:
-            values["published_at"] = func.coalesce(CatalogItem.published_at, published_at)
+            values["published_at"] = published_at
         if author:
             values["author"] = func.coalesce(CatalogItem.author, author)
         if artwork_url:
@@ -692,6 +697,7 @@ def _refresh_params(item_id: str, entry: SourceListingItem, now: datetime) -> di
         "b_author": entry.author,
         "b_artwork_url": entry.artwork_url,
         "b_published_at": entry.published_at,
+        "b_published_at_exact": entry.published_at_exact,
         "b_duration_seconds": entry.duration_seconds,
         "b_source_url": entry.source_url,
         "b_source_number": entry.source_number,
@@ -713,8 +719,14 @@ _REFRESH_STMT: Update = (
         description=func.coalesce(bindparam("b_description", type_=Text), _T.c.description),
         author=func.coalesce(bindparam("b_author", type_=Text), _T.c.author),
         artwork_url=func.coalesce(bindparam("b_artwork_url", type_=Text), _T.c.artwork_url),
-        published_at=func.coalesce(
-            bindparam("b_published_at", type_=TZDateTime), _T.c.published_at
+        # An exact date replaces what is stored; an approximate one (a flat YouTube
+        # listing's, which drifts from Refresh to Refresh) only fills a blank.
+        published_at=case(
+            (
+                bindparam("b_published_at_exact", type_=Boolean),
+                func.coalesce(bindparam("b_published_at", type_=TZDateTime), _T.c.published_at),
+            ),
+            else_=func.coalesce(_T.c.published_at, bindparam("b_published_at", type_=TZDateTime)),
         ),
         duration_seconds=func.coalesce(
             bindparam("b_duration_seconds", type_=Integer), _T.c.duration_seconds

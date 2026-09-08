@@ -33,6 +33,7 @@ from copycast.adapters.engine.errors import classify
 from copycast.adapters.engine.options import fetch_params, listing_params, with_cookiefile
 from copycast.adapters.engine.synth import build, mime_for_ext
 from copycast.adapters.sources.listing import normalize
+from copycast.adapters.sources.youtube_feed import SourceError, enrich_from_youtube_feed
 from copycast.adapters.storage.atomic import write_atomic
 from copycast.adapters.storage.layout import Layout
 from copycast.application.ports import (
@@ -139,7 +140,16 @@ class YtDlpEngine:
         if info is None:
             raise PermanentError(f"yt-dlp extracted nothing from {url}")
         _check_cancel(cancel, f"listing of {url}")
-        return normalize(info, url)
+        listing = normalize(info, url)
+        # The channel feed dates and describes the newest videos exactly, in one request.
+        try:
+            listing, matched = enrich_from_youtube_feed(listing)
+        except SourceError as exc:
+            log.warning(f"channel feed not used: {exc}")
+        else:
+            if matched:
+                log.info(f"channel feed: exact dates and descriptions for {matched} videos")
+        return listing
 
     def fetch_item(
         self,

@@ -267,7 +267,8 @@ def test_about_reports_the_locked_engine(http: httpx.Client, stack: Stack) -> No
 
     engine = about["engine"]
     assert engine["name"] == "yt-dlp"
-    assert Version(engine["version"]) == Version(locked_version())
+    # A nightly locks as "X.dev0" but reports "X": compare the base versions.
+    assert Version(engine["version"]).base_version == Version(locked_version()).base_version
     assert engine["channel"], engine
     assert about["ffmpeg_version"], about
     assert about["totals"]["feeds"] >= 1

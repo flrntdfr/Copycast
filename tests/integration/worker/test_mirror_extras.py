@@ -110,3 +110,91 @@ async def test_archive_available_retry_failed_and_purge(
     await runner.run_until_idle()
     assert (await container.services.get_feed(mirror.id)).episode_count == 3
     assert (await container.services.retry_failed(mirror.id)).resolved == []
+
+
+async def test_refresh_fills_dates_and_descriptions_and_keeps_the_first_date(
+    container: Container, runner: Runner, engine: FakeEngine
+) -> None:
+    """A flat YouTube listing dates nothing; a later listing fills what is missing.
+
+    The first date learnt stays (an approximate date would drift from Refresh to
+    Refresh); the archive's exact date replaces it.
+    """
+    from datetime import UTC, datetime
+
+    from tests.support.factories import listing, listing_item
+
+    url = "https://www.youtube.com/@dated/videos"
+    bare = [
+        listing_item(1, published_at=None, description=None, position=1, source_number=1),
+        listing_item(2, published_at=None, description=None, position=0, source_number=2),
+    ]
+    engine.script_listing(url, listing(2, service="YouTube", raw={"_type": "playlist"}, items=bare))
+    mirror = await create_mirror(container, url, mode=BackfillMode.automatic)
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        rows = {i.source_number: i for i in await unit.catalog.for_feed(mirror.id)}
+    assert rows[1].published_at is None and rows[1].description is None
+
+    first = datetime(2026, 8, 1, tzinfo=UTC)
+    dated = [
+        listing_item(
+            1,
+            published_at=first,
+            published_at_exact=False,
+            description="Notes 1",
+            position=1,
+            source_number=1,
+        ),
+        listing_item(2, published_at=None, description=None, position=0, source_number=2),
+    ]
+    engine.script_listing(
+        url, listing(2, service="YouTube", raw={"_type": "playlist"}, items=dated)
+    )
+    job = await container.services.request_refresh(mirror.id)
+    assert job is not None
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        rows = {i.source_number: i for i in await unit.catalog.for_feed(mirror.id)}
+    assert rows[1].published_at == first and rows[1].description == "Notes 1"
+
+    drifted = [
+        listing_item(
+            1, published_at=datetime(2026, 8, 3, tzinfo=UTC), published_at_exact=False, position=0
+        )
+    ]
+    engine.script_listing(
+        url, listing(1, service="YouTube", raw={"_type": "playlist"}, items=drifted)
+    )
+    job = await container.services.request_refresh(mirror.id)
+    assert job is not None
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        row = await unit.catalog.require(rows[1].id, mirror.id)
+    assert row.published_at == first  # an approximate date never replaces a stored one
+    # An exact date (an RSS pubDate the publisher corrected) does.
+    corrected = datetime(2026, 8, 2, tzinfo=UTC)
+    engine.script_listing(
+        url,
+        listing(
+            1,
+            service="YouTube",
+            raw={"_type": "playlist"},
+            items=[listing_item(1, published_at=corrected, position=0)],
+        ),
+    )
+    job = await container.services.request_refresh(mirror.id)
+    assert job is not None
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        row = await unit.catalog.require(rows[1].id, mirror.id)
+    assert row.published_at == corrected
+
+    # The archive knows the exact date and replaces the approximate one.
+    exact = datetime(2026, 7, 30, 12, 0, tzinfo=UTC)
+    engine.info_extra = {"upload_date": "20260730", "timestamp": int(exact.timestamp())}
+    await container.services.archive_item(mirror.id, rows[1].id)
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        row = await unit.catalog.require(rows[1].id, mirror.id)
+    assert row.published_at == exact

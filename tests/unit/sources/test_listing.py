@@ -200,3 +200,28 @@ def test_best_thumbnail_and_source_key() -> None:
     assert source_key_of({"id": "x"}, "Parent") == "Parent:x"
     assert source_key_of({"id": "x"}) is None
     assert source_key_of({"ie_key": "Y", "url": "https://u"}) == "Y:https://u"
+
+
+def test_flat_youtube_tab_dates_are_approximate() -> None:
+    from copycast.adapters.sources.listing import is_approximate_date, normalize
+
+    flat = {
+        "_type": "url",
+        "ie_key": "Youtube",
+        "id": "a",
+        "title": "A",
+        "timestamp": 1_700_000_000,
+    }
+    exact = {**flat, "upload_date": "20231114"}
+    assert is_approximate_date(flat) and not is_approximate_date(exact)
+    assert not is_approximate_date({"_type": "video", "extractor_key": "Youtube", "timestamp": 1})
+    info = {
+        "_type": "playlist",
+        "extractor": "youtube:tab",
+        "extractor_key": "YoutubeTab",
+        "id": "UCabc",
+        "entries": [flat, {**exact, "id": "b"}, {**flat, "id": "c", "timestamp": None}],
+    }
+    items = normalize(info, "https://www.youtube.com/@x/videos").items
+    assert [i.published_at_exact for i in items] == [False, True, True]
+    assert items[2].published_at is None

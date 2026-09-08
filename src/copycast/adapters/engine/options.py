@@ -92,6 +92,22 @@ def with_language(options: Mapping[str, Any] | None, language: str | None) -> di
     return merged
 
 
+def with_approximate_dates(options: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Ask YouTube tab listings for an approximate upload date (``youtubetab:approximate_date``).
+
+    A flat channel listing has no date at all; yt-dlp can derive one from the
+    "3 weeks ago" text, so items are ordered and dated before they are archived.
+    """
+    merged = dict(options or {})
+    extractor_args = dict(cast(Mapping[str, Any], merged.get("extractor_args") or {}))
+    youtubetab = dict(cast(Mapping[str, Any], extractor_args.get("youtubetab") or {}))
+    if "approximate_date" not in youtubetab:
+        youtubetab["approximate_date"] = ["true"]
+        extractor_args["youtubetab"] = youtubetab
+        merged["extractor_args"] = extractor_args
+    return merged
+
+
 def strip_owned(options: Mapping[str, Any] | None) -> dict[str, Any]:
     """Drop every key Copycast owns; the layers below ``BASE_OPTIONS`` never carry them."""
     if not options:
@@ -157,7 +173,7 @@ def listing_params(
     options: Mapping[str, Any] | None, *, log: EngineLog | None = None
 ) -> dict[str, Any]:
     """``YoutubeDL`` params for a flat listing: no downloads, no sidecars."""
-    params = EngineOptions.merge(strip_owned(options), None, None)
+    params = with_approximate_dates(EngineOptions.merge(strip_owned(options), None, None))
     params.update(LISTING_OPTIONS)
     if log is not None:
         params["logger"] = log
@@ -175,6 +191,7 @@ __all__ = [
     "merge_options",
     "strip_owned",
     "subtitle_languages",
+    "with_approximate_dates",
     "with_cookiefile",
     "with_language",
 ]

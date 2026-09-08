@@ -24,6 +24,11 @@ class SourceListingItem(BaseModel):
     title: str
     description: str | None = None
     published_at: datetime | None = None
+    published_at_exact: bool = Field(
+        default=True,
+        description="False for an approximate date (a flat YouTube listing's), kept only until "
+        "an exact one is known",
+    )
     duration_seconds: int | None = Field(default=None, ge=0)
     artwork_url: str | None = None
     author: str | None = None

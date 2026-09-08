@@ -13,6 +13,7 @@ from copycast.adapters.engine.options import (
     merge_options,
     strip_owned,
     subtitle_languages,
+    with_approximate_dates,
 )
 from copycast.application.ports import NullEngineLog
 from copycast.domain.engine_options import ENGINE_OWNED_OPTIONS
@@ -110,3 +111,16 @@ def test_with_cookiefile_adds_the_stored_file_unless_configured(tmp_path: Path) 
     assert with_cookiefile({"cookiefile": "/etc/mine.txt"}, missing) == {
         "cookiefile": "/etc/mine.txt"
     }
+
+
+def test_listing_params_ask_youtube_tabs_for_approximate_dates() -> None:
+    params = listing_params({"extractor_args": {"youtube": {"lang": ["fr"]}}})
+    assert params["extractor_args"] == {
+        "youtube": {"lang": ["fr"]},
+        "youtubetab": {"approximate_date": ["true"]},
+    }
+    # An operator's own choice is kept.
+    own = with_approximate_dates(
+        {"extractor_args": {"youtubetab": {"approximate_date": ["false"]}}}
+    )
+    assert own["extractor_args"]["youtubetab"]["approximate_date"] == ["false"]

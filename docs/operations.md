@@ -201,6 +201,16 @@ a placeholder `.mp3` enclosure whose length is estimated from the duration at 12
 (apps refuse 0-byte enclosures), and the media route serves the real file (any container)
 under that URL once archived.
 
+## YouTube dates and descriptions
+
+A flat channel listing carries no upload date and no description, which left every video
+undated (and unordered in Overcast) until it was archived. Listings now ask yt-dlp for an
+approximate date (``youtubetab:approximate_date``, from the "3 weeks ago" text) and merge the
+channel's Atom feed (``/feeds/videos.xml?channel_id=…``, one request, no cookies), which
+carries the exact date and the full description of the fifteen newest videos. A Refresh fills
+what a row still lacks and keeps the first date it learnt, so approximate dates do not drift;
+archiving replaces it with the exact date from the download.
+
 ## Show notes, OPML and the player
 
 - **Attachments.** When an Episode is archived, the images its show notes embed and the

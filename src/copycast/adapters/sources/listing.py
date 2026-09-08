@@ -104,6 +104,14 @@ def entry_date(entry: Mapping[str, Any]) -> datetime | None:
     return None
 
 
+def is_approximate_date(entry: Mapping[str, Any]) -> bool:
+    """A flat YouTube tab entry's ``timestamp`` comes from "3 weeks ago" text, not the video."""
+    if entry.get("upload_date") or entry.get("release_date"):
+        return False
+    extractor = str(entry.get("ie_key") or entry.get("extractor_key") or "").lower()
+    return entry.get("_type") == "url" and extractor.startswith("youtube")
+
+
 def best_thumbnail(entry: Mapping[str, Any]) -> str | None:
     """The thumbnail with the highest ``preference`` then the largest width."""
     thumbnails = entry.get("thumbnails")
@@ -170,13 +178,15 @@ def normalize(info: Mapping[str, Any], url: str) -> SourceListing:
             continue
         seen.add(key)
         duration = _int(entry.get("duration"))
+        published_at = entry_date(entry)
         items.append(
             SourceListingItem(
                 source_key=key,
                 source_url=_text(entry.get("webpage_url")) or _text(entry.get("url")),
                 title=_text(entry.get("title")) or _text(entry.get("id")) or key,
                 description=_text(entry.get("description")),
-                published_at=entry_date(entry),
+                published_at=published_at,
+                published_at_exact=published_at is None or not is_approximate_date(entry),
                 duration_seconds=max(0, duration) if duration is not None else None,
                 artwork_url=best_thumbnail(entry),
                 author=author_of(entry),
@@ -215,6 +225,7 @@ __all__ = [
     "best_thumbnail",
     "entry_date",
     "flatten",
+    "is_approximate_date",
     "is_playlist_like",
     "listing_order_of",
     "normalize",
