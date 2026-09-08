@@ -42,8 +42,8 @@ export function SearchStep({
   };
 
   return (
-    <div className="space-y-4">
-      <form onSubmit={submit} className="flex max-w-2xl gap-2">
+    <div className="min-w-0 space-y-4">
+      <form onSubmit={submit} className="flex min-w-0 gap-2">
         <Label htmlFor="podcast-search" className="sr-only">
           Podcast or video name
         </Label>

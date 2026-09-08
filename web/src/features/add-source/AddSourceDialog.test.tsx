@@ -234,6 +234,9 @@ describe("Add Source dialog", () => {
     );
     expect(await screen.findByText("“Example Podcast” captured")).toBeInTheDocument();
 
+    // The playlists fold away until asked for, so the Inboxes stay in view.
+    expect(within(card).queryByRole("list", { name: "Your playlists" })).not.toBeInTheDocument();
+    await user.click(within(card).getByRole("button", { name: /Your playlists/ }));
     const list = within(card).getByRole("list", { name: "Your playlists" });
     expect(within(list).getByText("Already captured")).toBeInTheDocument();
     expect(within(list).getByRole("link", { name: "Open" })).toHaveAttribute(
@@ -263,7 +266,9 @@ describe("Add Source dialog", () => {
       ),
       ...baseHandlers(),
     );
+    const user = userEvent.setup();
     renderApp("/inboxes");
+    await user.click(await screen.findByRole("button", { name: /Your playlists/ }));
     const hint = await screen.findByTestId("capture-error");
     expect(hint).toHaveTextContent("Sign in to see your playlists");
     expect(within(hint).getByRole("link", { name: "Settings" })).toHaveAttribute(

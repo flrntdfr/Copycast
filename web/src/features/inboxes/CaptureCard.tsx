@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ListVideo, Loader2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ListVideo, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -26,6 +26,7 @@ export function CaptureCard() {
     staleTime: 60_000,
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const create = $api.useMutation("post", "/api/mirrors", { meta: { silent: true } });
 
@@ -113,8 +114,20 @@ export function CaptureCard() {
         </div>
 
         <div className="space-y-2">
-          <p className="text-sm font-medium">Your playlists</p>
-          {playlists.isPending ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="-ml-2"
+            aria-expanded={expanded}
+            aria-controls="capture-playlists"
+            onClick={() => setExpanded((open) => !open)}
+          >
+            {expanded ? <ChevronDown /> : <ChevronRight />}
+            Your playlists
+            {playlists.isSuccess ? ` (${others.length})` : ""}
+          </Button>
+          {!expanded ? null : playlists.isPending ? (
             <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
               <Loader2 className="size-4 animate-spin" aria-hidden /> Listing your playlists…
             </p>
@@ -130,7 +143,11 @@ export function CaptureCard() {
           ) : others.length === 0 ? (
             <p className="text-sm text-muted-foreground">No playlists besides Watch Later.</p>
           ) : (
-            <ul className="divide-y rounded-lg border" aria-label="Your playlists">
+            <ul
+              id="capture-playlists"
+              className="divide-y rounded-lg border"
+              aria-label="Your playlists"
+            >
               {others.map((playlist) => (
                 <li key={playlist.id} className="flex items-center gap-3 p-2">
                   {playlist.captured_feed_id ? (
@@ -177,7 +194,7 @@ export function CaptureCard() {
               ))}
             </ul>
           )}
-          {importable.length ? (
+          {expanded && importable.length ? (
             <Button
               variant="outline"
               disabled={chosen.length === 0 || busy.size > 0}

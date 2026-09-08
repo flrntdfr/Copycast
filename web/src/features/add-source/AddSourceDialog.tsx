@@ -40,7 +40,7 @@ export function AddSourceDialog() {
   const request = useAddSource();
   return (
     <Dialog open={request.open} onOpenChange={(open) => !open && closeAddSource()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] overflow-x-hidden overflow-y-auto sm:max-w-2xl [&>*]:min-w-0">
         {request.open ? (
           <AddSourceFlow
             key={request.nonce}
