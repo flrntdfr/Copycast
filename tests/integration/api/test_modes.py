@@ -57,7 +57,8 @@ async def test_automatic_feed_lists_everything_and_archives_on_request(
     enclosures = root.findall(".//item/enclosure")
     assert len(enclosures) == 2
     assert {e.get("type") for e in enclosures} == {"audio/mpeg"}
-    assert {e.get("length") for e in enclosures} == {"0"}
+    # Unarchived items claim 128 kbit/s worth of bytes for their duration (60 s and 120 s here).
+    assert {e.get("length") for e in enclosures} == {"960000", "1920000"}
     urls = [e.get("url") or "" for e in enclosures]
     assert all(u.endswith(".mp3") for u in urls)
 

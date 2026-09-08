@@ -383,13 +383,21 @@ def with_source_link(description: str | None, source_url: str | None) -> str | N
 
 PLACEHOLDER_EXT = "mp3"
 PLACEHOLDER_MIME = "audio/mpeg"
+PLACEHOLDER_BYTES_PER_SECOND = 16_000
+"""128 kbit/s: what an on-demand item's enclosure claims until the real file exists."""
+
+
+def placeholder_length(duration_seconds: int | None) -> int:
+    """A plausible size for an unarchived item; some apps reject a 0-byte enclosure."""
+    return max(1, duration_seconds or 0) * PLACEHOLDER_BYTES_PER_SECOND
 
 
 def _enclosure(base_url: str, feed: FeedView, item: ItemView) -> Element:
     """The enclosure of an archived item, or a placeholder an Automatic feed serves on demand."""
     enclosure = etree.Element("enclosure")
     enclosure.set("url", media_url(base_url, feed.id, item.id, item.media_ext or PLACEHOLDER_EXT))
-    enclosure.set("length", str(item.media_bytes or 0))
+    length = item.media_bytes if item.media_ext else placeholder_length(item.duration_seconds)
+    enclosure.set("length", str(length or placeholder_length(item.duration_seconds)))
     enclosure.set(
         "type",
         item.media_mime or (PLACEHOLDER_MIME if not item.media_ext else "application/octet-stream"),
@@ -561,6 +569,7 @@ __all__ = [
     "ItemView",
     "RenderedFeed",
     "localized_notes",
+    "placeholder_length",
     "render_feed",
     "rfc2822",
     "with_source_link",

@@ -197,8 +197,9 @@ actions are the `archive_available` and `retry_failed` tools and routes. Over MC
 stays on Mirrors that already use it but is no longer offered ([ADR 0012](adr/0012-mirror-modes-rolling-and-automatic.md)).
 
 An Automatic Mirror's feed lists every item the Source lists; the ones not archived yet carry
-a placeholder `.mp3` enclosure of length 0, and the media route serves the real file (any
-container) under that URL once archived.
+a placeholder `.mp3` enclosure whose length is estimated from the duration at 128 kbit/s
+(apps refuse 0-byte enclosures), and the media route serves the real file (any container)
+under that URL once archived.
 
 ## Show notes, OPML and the player
 

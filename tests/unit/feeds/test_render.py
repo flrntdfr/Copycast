@@ -21,6 +21,7 @@ from copycast.adapters.feeds.render import (
     FeedView,
     ItemView,
     RenderedFeed,
+    placeholder_length,
     render_feed,
     rfc2822,
 )
@@ -593,12 +594,14 @@ def test_automatic_feed_lists_unarchived_items_with_a_placeholder() -> None:
     ]
     rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
     enclosures = etree.fromstring(rendered.body).findall(".//item/enclosure")
-    # The archived one, the pending one and the Tombstone (downloaded again on request).
+    # The archived one, the pending one and the Tombstone (downloaded again on request);
+    # unarchived items claim a plausible size (128 kbit/s) since apps reject 0 bytes.
     assert [(e.get("type"), e.get("length")) for e in enclosures] == [
         ("audio/mpeg", "5155"),
-        ("audio/mpeg", "0"),
-        ("audio/mpeg", "0"),
+        ("audio/mpeg", "16000"),
+        ("audio/mpeg", "16000"),
     ]
+    assert placeholder_length(None) == 16_000 and placeholder_length(3600) == 57_600_000
     assert (enclosures[1].get("url") or "").endswith("/bbbbbbbbbbbbbbbb.mp3")
     assert (enclosures[2].get("url") or "").endswith("/cccccccccccccccc.mp3")
     # The same items under any other mode: only the archived one.

@@ -35,6 +35,7 @@ Inbox's Retention.
 - "Copycast never deletes from a Mirror" now reads "unless the Mirror's mode says so, and
   you were told when choosing it".
 - Latest N is no longer offered for new Mirrors; Rolling N covers the intent people had.
-- An Automatic Mirror's feed advertises a placeholder `.mp3` enclosure (length 0) for items
-  not archived yet; the media route accepts that extension and serves whatever container
+- An Automatic Mirror's feed advertises a placeholder `.mp3` enclosure for items not
+  archived yet, with a length estimated at 128 kbit/s from the duration (podcast apps refuse
+  0-byte enclosures); the media route accepts that extension and serves whatever container
   the archive produced.
