@@ -57,7 +57,7 @@ describe("search helpers", () => {
     expect(facetParams("available")).toEqual({ state: ["available", "deleted"], listed: true });
     expect(facetParams(undefined)).toEqual({});
     expect(toListItemsQuery(search({ page: 3, q: " hello " }))).toEqual({
-      sort: "published",
+      sort: "ordinal",
       order: "desc",
       limit: 100,
       offset: 200,
@@ -88,7 +88,7 @@ describe("CatalogTable", () => {
     expect(table.getByText("Third").closest("tr")).toHaveTextContent("3");
     expect(screen.queryByText("Ghost")).not.toBeInTheDocument();
     expect(seen[0]?.searchParams.get("limit")).toBe("100");
-    expect(seen[0]?.searchParams.get("sort")).toBe("published");
+    expect(seen[0]?.searchParams.get("sort")).toBe("ordinal");
     expect(screen.getByText("1–4 of 4")).toBeInTheDocument();
   });
 

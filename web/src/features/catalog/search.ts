@@ -20,7 +20,7 @@ export type CatalogFacet = (typeof CATALOG_FACETS)[number];
 export const catalogSearchDefaults = {
   q: "",
   page: 1,
-  sort: "published" as ItemSort,
+  sort: "ordinal" as ItemSort,
   order: "desc" as SortOrder,
 } as const;
 
