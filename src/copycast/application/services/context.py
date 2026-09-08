@@ -103,6 +103,8 @@ class FeedRow(Protocol):
     min_duration_seconds: int | None
     preferred_language: str | None
     retention_days: int | None
+    refresh_interval_hours: int | None
+    sync_deletions: bool
     follow: bool
     paused: bool
     policy_applied_at: datetime | None
@@ -370,6 +372,7 @@ class CatalogRepositoryPort(Protocol):
         numbering: Numbering = Numbering.source,
     ) -> ResolvedSelection: ...
     async def ids_in_state(self, feed_id: str, state: ArchiveState) -> Sequence[str]: ...
+    async def delisted_archived(self, feed_id: str) -> Sequence[ItemRow]: ...
     async def available_ids(
         self,
         feed_id: str,

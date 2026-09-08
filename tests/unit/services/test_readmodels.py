@@ -62,6 +62,8 @@ def mirror_row(**overrides: Any) -> Any:
         "backfill_latest_n": None,
         "min_duration_seconds": None,
         "retention_days": None,
+        "refresh_interval_hours": None,
+        "sync_deletions": False,
         "preferred_language": None,
         "follow": True,
         "paused": False,

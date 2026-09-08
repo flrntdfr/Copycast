@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
 
 import { CatalogTable } from "./CatalogTable";
@@ -92,7 +92,7 @@ describe("CatalogTable", () => {
     expect(screen.getByText("1–4 of 4")).toBeInTheDocument();
   });
 
-  it("marks approximate dates and offers to fetch a missing description", async () => {
+  it("marks approximate dates and fetches a missing description when the row opens", async () => {
     const rough = item({
       id: "item-7",
       feed_id: feed.id,
@@ -109,8 +109,9 @@ describe("CatalogTable", () => {
       http.get("/api/feeds/:feedId/items", () =>
         HttpResponse.json({ items: [rough, rows[0]], total: 2, limit: 100, offset: 0 }),
       ),
-      http.post("/api/feeds/:feedId/items/:itemId/metadata", ({ params }) => {
+      http.post("/api/feeds/:feedId/items/:itemId/metadata", async ({ params }) => {
         fetched.push(String(params.itemId));
+        await delay(150);
         return HttpResponse.json({ ...rough, description: "Now known" });
       }),
     );
@@ -123,9 +124,10 @@ describe("CatalogTable", () => {
     expect(screen.getByText("First").closest("tr")).not.toContainElement(
       screen.queryByTestId("approximate-date"),
     );
-    await user.click(within(row).getByRole("button", { name: "Fetch description" }));
+    expect(fetched).toEqual([]);
+    await user.click(within(row).getByRole("button", { name: "Show details" }));
+    expect(await screen.findByText(/Fetching the description/)).toBeInTheDocument();
     await waitFor(() => expect(fetched).toEqual(["item-7"]));
-    expect(await screen.findByText("Description fetched")).toBeInTheDocument();
   });
 
   it("greys out items shorter than the minimum length and says why", async () => {

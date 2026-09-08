@@ -83,14 +83,12 @@ async def enqueue_refresh(uow: UnitOfWorkPort, feed: FeedRow, trigger: JobTrigge
 
 
 def refresh_allowed(feed: FeedRow, trigger: JobTrigger, *, cooldown_minutes: int) -> bool:
-    """manual: always; scheduled: not Paused; feed_fetch: follow, not Paused, outside cooldown."""
+    """manual: always; scheduled: not Paused; feed_fetch: not Paused, outside cooldown."""
     if trigger == JobTrigger.manual:
         return True
     if feed.paused:
         return False
     if trigger == JobTrigger.feed_fetch:
-        if not feed.follow:
-            return False
         last = feed.last_refresh_attempt_at
         if last is not None and _now() - last < timedelta(minutes=cooldown_minutes):
             return False
@@ -151,6 +149,8 @@ def _feed_values(
         "language": listing.language,
         "preferred_language": body.preferred_language,
         "min_duration_seconds": body.min_duration_seconds,
+        "refresh_interval_hours": body.refresh_interval_hours,
+        "sync_deletions": bool(body.sync_deletions),
         "source_url": candidate.source_url,
         "source_dedup_key": dedup_key,
         "source_kind": candidate.source_kind.value,
@@ -393,6 +393,10 @@ async def update_mirror(
             feed.preferred_language = body.preferred_language
         if "min_duration_seconds" in fields:
             feed.min_duration_seconds = body.min_duration_seconds
+        if "refresh_interval_hours" in fields:
+            feed.refresh_interval_hours = body.refresh_interval_hours
+        if "sync_deletions" in fields and body.sync_deletions is not None:
+            feed.sync_deletions = body.sync_deletions
         if "backfill" in fields and body.backfill is not None:
             feed.backfill_mode = body.backfill.mode.value
             feed.backfill_latest_n = body.backfill.latest_n

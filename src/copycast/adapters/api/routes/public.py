@@ -33,7 +33,7 @@ from copycast.adapters.api.deps import ContainerDep, FeedCacheDep, ServicesDep
 from copycast.adapters.api.problems import problem_response
 from copycast.application.models import ItemRead
 from copycast.application.services import Services
-from copycast.domain.enums import ArchiveState, FeedKind, JobTrigger
+from copycast.domain.enums import ArchiveState, FeedKind, JobStatus, JobTrigger
 from copycast.domain.exceptions import Conflict, Unsupported
 from copycast.domain.urls import COPYCAST_ARTWORK_PATH
 from copycast.logging import get_logger
@@ -48,6 +48,9 @@ PLACEHOLDER_EXT = "mp3"
 ON_DEMAND_WAIT_SECONDS = 120.0
 ON_DEMAND_POLL_SECONDS = 2.0
 ON_DEMAND_RETRY_AFTER = 30
+FEED_FETCH_WAIT_SECONDS = 20.0
+FEED_FETCH_POLL_SECONDS = 0.5
+ACTIVE_JOB_STATUSES = frozenset({JobStatus.queued, JobStatus.running})
 ASSET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 
 
@@ -96,11 +99,22 @@ async def _is_file(path: Path) -> bool:
     return await asyncio.to_thread(path.is_file)
 
 
-async def _safe_refresh(services: Services, feed_id: str) -> None:
+async def _refresh_and_wait(services: Services, feed_id: str) -> bool:
+    """Queue a feed-fetch Refresh and wait for it (up to the cap); True when one ran."""
     try:
-        await services.request_refresh(feed_id, JobTrigger.feed_fetch)
-    except Exception as exc:  # a fetch must never fail because of the background job
+        job = await services.request_refresh(feed_id, JobTrigger.feed_fetch)
+    except Exception as exc:  # a fetch must never fail because of the Refresh
         log.warning("feed.fetch_refresh_failed", feed_id=feed_id, error=str(exc))
+        return False
+    if job is None:
+        return False
+    deadline = asyncio.get_running_loop().time() + FEED_FETCH_WAIT_SECONDS
+    while asyncio.get_running_loop().time() < deadline:
+        current = await services.get_job(job.id)
+        if current.status not in ACTIVE_JOB_STATUSES:
+            return True
+        await asyncio.sleep(FEED_FETCH_POLL_SECONDS)
+    return True
 
 
 async def _safe_count(services: Services, feed_id: str, item_id: str) -> None:
@@ -138,12 +152,15 @@ async def feed_xml(
     head = await container.renderer.head(feed_id)
     if head is None:
         return problem_response(request, status=404, slug="not-found", detail="feed not found")
+    # Pull to refresh: a client's fetch runs a Refresh and, within reason, waits for it
+    # so new Episodes are in the answer; the cooldown keeps crawlers from hammering it.
+    pull = request.method == "GET" and head.kind is FeedKind.mirror and not head.paused
+    if pull and await _refresh_and_wait(services, feed_id):
+        head = await container.renderer.head(feed_id) or head
     entry = await _cached_feed(container, cache, feed_id, head.revision)
     if entry is None:
         return problem_response(request, status=404, slug="not-found", detail="feed not found")
     background: BackgroundTask | None = None
-    if request.method == "GET" and head.kind is FeedKind.mirror and head.follow and not head.paused:
-        background = BackgroundTask(_safe_refresh, services, feed_id)
     headers = {
         "ETag": entry.etag,
         "Last-Modified": http_date(entry.last_modified),

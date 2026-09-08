@@ -224,3 +224,58 @@ async def test_refresh_fills_dates_and_descriptions_and_keeps_the_first_date(
     assert fetched.description == "Fetched by hand"
     assert fetched.published_at == datetime(2026, 6, 1, 8, 0, tzinfo=UTC)
     assert fetched.published_at_approximate is False
+
+
+async def test_synced_mirror_deletes_what_the_source_drops(
+    container: Container, source: Source, runner: Runner
+) -> None:
+    """A playlist kept in sync: an item that leaves the listing is tombstoned, not Delisted."""
+    url = source.write_rss("synced", items=[2, 1], artwork=False)
+    mirror = await create_mirror(container, url, mode=BackfillMode.all, sync_deletions=True)
+    assert mirror.sync_deletions is True
+    await runner.run_until_idle()
+    assert (await container.services.get_feed(mirror.id)).episode_count == 2
+
+    source.write_rss("synced", items=[2], artwork=False)
+    job = await container.services.request_refresh(mirror.id)
+    assert job is not None
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        states = {i.source_number: i.archive_state for i in await unit.catalog.for_feed(mirror.id)}
+    assert states == {1: ArchiveState.deleted, 2: ArchiveState.archived}
+    read = await container.services.get_feed(mirror.id)
+    assert read.episode_count == 1
+    # Without sync the same Refresh only Delists.
+    plain = await container.services.update_mirror(mirror.id, MirrorUpdate(sync_deletions=False))
+    assert plain.sync_deletions is False
+
+
+async def test_refresh_interval_is_the_default_unless_the_mirror_says(
+    container: Container, source: Source, runner: Runner
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from copycast.worker.scheduler import Scheduler
+
+    url = source.write_rss("interval", items=[1], artwork=False)
+    mirror = await create_mirror(container, url)
+    await runner.run_until_idle()
+    assert mirror.refresh_interval_hours is None
+    assert (await container.services.get_mirror_defaults()).refresh_interval_hours == 24
+    scheduler = Scheduler(container)
+    now = datetime.now(UTC)
+    async with uow(container) as unit:
+        await unit.feeds.set_refresh_attempt(mirror.id, now - timedelta(hours=6))
+    assert await scheduler._due_refreshes(now) == 0  # 6 h < the 24 h default
+
+    hourly = await container.services.update_mirror(
+        mirror.id, MirrorUpdate(refresh_interval_hours=4)
+    )
+    assert hourly.refresh_interval_hours == 4
+    assert await scheduler._due_refreshes(now) == 1  # 6 h >= its own 4 h
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        await unit.feeds.set_refresh_attempt(mirror.id, now - timedelta(hours=6))
+    await container.services.update_mirror(mirror.id, MirrorUpdate(refresh_interval_hours=None))
+    await container.services.set_mirror_defaults(MirrorDefaults(refresh_interval_hours=5))
+    assert await scheduler._due_refreshes(now) == 1  # the default moved under 6 h

@@ -1,21 +1,21 @@
-import { useNavigate } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { looksLikeSourceUrl, openAddSource } from "@/stores/addSource";
 
-/** The prominent "paste a URL" bar above the Mirrors table; hands off to the wizard. */
+/** The prominent "paste a URL" bar above the Mirrors table; opens the Add Source dialog. */
 export function AddSourceBar({ autoFocus = false }: { autoFocus?: boolean }) {
-  const navigate = useNavigate();
   const [url, setUrl] = useState("");
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const trimmed = url.trim();
     if (!trimmed) return;
-    void navigate({ to: "/mirrors/new", search: { url: trimmed, step: "probe" } });
+    openAddSource(looksLikeSourceUrl(trimmed) ? { url: trimmed } : { query: trimmed });
+    setUrl("");
   };
 
   return (
@@ -34,7 +34,7 @@ export function AddSourceBar({ autoFocus = false }: { autoFocus?: boolean }) {
           inputMode="url"
           autoComplete="off"
           autoFocus={autoFocus}
-          placeholder="Paste a podcast feed, a page advertising one, a YouTube channel or playlist…"
+          placeholder="Paste a podcast feed, an Apple Podcasts or Spotify link, a YouTube channel or playlist, or a name to search…"
           value={url}
           onChange={(event) => setUrl(event.target.value)}
         />

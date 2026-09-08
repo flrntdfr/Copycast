@@ -18,7 +18,6 @@ import { Route as InboxesIndexRouteImport } from "./routes/inboxes/index";
 import { Route as InboxesInboxIdRouteImport } from "./routes/inboxes/$inboxId";
 import { Route as MirrorsIndexRouteImport } from "./routes/mirrors/index";
 import { Route as MirrorsMirrorIdRouteImport } from "./routes/mirrors/$mirrorId";
-import { Route as MirrorsNewRouteImport } from "./routes/mirrors/new";
 
 const IndexRoute = IndexRouteImport.update({
   id: "/",
@@ -65,11 +64,6 @@ const MirrorsMirrorIdRoute = MirrorsMirrorIdRouteImport.update({
   path: "/mirrors/$mirrorId",
   getParentRoute: () => rootRouteImport,
 } as any);
-const MirrorsNewRoute = MirrorsNewRouteImport.update({
-  id: "/mirrors/new",
-  path: "/mirrors/new",
-  getParentRoute: () => rootRouteImport,
-} as any);
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
@@ -79,7 +73,6 @@ export interface FileRoutesByFullPath {
   "/settings": typeof SettingsRoute;
   "/inboxes/$inboxId": typeof InboxesInboxIdRoute;
   "/mirrors/$mirrorId": typeof MirrorsMirrorIdRoute;
-  "/mirrors/new": typeof MirrorsNewRoute;
   "/inboxes/": typeof InboxesIndexRoute;
   "/mirrors/": typeof MirrorsIndexRoute;
 }
@@ -91,7 +84,6 @@ export interface FileRoutesByTo {
   "/settings": typeof SettingsRoute;
   "/inboxes/$inboxId": typeof InboxesInboxIdRoute;
   "/mirrors/$mirrorId": typeof MirrorsMirrorIdRoute;
-  "/mirrors/new": typeof MirrorsNewRoute;
   "/inboxes": typeof InboxesIndexRoute;
   "/mirrors": typeof MirrorsIndexRoute;
 }
@@ -104,7 +96,6 @@ export interface FileRoutesById {
   "/settings": typeof SettingsRoute;
   "/inboxes/$inboxId": typeof InboxesInboxIdRoute;
   "/mirrors/$mirrorId": typeof MirrorsMirrorIdRoute;
-  "/mirrors/new": typeof MirrorsNewRoute;
   "/inboxes/": typeof InboxesIndexRoute;
   "/mirrors/": typeof MirrorsIndexRoute;
 }
@@ -118,7 +109,6 @@ export interface FileRouteTypes {
     | "/settings"
     | "/inboxes/$inboxId"
     | "/mirrors/$mirrorId"
-    | "/mirrors/new"
     | "/inboxes/"
     | "/mirrors/";
   fileRoutesByTo: FileRoutesByTo;
@@ -130,7 +120,6 @@ export interface FileRouteTypes {
     | "/settings"
     | "/inboxes/$inboxId"
     | "/mirrors/$mirrorId"
-    | "/mirrors/new"
     | "/inboxes"
     | "/mirrors";
   id:
@@ -142,7 +131,6 @@ export interface FileRouteTypes {
     | "/settings"
     | "/inboxes/$inboxId"
     | "/mirrors/$mirrorId"
-    | "/mirrors/new"
     | "/inboxes/"
     | "/mirrors/";
   fileRoutesById: FileRoutesById;
@@ -155,7 +143,6 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute;
   InboxesInboxIdRoute: typeof InboxesInboxIdRoute;
   MirrorsMirrorIdRoute: typeof MirrorsMirrorIdRoute;
-  MirrorsNewRoute: typeof MirrorsNewRoute;
   InboxesIndexRoute: typeof InboxesIndexRoute;
   MirrorsIndexRoute: typeof MirrorsIndexRoute;
 }
@@ -225,13 +212,6 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof MirrorsMirrorIdRouteImport;
       parentRoute: typeof rootRouteImport;
     };
-    "/mirrors/new": {
-      id: "/mirrors/new";
-      path: "/mirrors/new";
-      fullPath: "/mirrors/new";
-      preLoaderRoute: typeof MirrorsNewRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
   }
 }
 
@@ -243,7 +223,6 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   InboxesInboxIdRoute: InboxesInboxIdRoute,
   MirrorsMirrorIdRoute: MirrorsMirrorIdRoute,
-  MirrorsNewRoute: MirrorsNewRoute,
   InboxesIndexRoute: InboxesIndexRoute,
   MirrorsIndexRoute: MirrorsIndexRoute,
 };

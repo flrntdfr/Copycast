@@ -1,4 +1,4 @@
-import { Inbox } from "lucide-react";
+import { Inbox, Loader2 } from "lucide-react";
 import { useState } from "react";
 
 import type { ProbeCandidate, ProbeResult } from "@/api/types";
@@ -13,12 +13,15 @@ import { cn } from "@/lib/utils";
 export function CandidateList({
   probe,
   onChoose,
+  choosing = false,
   onSendToInbox,
   sendingToInbox,
   onBack,
 }: {
   probe: ProbeResult;
   onChoose: (candidate: ProbeCandidate) => void;
+  /** A Mirror is being created from the chosen Source. */
+  choosing?: boolean;
   onSendToInbox?: (candidate: ProbeCandidate) => void;
   sendingToInbox?: boolean;
   onBack: () => void;
@@ -92,8 +95,8 @@ export function CandidateList({
         ))}
       </RadioGroup>
       <div className="flex flex-wrap gap-2">
-        <Button onClick={() => chosen && onChoose(chosen)} disabled={!chosen}>
-          Continue
+        <Button onClick={() => chosen && onChoose(chosen)} disabled={!chosen || choosing}>
+          {choosing ? <Loader2 className="animate-spin" /> : null} Mirror this Source
         </Button>
         {chosen?.item_count === 1 && onSendToInbox ? (
           <Button variant="outline" onClick={() => onSendToInbox(chosen)} disabled={sendingToInbox}>
@@ -101,7 +104,7 @@ export function CandidateList({
           </Button>
         ) : null}
         <Button variant="ghost" onClick={onBack}>
-          Back
+          Close
         </Button>
       </div>
     </div>

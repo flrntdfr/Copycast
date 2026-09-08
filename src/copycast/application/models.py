@@ -121,6 +121,12 @@ class MirrorRead(_FeedReadBase):
     min_duration_seconds: int | None = Field(
         default=None, description="Shorter items are listed but never archived automatically"
     )
+    refresh_interval_hours: int | None = Field(
+        default=None, description="This Mirror's Refresh interval override, else the default"
+    )
+    sync_deletions: bool = Field(
+        default=False, description="Episodes are deleted when their item leaves the Source"
+    )
     paused: bool = False
     follow: bool = True
     backfill: BackfillPolicy
@@ -370,6 +376,13 @@ class MirrorCreate(RequestModel):
         ge=1,
         description="Skip items shorter than this (Shorts); unknown lengths pass",
     )
+    refresh_interval_hours: int | None = Field(
+        default=None, ge=1, description="This Mirror's Refresh interval; null follows the default"
+    )
+    sync_deletions: bool | None = Field(
+        default=None,
+        description="Delete an Episode when its item leaves the Source (a playlist kept in sync)",
+    )
 
     @field_validator("preferred_language")
     @classmethod
@@ -412,6 +425,8 @@ class MirrorUpdate(RequestModel):
     engine_options: dict[str, Any] | None = None
     preferred_language: str | None = Field(default=None, max_length=16)
     min_duration_seconds: int | None = Field(default=None, ge=1)
+    refresh_interval_hours: int | None = Field(default=None, ge=1)
+    sync_deletions: bool | None = None
 
     @field_validator("title")
     @classmethod
@@ -586,6 +601,9 @@ class MirrorDefaults(RequestModel):
     backfill: BackfillRequest = Field(
         default_factory=lambda: BackfillRequest(mode=BackfillMode.automatic),
         description="The policy a new Mirror gets unless the request names one",
+    )
+    refresh_interval_hours: int = Field(
+        default=24, ge=1, le=24 * 30, description="How often Mirrors Refresh unless they say"
     )
 
     @field_validator("backfill")

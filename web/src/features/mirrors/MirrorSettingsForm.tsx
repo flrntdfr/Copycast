@@ -59,6 +59,8 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
   const defaults = $api.useQuery("get", "/api/settings/defaults");
   const language = useWatch({ control: form.control, name: "language" });
   const minMinutes = useWatch({ control: form.control, name: "min_duration_minutes" });
+  const refreshHours = useWatch({ control: form.control, name: "refresh_interval_hours" });
+  const globalHours = defaults.data?.refresh_interval_hours ?? null;
   const globalLanguage = defaults.data?.language ?? null;
   const globalMinutes = defaults.data?.min_duration_seconds
     ? secondsToMinutes(defaults.data.min_duration_seconds)
@@ -357,7 +359,52 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
               aria-invalid={!!errors.min_duration_minutes}
             />
           </OverrideField>
+          <OverrideField
+            id="settings-refresh-hours"
+            label="Refresh every (hours)"
+            own={
+              typeof refreshHours === "number" && !Number.isNaN(refreshHours)
+                ? String(refreshHours)
+                : ""
+            }
+            global={globalHours == null ? null : String(globalHours)}
+            loaded={defaults.isSuccess}
+            onReset={() =>
+              form.setValue("refresh_interval_hours", undefined, { shouldDirty: true })
+            }
+            error={errors.refresh_interval_hours?.message}
+          >
+            <Input
+              id="settings-refresh-hours"
+              type="number"
+              min={1}
+              max={720}
+              inputMode="numeric"
+              placeholder={globalHours == null ? "24" : String(globalHours)}
+              {...form.register("refresh_interval_hours", { valueAsNumber: true })}
+              aria-invalid={!!errors.refresh_interval_hours}
+            />
+          </OverrideField>
         </fieldset>
+
+        <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+          <div>
+            <Label htmlFor="settings-sync" className="font-medium">
+              Stay in sync with the Source
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Delete an Episode when its item leaves the Source, instead of keeping it Delisted.
+              Meant for a YouTube playlist you curate: remove a video there, it goes here.
+            </p>
+          </div>
+          <Controller
+            control={form.control}
+            name="sync_deletions"
+            render={({ field }) => (
+              <Switch id="settings-sync" checked={field.value} onCheckedChange={field.onChange} />
+            )}
+          />
+        </div>
 
         <div className="space-y-1.5">
           <span className="text-sm font-medium">Retention</span>

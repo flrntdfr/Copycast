@@ -8,6 +8,7 @@ import { Progress } from "@/components/ui/progress";
 export function ProbeStep({
   url,
   error,
+  creating = false,
   onCancel,
   onRetry,
   onSendToInbox,
@@ -15,6 +16,8 @@ export function ProbeStep({
 }: {
   url: string;
   error: unknown;
+  /** The probe found one Source and the Mirror is being created from it. */
+  creating?: boolean;
   onCancel: () => void;
   onRetry: () => void;
   onSendToInbox?: () => void;
@@ -45,7 +48,7 @@ export function ProbeStep({
             </Button>
           ) : null}
           <Button variant="ghost" onClick={onCancel}>
-            Back to Mirrors
+            Close
           </Button>
         </div>
       </div>
@@ -56,7 +59,7 @@ export function ProbeStep({
       <div className="flex items-center gap-2 text-sm">
         <Loader2 className="size-4 animate-spin" aria-hidden />
         <span>
-          Looking at <span className="font-mono break-all">{url}</span>…
+          {creating ? "Creating the Mirror and listing its Source…" : "Looking at the Source…"}
         </span>
       </div>
       <Progress
@@ -66,10 +69,15 @@ export function ProbeStep({
       />
       <p className="text-sm text-muted-foreground">
         Feeds answer in a moment; pages and video sites can take longer while the Engine lists them.
+        {creating
+          ? " The operator’s default policy applies; change it in the Mirror’s Settings tab."
+          : ""}
       </p>
-      <Button variant="outline" onClick={onCancel}>
-        Cancel
-      </Button>
+      {creating ? null : (
+        <Button variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+      )}
     </div>
   );
 }

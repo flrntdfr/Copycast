@@ -94,6 +94,7 @@ describe("Inboxes list", () => {
 
     const cards = await screen.findAllByTestId("inbox-card");
     expect(cards).toHaveLength(2);
+    expect(screen.getByTestId("capture-card")).toHaveTextContent("Capture from the YouTube app");
     expect(cards[0]).toHaveTextContent("Copycast");
     expect(cards[0]).toHaveTextContent("2 Episodes · 8.8 kB · 2 Requests");
     expect(cards[0]).toHaveTextContent("Autoprune 30 days after the first download");

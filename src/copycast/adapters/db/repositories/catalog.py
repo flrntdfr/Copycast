@@ -319,6 +319,19 @@ class CatalogRepository:
             )
         return list((await self._session.execute(stmt)).scalars())
 
+    async def delisted_archived(self, feed_id: str) -> list[CatalogItem]:
+        """Archived items the Source no longer lists (what a synced Mirror deletes)."""
+        result = await self._session.execute(
+            select(CatalogItem)
+            .where(
+                CatalogItem.feed_id == feed_id,
+                CatalogItem.listed.is_(False),
+                CatalogItem.archive_state == ArchiveState.archived.value,
+            )
+            .order_by(CatalogItem.ordinal)
+        )
+        return list(result.scalars())
+
     async def ids_in_state(self, feed_id: str, state: ArchiveState) -> list[str]:
         stmt = (
             select(CatalogItem.id)

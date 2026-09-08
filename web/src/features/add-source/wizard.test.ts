@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  autoCandidate,
   findExistingMirror,
   goBack,
   initialWizardState,
@@ -21,17 +22,16 @@ import { candidate, mirror, probeResult } from "@/test/factories";
 describe("wizardReducer", () => {
   const url = "https://podcast.example/";
 
-  it("skips the candidate step when the probe finds exactly one Source", () => {
-    const only = candidate();
-    const state = wizardReducer(initialWizardState(url), {
-      type: "probed",
-      probe: probeResult([only]),
-    });
-    expect(state.step).toBe("policy");
-    expect(state.step === "policy" && state.candidate).toEqual(only);
+  it("creates without asking when the probe finds exactly one Source that is not a lone video", () => {
+    const only = candidate({ item_count: 6 });
+    expect(autoCandidate(probeResult([only]))).toEqual(only);
+    expect(autoCandidate(probeResult([candidate({ item_count: 1 })]))).toBeNull();
+    expect(
+      autoCandidate(probeResult([candidate(), candidate({ candidate_token: "b" })])),
+    ).toBeNull();
   });
 
-  it("shows the candidate list for two Sources and moves on with the chosen one", () => {
+  it("shows the candidate list and ends on created", () => {
     const [a, b] = [
       candidate({ candidate_token: "a" }),
       candidate({ candidate_token: "b", title: "Bonus" }),
@@ -41,19 +41,17 @@ describe("wizardReducer", () => {
       probe: probeResult([a, b]),
     });
     expect(state.step).toBe("candidates");
-    state = wizardReducer(state, { type: "choose", token: "b" });
-    expect(state.step === "policy" && state.candidate.title).toBe("Bonus");
     state = wizardReducer(state, { type: "created", mirror: mirror() });
     expect(state.step).toBe("created");
   });
 
-  it("goes back to the candidate list only when there was one", () => {
+  it("goes back to the probe from anywhere later", () => {
     const [a, b] = [candidate({ candidate_token: "a" }), candidate({ candidate_token: "b" })];
-    const policy: WizardState = { step: "policy", url, probe: probeResult([a, b]), candidate: b };
-    expect(goBack(policy, "candidates").step).toBe("candidates");
-    const single: WizardState = { step: "policy", url, probe: probeResult([a]), candidate: a };
-    expect(goBack(single, "candidates")).toEqual(initialWizardState(url));
-    expect(goBack(policy, "created")).toBe(policy);
+    const candidates: WizardState = { step: "candidates", url, probe: probeResult([a, b]) };
+    expect(goBack(candidates, "probe")).toEqual(initialWizardState(url));
+    expect(goBack(candidates, "created")).toBe(candidates);
+    const created: WizardState = { step: "created", url, mirror: mirror() };
+    expect(goBack(created, "candidates")).toEqual(initialWizardState(url));
   });
 
   it("restarts on a new URL", () => {
@@ -68,14 +66,14 @@ describe("wizardReducer", () => {
 describe("findExistingMirror", () => {
   it("matches loosely on host and path", () => {
     const existing = mirror({ source_url: "https://www.Podcast.example/feed.xml/" });
-    expect(findExistingMirror([existing], "https://podcast.example/feed.xml")).toBe(existing);
+    expect(findExistingMirror([existing], "podcast.example/feed.xml")).toBe(existing);
     expect(findExistingMirror([existing], "https://podcast.example/other.xml")).toBeNull();
-    expect(looseSourceKey("podcast.example/feed.xml#x")).toBe("podcast.example/feed.xml");
+    expect(looseSourceKey("HTTPS://WWW.Example.com/a/")).toBe("example.com/a");
   });
 });
 
 describe("policy form", () => {
-  it("requires a count under Latest N and validates Selection expressions", () => {
+  it("validates the fields per mode", () => {
     expect(
       policySchema.safeParse({ ...DEFAULT_POLICY, mode: "latest", latest_n: "" }).success,
     ).toBe(false);
@@ -119,10 +117,7 @@ describe("policy form", () => {
   });
 
   it("builds the MirrorCreate body from the candidate and the policy", () => {
-    const chosen = candidate({
-      candidate_token: "tok-1",
-      source_url: "https://podcast.example/feed.xml",
-    });
+    const chosen = candidate({ candidate_token: "tok", source_url: "https://x.example/feed" });
     expect(toBackfill({ mode: "selection", selection: " 1-42, 180 ", follow: false })).toEqual({
       mode: "selection",
       selection: "1-42, 180",
@@ -138,7 +133,6 @@ describe("policy form", () => {
       mode: "automatic",
       retention_days: 30,
     });
-    // An empty retention keeps forever (null), never the server default.
     expect(toBackfill({ mode: "automatic", follow: true })).toEqual({
       mode: "automatic",
       retention_days: null,
@@ -148,8 +142,8 @@ describe("policy form", () => {
       latest_n: 5,
     });
     expect(toMirrorCreate(chosen, { mode: "all", follow: true })).toEqual({
-      source_url: "https://podcast.example/feed.xml",
-      candidate_token: "tok-1",
+      source_url: "https://x.example/feed",
+      candidate_token: "tok",
       backfill: { mode: "all" },
       follow: true,
     });

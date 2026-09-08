@@ -80,6 +80,19 @@ describe("AboutPage", () => {
       "/mirrors/mirror-1",
     );
     expect(rows[1]).toHaveTextContent("Inbox");
+    expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute(
+      "href",
+      "https://github.com/flrntdfr/Copycast",
+    );
+
+    // Sorting: by name (ascending first), then size toggles direction.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Sort by name" }));
+    expect(screen.getAllByTestId("storage-row")[0]).toHaveTextContent("Copycast");
+    await user.click(screen.getByRole("button", { name: "Sort by size" }));
+    expect(screen.getAllByTestId("storage-row")[0]).toHaveTextContent("Example Podcast");
+    await user.click(screen.getByRole("button", { name: "Sort by size" }));
+    expect(screen.getAllByTestId("storage-row")[0]).toHaveTextContent("Copycast");
   });
 
   it("purges every archived Episode after a dry run and a confirmation", async () => {

@@ -79,6 +79,8 @@ class DescriptorPolicy(_Strict):
     min_duration_seconds: int | None = None
     preferred_language: str | None = None
     retention_days: int | None = None
+    refresh_interval_hours: int | None = None
+    sync_deletions: bool = False
     follow: bool = True
     paused: bool = False
     policy_applied_at: datetime | None = None

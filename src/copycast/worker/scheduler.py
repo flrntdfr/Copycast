@@ -11,6 +11,7 @@ from copycast.adapters.db.uow import uow_of
 from copycast.app import Container
 from copycast.application.events import JobEvent
 from copycast.application.models import JobRead
+from copycast.application.services.defaults import load_defaults
 from copycast.application.services.items import PRIORITY_FOLLOW, prune_dedup_key
 from copycast.domain.enums import JobKind, JobTrigger, PruneMode
 from copycast.logging import get_logger
@@ -82,9 +83,16 @@ class Scheduler:
     # ------------------------------------------------------------------ steps
 
     async def _due_refreshes(self, now: datetime) -> int:
-        interval = timedelta(hours=self._container.settings.refresh.interval_hours)
+        """Mirrors whose last Refresh attempt is older than their interval (own, else default)."""
+        default_hours = load_defaults(self._container.layout).refresh_interval_hours
         async with uow_of(self._container.uow_factory()) as uow:
-            due = [feed.id for feed in await uow.feeds.mirrors_due(now - interval)]
+            due = [
+                feed.id
+                for feed in await uow.feeds.mirrors_due(now - timedelta(hours=1))
+                if feed.last_refresh_attempt_at is None
+                or now - feed.last_refresh_attempt_at
+                >= timedelta(hours=feed.refresh_interval_hours or default_hours)
+            ]
         count = 0
         for feed_id in due:
             job = await self._container.services.request_refresh(feed_id, JobTrigger.scheduled)

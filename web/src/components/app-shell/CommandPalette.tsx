@@ -13,6 +13,7 @@ import {
 import { useState } from "react";
 
 import { $api } from "@/api/client";
+import { openAddSource } from "@/stores/addSource";
 import {
   CommandDialog,
   CommandEmpty,
@@ -26,7 +27,7 @@ import { isMirror } from "@/api/types";
 
 const URL_RE = /^(https?:\/\/|www\.)\S+$/i;
 
-/** ⌘K: feeds, pages, and a pasted URL or free text handed to the Add Source wizard. */
+/** ⌘K: feeds, pages, and a pasted URL or free text handed to the Add Source dialog. */
 export function CommandPalette({
   open,
   onOpenChange,
@@ -69,15 +70,7 @@ export function CommandPalette({
               <>
                 <CommandItem
                   value={`mirror ${query}`}
-                  onSelect={() =>
-                    go(
-                      () =>
-                        void navigate({
-                          to: "/mirrors/new",
-                          search: { url: query.trim(), step: "probe" },
-                        }),
-                    )
-                  }
+                  onSelect={() => go(() => openAddSource({ url: query.trim() }))}
                 >
                   <Radio /> Mirror this URL
                 </CommandItem>
@@ -93,15 +86,7 @@ export function CommandPalette({
             ) : (
               <CommandItem
                 value={`search ${query}`}
-                onSelect={() =>
-                  go(
-                    () =>
-                      void navigate({
-                        to: "/mirrors/new",
-                        search: { query: query.trim(), step: "probe" },
-                      }),
-                  )
-                }
+                onSelect={() => go(() => openAddSource({ query: query.trim() }))}
               >
                 <Search /> Find a podcast named “{query.trim()}”
               </CommandItem>
@@ -127,11 +112,7 @@ export function CommandPalette({
           <CommandItem onSelect={() => go(() => void navigate({ to: "/about" }))}>
             <Info /> About
           </CommandItem>
-          <CommandItem
-            onSelect={() =>
-              go(() => void navigate({ to: "/mirrors/new", search: { step: "probe" } }))
-            }
-          >
+          <CommandItem onSelect={() => go(() => openAddSource({}))}>
             <Plus /> Add a Source
           </CommandItem>
         </CommandGroup>

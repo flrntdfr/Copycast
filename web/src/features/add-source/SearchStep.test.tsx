@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import type { RequestCreate } from "@/api/types";
 import { inbox, request, videoResult } from "@/test/factories";
+import { openAddSource } from "@/stores/addSource";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
@@ -36,7 +37,9 @@ describe("Search step", () => {
       }),
     );
     const user = userEvent.setup();
-    const { history } = renderApp("/mirrors/new?query=gruber%20wwdc");
+    const { history } = renderApp("/mirrors");
+    await screen.findByRole("heading", { name: "Mirrors" });
+    openAddSource({ query: "gruber wwdc" });
 
     const videos = await screen.findByRole("list", { name: "Video results" });
     const row = await within(videos).findByRole("listitem");

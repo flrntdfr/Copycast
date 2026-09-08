@@ -29,13 +29,14 @@ from copycast.application.ports import (
     EngineLog,
     PermanentError,
 )
-from copycast.application.services.context import FeedRow, UnitOfWorkPort
+from copycast.application.services.context import FeedRow, ItemRow, UnitOfWorkPort
 from copycast.application.services.defaults import effective, load_defaults
-from copycast.application.services.policy import apply_policy, shortest_for
+from copycast.application.services.policy import apply_policy, delete_rows, shortest_for
 from copycast.domain.enums import (
     ArchiveState,
     AssetKind,
     AssetState,
+    DeleteReason,
     FeedKind,
     JobTrigger,
     ProgressPhase,
@@ -201,6 +202,18 @@ async def run(ctx: JobContext) -> JobOutcome:
             await _record_artwork(uow, feed_id, artwork)
         # The worker holds the concrete UnitOfWork; the policy is written against the ports.
         feed_row = cast("FeedRow", feed)
+        synced = 0
+        if feed.sync_deletions and listed.listing is not None:
+            dropped = await uow.catalog.delisted_archived(feed_id)
+            if dropped:
+                result = await delete_rows(
+                    cast("UnitOfWorkPort", uow),
+                    feed_row,
+                    cast("list[ItemRow]", list(dropped)),
+                    DeleteReason.synced,
+                )
+                synced = result.deleted_count
+                await uow.feeds.recount_storage(feed_id)
         wanted = await apply_policy(
             cast("UnitOfWorkPort", uow),
             feed_row,
@@ -236,6 +249,7 @@ async def run(ctx: JobContext) -> JobOutcome:
         delisted=delisted_count,
         wanted=len(wanted),
         enqueued=len(enqueued),
+        synced=synced,
     )
     return JobOutcome(
         result={
@@ -243,6 +257,7 @@ async def run(ctx: JobContext) -> JobOutcome:
             "listed": listed_count,
             "new": new_count,
             "delisted": delisted_count,
+            "synced": synced,
             "wanted": len(wanted),
             "enqueued": len(enqueued),
             "pages": listed.pages,

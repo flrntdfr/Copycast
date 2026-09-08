@@ -65,6 +65,12 @@ class Feed(TimestampMixin, Base):
     min_duration_seconds: Mapped[int | None] = mapped_column(Integer)
     preferred_language: Mapped[str | None] = mapped_column(String(16))
     retention_days: Mapped[int | None] = mapped_column(Integer)
+    refresh_interval_hours: Mapped[int | None] = mapped_column(Integer)
+    """This Mirror's own Refresh interval; null follows the operator default."""
+    sync_deletions: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    """Delete an Episode when the Source drops its item (a playlist kept in sync)."""
     follow: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true"), default=True
     )
@@ -109,6 +115,10 @@ class Feed(TimestampMixin, Base):
             "min_duration_seconds IS NULL OR min_duration_seconds > 0", name="min_duration_seconds"
         ),
         CheckConstraint("retention_days IS NULL OR retention_days > 0", name="retention_days"),
+        CheckConstraint(
+            "refresh_interval_hours IS NULL OR refresh_interval_hours > 0",
+            name="refresh_interval_hours",
+        ),
         Index(
             "ix_feeds_is_default",
             "is_default",

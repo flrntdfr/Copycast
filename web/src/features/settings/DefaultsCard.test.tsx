@@ -43,6 +43,10 @@ describe("Defaults card", () => {
     );
     expect(within(form).queryByRole("tab", { name: "Selection" })).not.toBeInTheDocument();
     expect(within(form).getByLabelText("Keep downloaded for")).toHaveValue(7);
+    const hours = within(form).getByLabelText("Refresh every (hours)");
+    expect(hours).toHaveValue(24);
+    await user.clear(hours);
+    await user.type(hours, "6");
     await user.click(within(form).getByRole("tab", { name: "Rolling N" }));
     const keep = within(form).getByLabelText("Keep the newest");
     await user.clear(keep);
@@ -54,6 +58,7 @@ describe("Defaults card", () => {
           language: "fr",
           min_duration_seconds: 120,
           backfill: { mode: "rolling", latest_n: 5 },
+          refresh_interval_hours: 6,
         },
       ]),
     );

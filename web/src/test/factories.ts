@@ -46,6 +46,8 @@ export function mirror(overrides: Partial<MirrorRead> = {}): MirrorRead {
     language: null,
     preferred_language: null,
     min_duration_seconds: null,
+    refresh_interval_hours: null,
+    sync_deletions: false,
     paused: false,
     follow: true,
     backfill: { mode: "all", latest_n: null, retention_days: null },
@@ -240,6 +242,7 @@ export function mirrorDefaults(overrides: Partial<MirrorDefaults> = {}): MirrorD
     language: null,
     min_duration_seconds: null,
     backfill: { mode: "automatic", latest_n: null, retention_days: 7, selection: null },
+    refresh_interval_hours: 24,
     ...overrides,
   };
 }

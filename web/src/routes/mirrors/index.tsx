@@ -1,10 +1,7 @@
 import { createFileRoute, stripSearchParams } from "@tanstack/react-router";
 import { z } from "zod";
 
-import { FileDown } from "lucide-react";
-
 import { PageHeader } from "@/components/common/PageHeader";
-import { Button } from "@/components/ui/button";
 import { AddSourceBar } from "@/features/mirrors/AddSourceBar";
 import { MirrorsTable } from "@/features/mirrors/MirrorsTable";
 
@@ -29,13 +26,6 @@ function MirrorsPage() {
       <PageHeader
         title="Mirrors"
         description="Every Source you track, each published as its own podcast feed."
-        actions={
-          <Button variant="outline" size="sm" asChild>
-            <a href="/api/feeds.opml" download="copycast.opml">
-              <FileDown /> Export OPML
-            </a>
-          </Button>
-        }
       />
       <div className="mb-6">
         <AddSourceBar />

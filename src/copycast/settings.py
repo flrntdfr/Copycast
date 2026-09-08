@@ -43,8 +43,10 @@ class SettingsError(Exception):
 class RefreshSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    interval_hours: int = Field(default=24, ge=1)
-    fetch_cooldown_minutes: int = Field(default=15, ge=0)
+    interval_hours: int = Field(
+        default=24, ge=1, description="Ignored since 1.2: the interval is a Settings-page default"
+    )
+    fetch_cooldown_minutes: int = Field(default=5, ge=0)
     concurrency: int = Field(default=2, ge=1, le=32)
 
 

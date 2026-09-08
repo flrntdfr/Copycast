@@ -1,6 +1,7 @@
 """Turn user input into Source candidates.
 
-Scheme-less input is tried as ``https://`` then ``http://``. An RSS body is
+An Apple Podcasts or Spotify link is first resolved to the feed(s) behind it
+(``directories``). Scheme-less input is tried as ``https://`` then ``http://``. An RSS body is
 one candidate; an HTML page yields one candidate per advertised feed that
 verifies as RSS (at most five); anything else is listed by the engine and
 becomes a ``ytdlp`` candidate. A bare YouTube channel URL normalizes to its
@@ -21,6 +22,7 @@ from typing import Any, Final
 import httpx
 
 from copycast.adapters.sources.cache import TtlCache
+from copycast.adapters.sources.directories import is_directory_link, resolve_directory_link
 from copycast.adapters.sources.discovery import discover_feed_links, looks_like_html
 from copycast.adapters.sources.http import (
     MAX_FEED_BYTES,
@@ -159,7 +161,13 @@ def probe(
     failures: list[str] = []
     urls = scheme_candidates(input_url)
 
-    if any(youtube_host(u) for u in urls):
+    directory = _directory_feeds(input_url, client, failures)
+    if directory is not None:
+        entries = _verify_links(directory[:verify_limit], client, failures)
+        if not entries:
+            detail = "; ".join(dict.fromkeys(failures)) or "no podcast found for it"
+            raise Unsupported(f"{input_url} could not be resolved to a feed ({detail})")
+    elif any(youtube_host(u) for u in urls):
         target = normalize_youtube_channel(urls[0])
         entries = _ytdlp_entries([target], engine, engine_options, token, engine_log, failures)
     else:
@@ -219,6 +227,19 @@ def probe(
         for entry in result_entries:
             cache.put(entry)
     return ProbeResult(input_url=input_url, candidates=[e.candidate for e in result_entries])
+
+
+def _directory_feeds(
+    input_url: str, client: httpx.Client | None, failures: list[str]
+) -> list[str] | None:
+    """Feed URLs behind an Apple Podcasts or Spotify link; None for any other input."""
+    if not is_directory_link(input_url):
+        return None
+    try:
+        return resolve_directory_link(input_url, client=client)
+    except SourceError as exc:
+        failures.append(str(exc))
+        return []
 
 
 def _verify_links(

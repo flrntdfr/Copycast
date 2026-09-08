@@ -75,6 +75,20 @@ describe("settings form", () => {
     expect(
       toMirrorUpdate(overridden, { ...parsed, language: "", min_duration_minutes: undefined }),
     ).toEqual({ preferred_language: null, min_duration_seconds: null });
+    // The Refresh interval override and the playlist sync follow the same rules.
+    expect(toMirrorUpdate(base, { ...parsed, refresh_interval_hours: 6 })).toEqual({
+      refresh_interval_hours: 6,
+    });
+    const hourly = { ...base, refresh_interval_hours: 6 };
+    expect(toMirrorUpdate(hourly, mirrorSettingsSchema.parse(settingsDefaults(hourly)))).toEqual(
+      {},
+    );
+    expect(toMirrorUpdate(hourly, { ...parsed, refresh_interval_hours: undefined })).toEqual({
+      refresh_interval_hours: null,
+    });
+    expect(toMirrorUpdate(base, { ...parsed, sync_deletions: true })).toEqual({
+      sync_deletions: true,
+    });
   });
 
   it("tells a real mode change apart for Rolling and Automatic", () => {

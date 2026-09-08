@@ -82,14 +82,18 @@ function DefaultsForm({ stored }: { stored: MirrorDefaults }) {
       ? (storedPolicy.retention_days?.toString() ?? "")
       : String(storedPolicy?.retention_days ?? 7),
   );
+  const [intervalHours, setIntervalHours] = useState(String(stored.refresh_interval_hours ?? 24));
+  const interval = Number(intervalHours);
+  const intervalOk = Number.isInteger(interval) && interval >= 1 && interval <= 720;
   const policy = policyOf(mode, latestN, retention);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!policy) return;
+    if (!policy || !intervalOk) return;
     const body: MirrorDefaults = {
       language: language.trim() || null,
       min_duration_seconds: minutesToSeconds(minutes),
       backfill: policy,
+      refresh_interval_hours: interval,
     };
     save.mutate({ body });
   };
@@ -126,6 +130,23 @@ function DefaultsForm({ stored }: { stored: MirrorDefaults }) {
             </p>
           </div>
         </div>
+        <div className="space-y-1.5 sm:max-w-xs">
+          <Label htmlFor="defaults-refresh-hours">Refresh every (hours)</Label>
+          <Input
+            id="defaults-refresh-hours"
+            type="number"
+            min={1}
+            max={720}
+            inputMode="numeric"
+            value={intervalHours}
+            onChange={(event) => setIntervalHours(event.target.value)}
+            aria-invalid={!intervalOk}
+          />
+          <p className="text-xs text-muted-foreground">
+            How often every Mirror checks its Source for new items; a Mirror can set its own. A
+            fetch of a Mirror Feed by a podcast app refreshes it too.
+          </p>
+        </div>
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium">Policy for new Mirrors</legend>
           <p className="text-xs text-muted-foreground">
@@ -157,7 +178,7 @@ function DefaultsForm({ stored }: { stored: MirrorDefaults }) {
             }
           </ModeTabs>
         </fieldset>
-        <Button type="submit" disabled={save.isPending || !policy}>
+        <Button type="submit" disabled={save.isPending || !policy || !intervalOk}>
           {save.isPending ? <Loader2 className="animate-spin" /> : <Save />}
           Save defaults
         </Button>

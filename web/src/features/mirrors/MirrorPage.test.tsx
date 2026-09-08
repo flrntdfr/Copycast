@@ -376,15 +376,18 @@ describe("Mirrors list", () => {
     await expect(navigator.clipboard.readText()).resolves.toBe(feed.feed_url);
   });
 
-  it("hands a pasted URL to the wizard", async () => {
-    server.use(...handlers());
+  it("hands a pasted URL to the Add Source dialog", async () => {
+    server.use(
+      http.post("/api/probe", () => HttpResponse.json({ input_url: "x", candidates: [] })),
+      ...handlers(),
+    );
     const user = userEvent.setup();
     const { history } = renderApp("/mirrors");
     await user.type(
       await screen.findByLabelText("Source URL"),
       "https://podcast.example/feed.xml{Enter}",
     );
-    await waitFor(() => expect(history.location.pathname).toBe("/mirrors/new"));
-    expect(history.location.search).toContain("url=");
+    expect(await screen.findByRole("dialog", { name: "Choose a Source" })).toBeInTheDocument();
+    expect(history.location.pathname).toBe("/mirrors");
   });
 });

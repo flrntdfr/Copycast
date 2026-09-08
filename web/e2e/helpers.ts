@@ -51,17 +51,16 @@ export async function defaultInbox(request: APIRequestContext): Promise<FeedSumm
   return inbox;
 }
 
-/** Walk the Add Source wizard for the fixture feed and land on the Created step. */
+/** Add the fixture feed from the Mirrors page bar and land on the dialog's Created step. */
 export async function createFixtureMirror(page: Page): Promise<string> {
+  // Everything, so the worker archives every fixture item (the built-in default is Automatic).
+  const defaults = await page.request.put("/api/settings/defaults", {
+    data: { backfill: { mode: "all" } },
+  });
+  expect(defaults.ok()).toBeTruthy();
   await page.goto("/mirrors");
   await page.getByLabel("Source URL").fill(FIXTURE_FEED_URL);
   await page.getByRole("main").getByRole("button", { name: "Add Source" }).click();
-  await expect(page.getByRole("heading", { name: "What to archive" })).toBeVisible({
-    timeout: 60_000,
-  });
-  // Everything, so the worker archives every fixture item (the default is Automatic).
-  await page.getByRole("tab", { name: /^Everything/ }).click();
-  await page.getByRole("button", { name: "Create Mirror" }).click();
   await expect(page.getByRole("heading", { name: "Mirror created" })).toBeVisible({
     timeout: 60_000,
   });

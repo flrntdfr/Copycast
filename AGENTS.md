@@ -107,6 +107,10 @@ _Avoid_: Plays, listens, hits
 **Tombstone**:
 The trace left by an Episode you deleted (or that rolled out, expired, or was purged): the Catalog item stays, marked deleted, so the Mirror will not archive it again on its own; it shows as Available and can be re-archived on demand, and an Automatic Mirror downloads it again when a podcast app asks.
 
+**Sync**:
+A Mirror option (*Stay in sync with the Source*): an Episode is deleted, leaving a Tombstone, when its item leaves the Source, instead of staying Delisted. Meant for a curated YouTube playlist.
+_Avoid_: Mirror deletions, prune (that is an Inbox's Retention)
+
 **Attachment**:
 A file the show notes of an Episode embed or link to (an image, a PDF, an audio file), mirrored next to the Episode's media at archive time; the Mirror Feed's notes point at the local copy.
 _Avoid_: Enclosure (that is the media), inline asset, media (that is the audio)

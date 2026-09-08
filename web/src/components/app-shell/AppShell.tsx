@@ -1,8 +1,9 @@
-import { Link, Outlet, useNavigate } from "@tanstack/react-router";
-import { Command, Menu, Plus } from "lucide-react";
+import { Link, Outlet } from "@tanstack/react-router";
+import { Command, Menu } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { CommandPalette } from "./CommandPalette";
+import { AddSourceDialog } from "@/features/add-source/AddSourceDialog";
 import { ConnectionDot } from "./ConnectionDot";
 import { JobsIndicator } from "./JobsIndicator";
 import { PlayerBar } from "./PlayerBar";
@@ -34,7 +35,6 @@ function isEditable(target: EventTarget | null): boolean {
 
 /** Top nav + content column (`max-w-6xl`) + player; nav collapses into a Sheet under `md`. */
 export function AppShell() {
-  const navigate = useNavigate();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -120,12 +120,7 @@ export function AppShell() {
             {links()}
           </nav>
           <div className="ml-auto flex items-center gap-1">
-            <Button
-              size="sm"
-              onClick={() => void navigate({ to: "/mirrors/new", search: { step: "probe" } })}
-            >
-              <Plus /> <span className="hidden sm:inline">Add Source</span>
-            </Button>
+            <ThemeToggle />
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -140,7 +135,6 @@ export function AppShell() {
               <TooltipContent>Command palette (⌘K)</TooltipContent>
             </Tooltip>
             <ConnectionDot />
-            <ThemeToggle />
           </div>
         </div>
       </header>
@@ -148,6 +142,7 @@ export function AppShell() {
         <Outlet />
       </main>
       <PlayerBar />
+      <AddSourceDialog />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </div>

@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/common/PageHeader";
 import { CookiesCard } from "./CookiesCard";
 import { DefaultsCard } from "./DefaultsCard";
+import { ExportCard } from "./ExportCard";
 
 /** Operator settings that live in the data directory rather than in the environment. */
 export function SettingsPage() {
@@ -13,6 +14,7 @@ export function SettingsPage() {
       <div className="space-y-6">
         <DefaultsCard />
         <CookiesCard />
+        <ExportCard />
       </div>
     </>
   );

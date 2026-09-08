@@ -1,8 +1,10 @@
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Loader2 } from "lucide-react";
+import { useEffect, useRef } from "react";
 
 import type { ItemRead } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { formatBytes, formatDateTime, formatNumber } from "@/lib/format";
+import { useFetchMetadata } from "./mutations";
 import { assetKindLabel } from "@/lib/labels";
 
 /** RSS descriptions are HTML; show them as text. */
@@ -24,13 +26,33 @@ export function plainText(html: string | null | undefined): string {
 
 export function RowDetails({ item }: { item: ItemRead }) {
   const description = plainText(item.description);
+  const fetchMetadata = useFetchMetadata(item.feed_id);
+  const { mutate: fetchNow, status } = fetchMetadata;
+  const canFetch = !item.description && !!item.item_url;
+  // Expanding a row without a description asks the Source for it, once.
+  const asked = useRef(false);
+  useEffect(() => {
+    if (!canFetch || asked.current) return;
+    asked.current = true;
+    fetchNow({ params: { path: { feed_id: item.feed_id, item_id: item.id } } });
+  }, [canFetch, fetchNow, item.feed_id, item.id]);
+  const fetching = canFetch && (status === "idle" || status === "pending");
   return (
     <div className="grid gap-4 text-sm md:grid-cols-[1fr_20rem]">
       <div className="min-w-0">
         {description ? (
           <p className="line-clamp-6 whitespace-pre-line text-muted-foreground">{description}</p>
+        ) : fetching ? (
+          <p className="flex items-center gap-2 text-muted-foreground" role="status">
+            <Loader2 className="size-4 animate-spin" aria-hidden />
+            Fetching the description from the Source…
+          </p>
         ) : (
-          <p className="text-muted-foreground italic">No description.</p>
+          <p className="text-muted-foreground italic">
+            {canFetch && status === "error"
+              ? "The Source did not answer; no description."
+              : "No description."}
+          </p>
         )}
         {item.item_url ? (
           <a

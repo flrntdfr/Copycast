@@ -12,7 +12,7 @@ def test_defaults_match_the_plan(tmp_path: Path) -> None:
     assert settings.base_url == "http://localhost:8080"
     assert settings.database_url == "postgresql+psycopg://copycast:copycast@localhost:5432/copycast"
     assert settings.refresh.interval_hours == 24
-    assert settings.refresh.fetch_cooldown_minutes == 15
+    assert settings.refresh.fetch_cooldown_minutes == 5
     assert settings.refresh.concurrency == 2
     assert settings.engine.channel == "nightly"
     assert settings.engine.options == {}
@@ -40,7 +40,7 @@ def test_toml_file_then_env_then_init(tmp_path: Path, monkeypatch: pytest.Monkey
     assert settings.database_url == "postgresql+psycopg://a:b@toml/db"
     assert settings.refresh.concurrency == 4
     assert settings.refresh.interval_hours == 1
-    assert settings.refresh.fetch_cooldown_minutes == 15
+    assert settings.refresh.fetch_cooldown_minutes == 5
     assert settings.engine.channel == "stable"
     assert settings.engine.options == {"ratelimit": 5}
     assert settings.port == 9090

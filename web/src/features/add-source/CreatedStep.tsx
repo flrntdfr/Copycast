@@ -8,8 +8,9 @@ import { FeedUrlField } from "@/components/common/FeedUrlField";
 import { Button } from "@/components/ui/button";
 import { JobProgress } from "@/features/jobs/JobProgress";
 import { count } from "@/lib/labels";
+import { openAddSource } from "@/stores/addSource";
 
-export function CreatedStep({ mirror }: { mirror: MirrorRead }) {
+export function CreatedStep({ mirror, onOpen }: { mirror: MirrorRead; onOpen?: () => void }) {
   const jobs = $api.useQuery(
     "get",
     "/api/jobs",
@@ -54,14 +55,12 @@ export function CreatedStep({ mirror }: { mirror: MirrorRead }) {
       </div>
       <div className="flex gap-2">
         <Button asChild>
-          <Link to="/mirrors/$mirrorId" params={{ mirrorId: mirror.id }}>
+          <Link to="/mirrors/$mirrorId" params={{ mirrorId: mirror.id }} onClick={onOpen}>
             Open Mirror
           </Link>
         </Button>
-        <Button variant="outline" asChild>
-          <Link to="/mirrors/new" search={{ step: "probe" }}>
-            Add another
-          </Link>
+        <Button variant="outline" onClick={() => openAddSource({})}>
+          Add another
         </Button>
       </div>
     </div>

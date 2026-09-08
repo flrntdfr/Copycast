@@ -52,9 +52,9 @@ describe("AppShell", () => {
     const input = within(palette).getByPlaceholderText(/Search feeds/);
     await user.type(input, "Accidental Tech");
     await user.click(await within(palette).findByText(/Find a podcast named “Accidental Tech”/));
-    await waitFor(() => expect(history.location.pathname).toBe("/mirrors/new"));
-    expect(history.location.search).toContain("query=Accidental+Tech");
-    expect(await screen.findByLabelText("Podcast or video name")).toHaveValue("Accidental Tech");
+    const dialog = await screen.findByRole("dialog", { name: "Find a podcast" });
+    expect(within(dialog).getByLabelText("Podcast or video name")).toHaveValue("Accidental Tech");
+    expect(history.location.pathname).toBe("/about");
   });
 
   it("offers Mirror / Send to Inbox for a URL and jumps to feeds", async () => {
@@ -67,6 +67,8 @@ describe("AppShell", () => {
     const palette = await screen.findByRole("dialog", { name: "Command palette" });
     await user.type(within(palette).getByPlaceholderText(/Search feeds/), "https://x.example/f");
     expect(within(palette).getByText("Mirror this URL")).toBeInTheDocument();
+    // The banner holds theme, palette and the live-update dot; no Add Source button.
+    expect(screen.queryByRole("button", { name: /Add Source/ })).not.toBeInTheDocument();
     await user.click(within(palette).getByText("Send to Inbox…"));
     await waitFor(() => expect(history.location.pathname).toBe("/inboxes"));
     expect(history.location.search).toContain("url=https%3A%2F%2Fx.example%2Ff");

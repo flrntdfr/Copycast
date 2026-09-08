@@ -128,7 +128,7 @@ async def test_fetch_triggers_refresh_only_in_follow_mode_under_cooldown(
     assert len(await refresh_jobs(container, mirror["id"])) == 2
 
 
-async def test_fetch_does_not_trigger_refresh_when_paused_or_not_following(
+async def test_fetch_does_not_trigger_refresh_when_paused(
     client: httpx.AsyncClient, source: Source, runner: Runner, container: Container
 ) -> None:
     url = source.write_rss("paused", items=[1], artwork=False)
@@ -139,7 +139,8 @@ async def test_fetch_does_not_trigger_refresh_when_paused_or_not_following(
     assert (await client.get(FEED_URL(mirror["id"]))).status_code == 200
     assert len(await refresh_jobs(container, mirror["id"])) == 1
 
-    # Resuming queues one manual Refresh; a fetch with follow off adds nothing.
+    # Resuming queues one manual Refresh; a fetch with follow off still refreshes (pull to
+    # refresh lists new items even when the policy archives nothing).
     resumed = await client.post(api(f"/mirrors/{mirror['id']}/resume"))
     assert resumed.status_code == 200 and resumed.json()["paused"] is False
     jobs = await refresh_jobs(container, mirror["id"])
@@ -150,12 +151,48 @@ async def test_fetch_does_not_trigger_refresh_when_paused_or_not_following(
     unfollowed = await client.patch(api(f"/mirrors/{mirror['id']}"), json={"follow": False})
     assert unfollowed.status_code == 200 and unfollowed.json()["follow"] is False
     assert (await client.get(FEED_URL(mirror["id"]))).status_code == 200
-    assert len(await refresh_jobs(container, mirror["id"])) == 2
+    assert len(await refresh_jobs(container, mirror["id"])) == 3
 
     # An Inbox feed never triggers a Refresh.
     inbox = (await client.get(api("/inboxes"))).json()["feeds"][0]
     assert (await client.get(FEED_URL(inbox["id"]))).status_code == 200
     assert await refresh_jobs(container, inbox["id"]) == []
+
+
+async def test_fetch_waits_for_the_refresh_it_triggers(
+    client: httpx.AsyncClient,
+    source: Source,
+    runner: Runner,
+    container: Container,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pull to refresh: the fetch serves what the Refresh it triggered found."""
+    import asyncio
+
+    from copycast.adapters.api.routes import public
+
+    url = source.write_rss("pull", items=[1], artwork=False)
+    mirror = await create_mirror(client, url)
+    await runner.run_until_idle()
+    async with container.uow_factory() as uow:
+        await uow.feeds.set_refresh_attempt(mirror["id"], datetime.now(UTC) - timedelta(hours=1))
+    source.write_rss("pull", items=[2, 1], artwork=False)
+    monkeypatch.setattr(public, "FEED_FETCH_WAIT_SECONDS", 10.0)
+    monkeypatch.setattr(public, "FEED_FETCH_POLL_SECONDS", 0.05)
+
+    async def work() -> None:
+        # The worker picks the Refresh up while the fetch is waiting for it.
+        await asyncio.sleep(0.2)
+        await runner.run_until_idle()
+
+    worker = asyncio.create_task(work())
+    response = await client.get(FEED_URL(mirror["id"]))
+    await worker
+    assert response.status_code == 200
+    assert len(parse(response.content).find("channel").findall("item")) == 2
+    jobs = await refresh_jobs(container, mirror["id"])
+    pulled = [j for j in jobs if j.trigger == JobTrigger.feed_fetch]  # type: ignore[attr-defined]
+    assert len(pulled) == 1 and pulled[0].status == JobStatus.succeeded  # type: ignore[attr-defined]
 
 
 async def test_manual_refresh_ignores_paused_and_cooldown(

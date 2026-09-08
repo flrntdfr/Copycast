@@ -44,7 +44,11 @@ def store_defaults(path: Path, defaults: MirrorDefaults) -> None:
 
 
 def effective(
-    defaults: MirrorDefaults, *, language: str | None, min_duration_seconds: int | None
+    defaults: MirrorDefaults,
+    *,
+    language: str | None,
+    min_duration_seconds: int | None,
+    refresh_interval_hours: int | None = None,
 ) -> MirrorDefaults:
     """A Mirror's own values with the defaults filling in whatever is null."""
     return MirrorDefaults(
@@ -55,6 +59,7 @@ def effective(
             else defaults.min_duration_seconds
         ),
         backfill=defaults.backfill,
+        refresh_interval_hours=refresh_interval_hours or defaults.refresh_interval_hours,
     )
 
 
@@ -73,6 +78,7 @@ async def set_mirror_defaults(ctx: ServiceContext, body: MirrorDefaults) -> Mirr
         language=body.language,
         min_duration_seconds=body.min_duration_seconds,
         backfill_mode=body.backfill.mode.value,
+        refresh_interval_hours=body.refresh_interval_hours,
     )
     return body
 

@@ -115,6 +115,8 @@ Tools cover everything the UI does: `search_podcasts` (iTunes Search, no key nee
   `backfill.mode = automatic`: episodes download when your app first plays them and expire a
   week after the last listen (both need a `full` key, since they delete).
 - "Save this talk for my commute" → `add_to_inbox` → it lands in the Copycast Inbox feed.
+- "Mirror this show" with an Apple Podcasts or Spotify link → `probe_source` resolves the feed
+  behind it (Spotify by the show's name in Apple's directory) → `create_mirror`.
 - "Add the last WWDC live from Gruber to the inbox" → `search_videos` ("The Talk Show live
   WWDC") → `add_to_inbox` with the video's URL → downloaded once, in your Inbox feed.
 - "Download every episode of that channel now" → `archive_available` (queues everything

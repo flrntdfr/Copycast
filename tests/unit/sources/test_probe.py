@@ -137,3 +137,33 @@ def test_probe_cache_expires_and_keys_by_normalized_url() -> None:
     assert cache.get_by_url(candidate.source_url) is None
     cache.purge()
     assert len(cache) == 0
+
+
+def test_apple_podcasts_link_resolves_to_its_feed(origin: Origin, engine: FakeEngine) -> None:
+    import httpx
+
+    feed_url = origin.url_for("/rss/itunes_podcast20.xml")
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "itunes.apple.com":
+            return httpx.Response(200, json={"results": [{"feedUrl": feed_url}]})
+        return httpx.Response(200, content=httpx.get(str(request.url)).content)
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        result = probe(
+            "https://podcasts.apple.com/us/podcast/copycast-test/id617416468",
+            engine=engine,
+            client=client,
+        )
+    assert [c.source_url for c in result.candidates] == [feed_url]
+    assert result.candidates[0].source_kind is SourceKind.rss
+    assert result.candidates[0].title == "Copycast Test Podcast"
+    assert engine.records.listings == []
+
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"results": []}))
+        ) as client,
+        pytest.raises(Unsupported, match="could not be resolved"),
+    ):
+        probe("https://podcasts.apple.com/us/podcast/x/id1", engine=engine, client=client)

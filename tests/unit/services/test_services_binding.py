@@ -75,7 +75,8 @@ def _feed(**overrides: Any) -> Any:
             {"last_refresh_attempt_at": datetime.now(UTC) - timedelta(minutes=16)},
             True,
         ),
-        (JobTrigger.feed_fetch, {"follow": False, "last_refresh_attempt_at": None}, False),
+        # Pull to refresh lists new items even when Follow is off.
+        (JobTrigger.feed_fetch, {"follow": False, "last_refresh_attempt_at": None}, True),
         (JobTrigger.feed_fetch, {"paused": True, "last_refresh_attempt_at": None}, False),
     ],
 )

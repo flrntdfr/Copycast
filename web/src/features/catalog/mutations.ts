@@ -33,10 +33,8 @@ export function useArchiveItem(feedId: string) {
 export function useFetchMetadata(feedId: string) {
   const invalidate = useInvalidateCatalog(feedId);
   return $api.useMutation("post", "/api/feeds/{feed_id}/items/{item_id}/metadata", {
-    onSuccess: (item) => {
-      invalidate();
-      toast.success(item.description ? "Description fetched" : "The Source has no description");
-    },
+    meta: { silent: true },
+    onSuccess: () => invalidate(),
   });
 }
 

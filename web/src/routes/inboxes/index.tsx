@@ -7,6 +7,7 @@ import { isInbox } from "@/api/types";
 import { EmptyState } from "@/components/common/EmptyState";
 import { PageHeader } from "@/components/common/PageHeader";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CaptureCard } from "@/features/inboxes/CaptureCard";
 import { InboxCard } from "@/features/inboxes/InboxCard";
 import { NewInboxDialog } from "@/features/inboxes/NewInboxDialog";
 
@@ -34,6 +35,9 @@ function InboxesPage() {
         }
         actions={<NewInboxDialog />}
       />
+      <div className="mb-6">
+        <CaptureCard />
+      </div>
       {query.isPending ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy>
           {Array.from({ length: 3 }, (_, i) => (

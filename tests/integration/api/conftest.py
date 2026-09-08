@@ -42,6 +42,14 @@ def source(tmp_path: Path) -> Iterator[Source]:
         yield Source(origin=origin, root=root)
 
 
+@pytest.fixture(autouse=True)
+def _no_feed_fetch_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The worker is not running during API tests: a feed fetch queues its Refresh and answers."""
+    from copycast.adapters.api.routes import public
+
+    monkeypatch.setattr(public, "FEED_FETCH_WAIT_SECONDS", 0.0)
+
+
 @pytest.fixture
 def runner(container: Container) -> Runner:
     return Runner(

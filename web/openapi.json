@@ -3,7 +3,7 @@
   "info": {
     "title": "Copycast",
     "description": "Self-hosted podcast mirroring and archiving.",
-    "version": "1.1.2"
+    "version": "1.2.0"
   },
   "paths": {
     "/api/feeds": {
@@ -4239,6 +4239,31 @@
             ],
             "title": "Min Duration Seconds",
             "description": "Skip items shorter than this (Shorts); unknown lengths pass"
+          },
+          "refresh_interval_hours": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Interval Hours",
+            "description": "This Mirror's Refresh interval; null follows the default"
+          },
+          "sync_deletions": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Deletions",
+            "description": "Delete an Episode when its item leaves the Source (a playlist kept in sync)"
           }
         },
         "additionalProperties": false,
@@ -4279,6 +4304,14 @@
           "backfill": {
             "$ref": "#/components/schemas/BackfillRequest",
             "description": "The policy a new Mirror gets unless the request names one"
+          },
+          "refresh_interval_hours": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 1.0,
+            "title": "Refresh Interval Hours",
+            "description": "How often Mirrors Refresh unless they say",
+            "default": 24
           }
         },
         "additionalProperties": false,
@@ -4429,6 +4462,24 @@
             ],
             "title": "Min Duration Seconds",
             "description": "Shorter items are listed but never archived automatically"
+          },
+          "refresh_interval_hours": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Interval Hours",
+            "description": "This Mirror's Refresh interval override, else the default"
+          },
+          "sync_deletions": {
+            "type": "boolean",
+            "title": "Sync Deletions",
+            "description": "Episodes are deleted when their item leaves the Source",
+            "default": false
           },
           "paused": {
             "type": "boolean",
@@ -4598,6 +4649,29 @@
               }
             ],
             "title": "Min Duration Seconds"
+          },
+          "refresh_interval_hours": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Interval Hours"
+          },
+          "sync_deletions": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Deletions"
           }
         },
         "additionalProperties": false,

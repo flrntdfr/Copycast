@@ -56,8 +56,8 @@ data_dir     = "./data"
 database_url = "postgresql+psycopg://copycast:copycast@localhost:5432/copycast"   # postgresql:// is rewritten
 
 [refresh]
-interval_hours         = 24     # scheduled Refresh interval per Mirror
-fetch_cooldown_minutes = 15     # minimum gap between feed-fetch-triggered Refreshes
+# interval_hours: ignored since 1.2; the Refresh interval is a Settings-page default
+fetch_cooldown_minutes = 5      # minimum gap between feed-fetch-triggered Refreshes
 concurrency            = 2      # parallel engine jobs in the worker
 
 [engine]
@@ -213,6 +213,25 @@ exact one does, and archiving fills in the download's own date. While a date is 
 Catalog shows it as "≈ 3 weeks ago" and the feed's show notes open with "Published about 3
 weeks ago (approximate date from YouTube; exact once downloaded)".
 
+## Pull to refresh, directory links and playlists
+
+- **Pull to refresh.** A podcast app fetching a Mirror Feed queues a Refresh and waits for it
+  (up to 20 s) before answering, so the new Episodes are in that very answer; within the
+  cooldown (`refresh.fetch_cooldown_minutes`, 5 by default) the feed answers at once. Paused
+  Mirrors never refresh on a fetch.
+- **Apple Podcasts and Spotify links.** Pasting a `podcasts.apple.com` link resolves the feed
+  through Apple's lookup API; an `open.spotify.com/show/…` link is resolved by the show's name
+  through Apple's directory (an exact match is used, otherwise every hit is a candidate to pick
+  from). `probe_source` and `create_mirror` accept both, so agents can too.
+- **Playlists kept in sync.** A Mirror with *Stay in sync with the Source* deletes an Episode
+  when its item leaves the Source instead of Delisting it (a Tombstone, so the video comes back
+  as Available if re-added). The Inboxes page's *Capture from the YouTube app* card creates such
+  a Mirror from a private playlist in Automatic mode; with your cookies stored, sharing a video
+  to that playlist from the YouTube app puts it in the feed.
+- **Adding a Source** happens in a dialog from the Mirrors page bar (a URL, an Apple Podcasts or
+  Spotify link, or a name to search) or the command palette; the Mirror takes the operator's
+  default policy, changed afterwards in its Settings tab.
+
 ## Show notes, OPML and the player
 
 - **Attachments.** When an Episode is archived, the images its show notes embed and the
@@ -220,12 +239,15 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   file) are mirrored as `attachment` assets under `assets/{item}.attachment.{slot}.{ext}`,
   and the Mirror Feed's description points at the local copies. A file that cannot be fetched
   is recorded as a failed asset and its original URL stays in the notes.
-- **OPML.** *Export OPML* on the Mirrors page (`GET /api/feeds.opml`) lists every feed with
+- **OPML.** *Export OPML* on the Settings page (`GET /api/feeds.opml`) lists every feed with
   its credentialed URL, to subscribe to all of them in one go.
 - **Player.** The web player has a seek bar with chapter marks (from the Episode's chapters
   asset), skip back 15 s / forward 30 s, speed from 0.75× to 2×, volume and mute, and keyboard
   shortcuts (space, arrows, `m`, `[` and `]`); speed and volume are remembered per browser.
 - **Title.** The pen next to a Mirror's title edits it in place; Enter saves, Escape cancels.
+- **Descriptions on demand.** Expanding a Catalog row without a description asks the Source for
+  it (and the exact date and artwork) right there; `fetch_item_metadata` does the same for
+  agents.
 
 ## Titles, artwork and crawlers
 
@@ -252,7 +274,8 @@ changes from the UI:
 |---|---|---|
 | Metadata language (`fr`, `pt-BR`) | yt-dlp asks YouTube for that language instead of English, so a French channel's titles and descriptions stay French | the Mirror's *Metadata language* field (`preferred_language`; `language` stays what the Source reports) |
 | Minimum length (minutes) | items shorter than that are listed but never archived by Backfill or Follow; unknown lengths pass; explicit selections still work (keeps Shorts out) | the Mirror's *Minimum length* field (`min_duration_seconds`) |
-| Policy for new Mirrors | the Backfill a new Mirror starts from: Automatic (with its retention), Everything or Rolling N | the wizard's tabs, or `backfill` in `create_mirror` |
+| Policy for new Mirrors | the Backfill a new Mirror starts from: Automatic (with its retention), Everything or Rolling N | the Mirror's Settings tab, or `backfill` in `create_mirror` |
+| Refresh every (hours) | how often the scheduler Refreshes a Mirror (24 by default; replaces the `refresh.interval_hours` config key) | the Mirror's *Refresh every* field (`refresh_interval_hours`) |
 
 A Mirror's Settings tab shows "Using the default" when a field is empty, marks a value that
 diverges from the default, and offers *Use default*, which clears the override (sent as
@@ -368,13 +391,13 @@ the engine tests, and pushes the lock change to `main`; `image.yml` then builds 
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
-| `1.1.2` | yes, on every engine bump | "the current 1.1.2" |
-| `1.1.2-yt2026.8.19` | never | exactly this app + engine combination |
+| `1.2.0` | yes, on every engine bump | "the current 1.2.0" |
+| `1.2.0-yt2026.8.19` | never | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
 Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. To roll back an engine
 that broke a site, pin the previous immutable tag in `.env`
-(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:1.1.2-yt<previous>`) or in the kustomize overlay
+(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:1.2.0-yt<previous>`) or in the kustomize overlay
 (`images[].newTag`), and `docker compose up -d` / `kubectl apply -k`. The About page and
 `copycast --version` show which engine is running; `jobs.engine_version` records which engine
 archived each item.

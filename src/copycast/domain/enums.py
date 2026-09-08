@@ -215,6 +215,8 @@ class DeleteReason(StrEnum):
     prune = "prune"
     rolled = "rolled"
     expired = "expired"
+    synced = "synced"
+    """The Source dropped the item and the Mirror keeps in sync with it."""
 
 
 class PruneMode(StrEnum):

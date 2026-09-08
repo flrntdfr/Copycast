@@ -55,6 +55,8 @@ export const mirrorSettingsSchema = z
       .max(16)
       .regex(/^([a-zA-Z]{2,3}([-_][a-zA-Z0-9]{2,8})*)?$/, "A tag such as fr or pt-BR"),
     min_duration_minutes: optionalCount,
+    refresh_interval_hours: optionalCount,
+    sync_deletions: z.boolean(),
   })
   .superRefine((value, ctx) => {
     refineMode(value, ctx);
@@ -85,6 +87,8 @@ export function settingsDefaults(mirror: MirrorRead): MirrorSettingsInput {
     min_duration_minutes: mirror.min_duration_seconds
       ? secondsToMinutes(mirror.min_duration_seconds)
       : undefined,
+    refresh_interval_hours: mirror.refresh_interval_hours ?? undefined,
+    sync_deletions: mirror.sync_deletions,
   };
 }
 
@@ -130,6 +134,10 @@ export function toMirrorUpdate(mirror: MirrorRead, values: MirrorSettingsValues)
   if (language !== (mirror.preferred_language ?? null)) update.preferred_language = language;
   const seconds = minutesToSeconds(values.min_duration_minutes ?? null);
   if (seconds !== (mirror.min_duration_seconds ?? null)) update.min_duration_seconds = seconds;
+  const hours = values.refresh_interval_hours ?? null;
+  if (hours !== (mirror.refresh_interval_hours ?? null)) update.refresh_interval_hours = hours;
+  if (values.sync_deletions !== mirror.sync_deletions)
+    update.sync_deletions = values.sync_deletions;
   return update;
 }
 
