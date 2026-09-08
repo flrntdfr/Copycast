@@ -19,7 +19,7 @@
     <podcast:funding xmlns:podcast="https://podcastindex.org/namespace/1.0" url="https://podcast.example/support">Support the show</podcast:funding>
     <podcast:person xmlns:podcast="https://podcastindex.org/namespace/1.0" href="https://podcast.example/host" img="https://podcast.example/host.jpg" role="host">Alex Host</podcast:person>
     <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="http://testserver/feeds/0123456789abcdef.xml" rel="self" type="application/rss+xml"/>
-    <generator>Copycast 1.2.0</generator>
+    <generator>Copycast 1.2.1</generator>
     <lastBuildDate/>
     <item>
       <title>Episode 3: Guid is the permalink</title>

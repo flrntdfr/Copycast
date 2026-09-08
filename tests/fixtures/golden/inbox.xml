@@ -9,7 +9,7 @@
     <itunes:type xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">episodic</itunes:type>
     <itunes:explicit xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">false</itunes:explicit>
     <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="http://testserver/feeds/copycast-abc234.xml" rel="self" type="application/rss+xml"/>
-    <generator>Copycast 1.2.0</generator>
+    <generator>Copycast 1.2.1</generator>
     <lastBuildDate/>
     <item>
       <title>A single fixture video</title>
