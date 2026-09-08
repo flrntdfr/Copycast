@@ -189,24 +189,30 @@ describe("Add Source dialog", () => {
     expect(screen.getByRole("button", { name: /Send to Inbox instead/ })).toBeInTheDocument();
   });
 
-  it("mirrors a playlist in sync from the Inboxes page capture card", async () => {
+  it("captures Watch Later with one click and imports selected playlists", async () => {
     const created: MirrorCreate[] = [];
-    const playlist = "https://www.youtube.com/playlist?list=PLabc";
     server.use(
       http.get("/api/inboxes/:inboxId/requests", () =>
         HttpResponse.json({ requests: [], total: 0, limit: 1, offset: 0 }),
       ),
-      http.post("/api/probe", () =>
-        HttpResponse.json(
-          probeResult([
-            candidate({
-              candidate_token: "pl",
-              source_url: playlist,
-              source_kind: "ytdlp",
-              item_count: 3,
-            }),
-          ]),
-        ),
+      http.get("/api/youtube/playlists", () =>
+        HttpResponse.json({
+          playlists: [
+            { id: "WL", title: "Watch Later", url: "https://www.youtube.com/playlist?list=WL" },
+            {
+              id: "PLtalks",
+              title: "Talks",
+              url: "https://www.youtube.com/playlist?list=PLtalks",
+              item_count: 12,
+            },
+            {
+              id: "PLdone",
+              title: "Already captured",
+              url: "https://www.youtube.com/playlist?list=PLdone",
+              captured_feed_id: "mirror-done",
+            },
+          ],
+        }),
       ),
       ...baseHandlers(created),
     );
@@ -214,11 +220,55 @@ describe("Add Source dialog", () => {
     renderApp("/inboxes");
     const card = await screen.findByTestId("capture-card");
     expect(card).toHaveTextContent("Capture from the YouTube app");
-    await user.type(within(card).getByLabelText("Playlist link"), playlist);
-    await user.click(within(card).getByRole("button", { name: "Mirror the playlist" }));
-    expect(await screen.findByRole("dialog", { name: "Mirror created" })).toBeInTheDocument();
-    expect(created).toEqual([
-      { source_url: playlist, candidate_token: "pl", sync_deletions: true },
-    ]);
+    await user.click(
+      await within(card).findByRole("button", { name: "Keep Watch Later as an Inbox" }),
+    );
+    await waitFor(() =>
+      expect(created).toEqual([
+        {
+          source_url: "https://www.youtube.com/playlist?list=WL",
+          sync_deletions: true,
+          playlist_capture: true,
+        },
+      ]),
+    );
+    expect(await screen.findByText("“Example Podcast” captured")).toBeInTheDocument();
+
+    const list = within(card).getByRole("list", { name: "Your playlists" });
+    expect(within(list).getByText("Already captured")).toBeInTheDocument();
+    expect(within(list).getByRole("link", { name: "Open" })).toHaveAttribute(
+      "href",
+      "/mirrors/mirror-done",
+    );
+    await user.click(within(list).getByRole("checkbox", { name: /Talks/ }));
+    await user.click(within(card).getByRole("button", { name: "Import 1 selected playlist" }));
+    await waitFor(() => expect(created).toHaveLength(2));
+    expect(created[1]).toEqual({
+      source_url: "https://www.youtube.com/playlist?list=PLtalks",
+      sync_deletions: true,
+      playlist_capture: true,
+    });
+  });
+
+  it("explains what to do when the playlists cannot be listed", async () => {
+    server.use(
+      http.get("/api/inboxes/:inboxId/requests", () =>
+        HttpResponse.json({ requests: [], total: 0, limit: 1, offset: 0 }),
+      ),
+      http.get("/api/youtube/playlists", () =>
+        HttpResponse.json(
+          problem("source-unsupported", 422, { detail: "Sign in to see your playlists" }),
+          { status: 422, headers: { "Content-Type": "application/problem+json" } },
+        ),
+      ),
+      ...baseHandlers(),
+    );
+    renderApp("/inboxes");
+    const hint = await screen.findByTestId("capture-error");
+    expect(hint).toHaveTextContent("Sign in to see your playlists");
+    expect(within(hint).getByRole("link", { name: "Settings" })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
   });
 });

@@ -45,6 +45,7 @@ from copycast.application.models import (
     SelectionRequest,
     SelectionResult,
     VideoSearchPage,
+    YouTubePlaylistList,
 )
 from copycast.domain.credentials import required_scope
 from copycast.domain.enums import (
@@ -110,6 +111,14 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         chosen result's ``feed_url`` to ``create_mirror``.
         """
         return await container.services.search_podcasts(query, limit)
+
+    async def list_youtube_playlists() -> YouTubePlaylistList:
+        """The signed-in YouTube account's playlists, Watch Later first (needs the cookie file).
+
+        Each ``url`` can go to ``create_mirror`` with ``sync_deletions`` and
+        ``playlist_capture`` true to capture it on the Inboxes screen.
+        """
+        return await container.services.list_youtube_playlists()
 
     async def search_videos(query: str, limit: int = 10) -> VideoSearchPage:
         """Find videos by name on YouTube (no key needed); each hit's ``url`` can be pushed
@@ -295,6 +304,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
     registrations: list[tuple[ToolFn, str, str, bool]] = [
         (search_podcasts, "search_podcasts", "search_podcasts", True),
         (search_videos, "search_videos", "search_videos", True),
+        (list_youtube_playlists, "list_youtube_playlists", "list_youtube_playlists", True),
         (probe_source, "probe_source", "probe_source", True),
         (create_mirror, "create_mirror", "create_mirror", False),
         (list_feeds, "list_feeds", "list_feeds", True),

@@ -28,6 +28,7 @@ export const OPS = {
   probe_source: ["post", "/api/probe"],
   search_podcasts: ["get", "/api/search/podcasts"],
   search_videos: ["get", "/api/search/videos"],
+  list_youtube_playlists: ["get", "/api/youtube/playlists"],
   create_mirror: ["post", "/api/mirrors"],
   update_mirror: ["patch", "/api/mirrors/{feed_id}"],
   set_paused: ["post", "/api/mirrors/{feed_id}/pause"],

@@ -1165,6 +1165,48 @@
         "x-capability": "search_podcasts"
       }
     },
+    "/api/youtube/playlists": {
+      "get": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "The signed-in YouTube account's playlists (needs the cookie file), Watch Later first",
+        "operationId": "list_youtube_playlists",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubePlaylistList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Engine unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "list_youtube_playlists"
+      }
+    },
     "/api/search/videos": {
       "get": {
         "tags": [
@@ -4264,6 +4306,18 @@
             ],
             "title": "Sync Deletions",
             "description": "Delete an Episode when its item leaves the Source (a playlist kept in sync)"
+          },
+          "playlist_capture": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playlist Capture",
+            "description": "A YouTube playlist captured from the Inboxes screen (listed there)"
           }
         },
         "additionalProperties": false,
@@ -4479,6 +4533,12 @@
             "type": "boolean",
             "title": "Sync Deletions",
             "description": "Episodes are deleted when their item leaves the Source",
+            "default": false
+          },
+          "playlist_capture": {
+            "type": "boolean",
+            "title": "Playlist Capture",
+            "description": "Captured from the Inboxes screen; shown there, not as a Mirror",
             "default": false
           },
           "paused": {
@@ -5518,6 +5578,69 @@
         ],
         "title": "VideoSearchResult",
         "description": "One YouTube search hit; ``url`` is what ``add_to_inbox`` or ``probe_source`` takes."
+      },
+      "YouTubePlaylist": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "item_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Count"
+          },
+          "captured_feed_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured Feed Id",
+            "description": "The Mirror already capturing it, if any"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "url"
+        ],
+        "title": "YouTubePlaylist",
+        "description": "One of the signed-in account's playlists (needs the cookie file), Watch Later first."
+      },
+      "YouTubePlaylistList": {
+        "properties": {
+          "playlists": {
+            "items": {
+              "$ref": "#/components/schemas/YouTubePlaylist"
+            },
+            "type": "array",
+            "title": "Playlists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "playlists"
+        ],
+        "title": "YouTubePlaylistList"
       }
     }
   }

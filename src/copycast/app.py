@@ -18,9 +18,15 @@ from datetime import datetime
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from copycast.application.models import FeedCredentials, PodcastSearchResult, VideoSearchResult
+from copycast.application.models import (
+    FeedCredentials,
+    PodcastSearchResult,
+    VideoSearchResult,
+    YouTubePlaylist,
+)
 from copycast.application.ports import CancelToken, Engine
 from copycast.application.services.context import ServiceContext, SourceSnapshot
+from copycast.application.services.sources import WATCH_LATER_URL
 from copycast.domain.enums import (
     ArchiveState,
     AssetFormat,
@@ -33,6 +39,7 @@ from copycast.domain.enums import (
 )
 from copycast.domain.exceptions import EngineUnavailable
 from copycast.domain.listing import SourceListingItem
+from copycast.domain.urls import youtube_playlist_id
 from copycast.logging import get_logger
 from copycast.settings import Settings, SettingsError, get_settings
 
@@ -46,6 +53,9 @@ if TYPE_CHECKING:
 
 def _load(module: str, attr: str) -> Any:
     return getattr(importlib.import_module(module), attr)
+
+
+PLAYLISTS_URL = "https://www.youtube.com/feed/playlists"
 
 
 class _SearchLog:
@@ -133,6 +143,32 @@ class SourceGatewayAdapter:
                 )
             )
         return results[:limit]
+
+    def list_playlists(self) -> list[YouTubePlaylist]:
+        """``youtube.com/feed/playlists`` listed by the engine: the account's playlists."""
+        listing = self._engine.list_source(
+            PLAYLISTS_URL, self._settings.engine.options, CancelToken(), _SearchLog()
+        )
+        playlists: list[YouTubePlaylist] = [
+            YouTubePlaylist(id="WL", title="Watch Later", url=WATCH_LATER_URL)
+        ]
+        seen = {"WL"}
+        for item in listing.items:
+            playlist_id = (
+                youtube_playlist_id(item.source_url or "") or item.source_key.rsplit(":", 1)[-1]
+            )
+            if not playlist_id or playlist_id in seen:
+                continue
+            seen.add(playlist_id)
+            playlists.append(
+                YouTubePlaylist(
+                    id=playlist_id,
+                    title=item.title,
+                    url=f"https://www.youtube.com/playlist?list={playlist_id}",
+                    item_count=None,
+                )
+            )
+        return playlists
 
     def inspect_video(
         self, url: str, *, options: Mapping[str, Any], language: str | None

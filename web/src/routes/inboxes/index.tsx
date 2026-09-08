@@ -3,11 +3,12 @@ import { Inbox } from "lucide-react";
 import { z } from "zod";
 
 import { $api, asError } from "@/api/client";
-import { isInbox } from "@/api/types";
+import { isInbox, isMirror } from "@/api/types";
 import { EmptyState } from "@/components/common/EmptyState";
 import { PageHeader } from "@/components/common/PageHeader";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CaptureCard } from "@/features/inboxes/CaptureCard";
+import { CaptureFeedCard } from "@/features/inboxes/CaptureFeedCard";
 import { InboxCard } from "@/features/inboxes/InboxCard";
 import { NewInboxDialog } from "@/features/inboxes/NewInboxDialog";
 
@@ -21,9 +22,11 @@ export const Route = createFileRoute("/inboxes/")({
 
 function InboxesPage() {
   const { url } = Route.useSearch();
-  const query = $api.useQuery("get", "/api/feeds", { params: { query: { kind: "inbox" } } });
+  const query = $api.useQuery("get", "/api/feeds");
   if (query.isError) throw asError(query.error);
-  const inboxes = (query.data?.feeds ?? []).filter(isInbox);
+  const feeds = query.data?.feeds ?? [];
+  const inboxes = feeds.filter(isInbox);
+  const captures = feeds.filter(isMirror).filter((feed) => feed.playlist_capture);
   return (
     <>
       <PageHeader
@@ -55,6 +58,9 @@ function InboxesPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {inboxes.map((inbox) => (
             <InboxCard key={inbox.id} inbox={inbox} url={url} />
+          ))}
+          {captures.map((feed) => (
+            <CaptureFeedCard key={feed.id} feed={feed} />
           ))}
         </div>
       )}

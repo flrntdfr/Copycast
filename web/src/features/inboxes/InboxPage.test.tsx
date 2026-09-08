@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { applyEvent, Invalidator } from "@/api/events";
 import type { InboxCreate, InboxUpdate, RequestCreate, RequestRead } from "@/api/types";
-import { inbox, item, job, request } from "@/test/factories";
+import { inbox, item, job, mirror, request } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
@@ -27,7 +27,27 @@ function handlers(state: {
   updated?: InboxUpdate[];
 }) {
   return [
-    http.get("/api/feeds", () => HttpResponse.json({ feeds: [copycast, empty] })),
+    http.get("/api/feeds", () =>
+      HttpResponse.json({
+        feeds: [
+          copycast,
+          empty,
+          mirror({ id: "mirror-wl", title: "Watch Later", playlist_capture: true }),
+        ],
+      }),
+    ),
+    http.get("/api/youtube/playlists", () =>
+      HttpResponse.json({
+        playlists: [
+          {
+            id: "WL",
+            title: "Watch Later",
+            url: "https://www.youtube.com/playlist?list=WL",
+            captured_feed_id: "mirror-wl",
+          },
+        ],
+      }),
+    ),
     http.get("/api/feeds/:feedId", ({ params }) =>
       params.feedId === copycast.id
         ? HttpResponse.json(copycast)
@@ -95,6 +115,8 @@ describe("Inboxes list", () => {
     const cards = await screen.findAllByTestId("inbox-card");
     expect(cards).toHaveLength(2);
     expect(screen.getByTestId("capture-card")).toHaveTextContent("Capture from the YouTube app");
+    // A captured playlist shows here, as a card of its own, not with the Mirrors.
+    expect(await screen.findByTestId("capture-feed-card")).toHaveTextContent("Watch Later");
     expect(cards[0]).toHaveTextContent("Copycast");
     expect(cards[0]).toHaveTextContent("2 Episodes · 8.8 kB · 2 Requests");
     expect(cards[0]).toHaveTextContent("Autoprune 30 days after the first download");

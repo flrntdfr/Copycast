@@ -49,6 +49,7 @@ from copycast.application.models import (
     SelectionRequest,
     SelectionResult,
     VideoSearchPage,
+    YouTubePlaylistList,
 )
 from copycast.application.ports import CancelToken
 from copycast.application.services import about as _about
@@ -160,6 +161,9 @@ class Services:
 
     async def search_podcasts(self, query: str, limit: int = 10) -> PodcastSearchPage:
         return await _sources.search_podcasts(self.ctx, query, limit)
+
+    async def list_youtube_playlists(self) -> YouTubePlaylistList:
+        return await _sources.list_youtube_playlists(self.ctx)
 
     async def search_videos(self, query: str, limit: int = 10) -> VideoSearchPage:
         return await _sources.search_videos(self.ctx, query, limit)

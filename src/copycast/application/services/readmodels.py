@@ -108,6 +108,7 @@ def mirror_read(
         min_duration_seconds=feed.min_duration_seconds,
         refresh_interval_hours=feed.refresh_interval_hours,
         sync_deletions=feed.sync_deletions,
+        playlist_capture=feed.playlist_capture,
         paused=feed.paused,
         follow=feed.follow,
         backfill=BackfillPolicy(

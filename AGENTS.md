@@ -107,6 +107,10 @@ _Avoid_: Plays, listens, hits
 **Tombstone**:
 The trace left by an Episode you deleted (or that rolled out, expired, or was purged): the Catalog item stays, marked deleted, so the Mirror will not archive it again on its own; it shows as Available and can be re-archived on demand, and an Automatic Mirror downloads it again when a podcast app asks.
 
+**Capture**:
+A YouTube playlist of the signed-in account mirrored from the Inboxes page: a synced, Automatic Mirror flagged `playlist_capture`, shown among the Inboxes because it is filled from the YouTube app the way an Inbox is filled by Requests.
+_Avoid_: Playlist Inbox (it is a Mirror underneath), import
+
 **Sync**:
 A Mirror option (*Stay in sync with the Source*): an Episode is deleted, leaving a Tombstone, when its item leaves the Source, instead of staying Delisted. Meant for a curated YouTube playlist.
 _Avoid_: Mirror deletions, prune (that is an Inbox's Retention)

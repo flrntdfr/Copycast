@@ -127,6 +127,9 @@ class MirrorRead(_FeedReadBase):
     sync_deletions: bool = Field(
         default=False, description="Episodes are deleted when their item leaves the Source"
     )
+    playlist_capture: bool = Field(
+        default=False, description="Captured from the Inboxes screen; shown there, not as a Mirror"
+    )
     paused: bool = False
     follow: bool = True
     backfill: BackfillPolicy
@@ -302,6 +305,22 @@ class PodcastSearchPage(ReadModel):
     results: list[PodcastSearchResult]
 
 
+class YouTubePlaylist(ReadModel):
+    """One of the signed-in account's playlists (needs the cookie file), Watch Later first."""
+
+    id: str
+    title: str
+    url: str
+    item_count: int | None = None
+    captured_feed_id: str | None = Field(
+        default=None, description="The Mirror already capturing it, if any"
+    )
+
+
+class YouTubePlaylistList(ReadModel):
+    playlists: list[YouTubePlaylist]
+
+
 class VideoSearchResult(ReadModel):
     """One YouTube search hit; ``url`` is what ``add_to_inbox`` or ``probe_source`` takes."""
 
@@ -382,6 +401,10 @@ class MirrorCreate(RequestModel):
     sync_deletions: bool | None = Field(
         default=None,
         description="Delete an Episode when its item leaves the Source (a playlist kept in sync)",
+    )
+    playlist_capture: bool | None = Field(
+        default=None,
+        description="A YouTube playlist captured from the Inboxes screen (listed there)",
     )
 
     @field_validator("preferred_language")

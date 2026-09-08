@@ -68,7 +68,10 @@ export function MirrorsTable(props: MirrorsTableProps) {
     params: { query: { kind: "mirror", sort, order } },
   });
   const refreshing = useRunningRefreshFeedIds();
-  const mirrors: MirrorRead[] = (query.data?.feeds ?? []).filter(isMirror);
+  // Playlist captures live on the Inboxes screen.
+  const mirrors: MirrorRead[] = (query.data?.feeds ?? [])
+    .filter(isMirror)
+    .filter((feed) => !feed.playlist_capture);
 
   if (query.isSuccess && mirrors.length === 0) {
     return (

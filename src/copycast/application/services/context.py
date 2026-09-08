@@ -28,6 +28,7 @@ from copycast.application.models import (
     ProbeCandidate,
     Totals,
     VideoSearchResult,
+    YouTubePlaylist,
 )
 from copycast.application.ports import CancelToken, Engine
 from copycast.domain.enums import (
@@ -105,6 +106,7 @@ class FeedRow(Protocol):
     retention_days: int | None
     refresh_interval_hours: int | None
     sync_deletions: bool
+    playlist_capture: bool
     follow: bool
     paused: bool
     policy_applied_at: datetime | None
@@ -669,6 +671,7 @@ class SourceGateway(Protocol):
     def cached(self, *, token: str | None, url: str | None) -> SourceSnapshot | None: ...
     def search_podcasts(self, query: str, limit: int) -> list[PodcastSearchResult]: ...
     def search_videos(self, query: str, limit: int) -> list[VideoSearchResult]: ...
+    def list_playlists(self) -> list[YouTubePlaylist]: ...
     def inspect_video(
         self, url: str, *, options: Mapping[str, Any], language: str | None
     ) -> SourceListingItem | None: ...

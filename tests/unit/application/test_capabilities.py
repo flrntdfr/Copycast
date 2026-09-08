@@ -10,6 +10,7 @@ from copycast.application.models import MirrorCreate, MirrorRead
 PLAN_TOOLS = {
     "search_podcasts",
     "search_videos",
+    "list_youtube_playlists",
     "probe_source",
     "create_mirror",
     "list_feeds",

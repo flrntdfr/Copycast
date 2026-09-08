@@ -35,6 +35,7 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "probe_source",
         "search_podcasts",
         "search_videos",
+        "list_youtube_playlists",
         # mirrors
         "create_mirror",
         "update_mirror",

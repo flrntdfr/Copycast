@@ -13,6 +13,7 @@ from copycast.application.models import (
     ProbeRequest,
     ProbeResult,
     VideoSearchPage,
+    YouTubePlaylistList,
 )
 from copycast.application.ports import CancelToken
 
@@ -50,6 +51,18 @@ async def search_podcasts(
     limit: Annotated[int, Query(ge=1, le=MAX_SEARCH_LIMIT)] = 10,
 ) -> PodcastSearchPage:
     return await services.search_podcasts(query, limit)
+
+
+@router.get(
+    "/youtube/playlists",
+    operation_id="list_youtube_playlists",
+    openapi_extra={"x-capability": "list_youtube_playlists"},
+    response_model=YouTubePlaylistList,
+    responses=problem_responses(422, 503),
+    summary="The signed-in YouTube account's playlists (needs the cookie file), Watch Later first",
+)
+async def list_youtube_playlists(services: ServicesDep) -> YouTubePlaylistList:
+    return await services.list_youtube_playlists()
 
 
 @router.get(

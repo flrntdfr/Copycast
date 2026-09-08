@@ -48,6 +48,7 @@ export function mirror(overrides: Partial<MirrorRead> = {}): MirrorRead {
     min_duration_seconds: null,
     refresh_interval_hours: null,
     sync_deletions: false,
+    playlist_capture: false,
     paused: false,
     follow: true,
     backfill: { mode: "all", latest_n: null, retention_days: null },

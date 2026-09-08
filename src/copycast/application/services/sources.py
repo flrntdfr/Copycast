@@ -12,10 +12,13 @@ from copycast.application.models import (
     ProbeRequest,
     ProbeResult,
     VideoSearchPage,
+    YouTubePlaylistList,
 )
 from copycast.application.ports import CancelToken
 from copycast.application.services.context import ServiceContext, SourceSnapshot
+from copycast.domain.enums import FeedKind
 from copycast.domain.exceptions import Unsupported
+from copycast.domain.urls import youtube_playlist_id
 
 PROBE_TIMEOUT_SECONDS = 300.0
 SEARCH_DEFAULT_LIMIT = 10
@@ -67,6 +70,31 @@ async def search_podcasts(
     return PodcastSearchPage(query=query, results=results)
 
 
+WATCH_LATER_URL = "https://www.youtube.com/playlist?list=WL"
+
+
+@capability("list_youtube_playlists", response=YouTubePlaylistList)
+async def list_youtube_playlists(ctx: ServiceContext) -> YouTubePlaylistList:
+    """The signed-in account's playlists (Watch Later first), with the Mirror capturing each.
+
+    Needs the cookie file: without it YouTube shows no account, and the engine's
+    error is reported as-is.
+    """
+    playlists = await asyncio.to_thread(ctx.sources.list_playlists)
+    async with ctx.uow_factory() as uow:
+        mirrors = await uow.feeds.list(FeedKind.mirror)
+    by_list_id = {
+        playlist_id: feed.id
+        for feed in mirrors
+        if feed.source_url and (playlist_id := youtube_playlist_id(feed.source_url))
+    }
+    marked = [
+        playlist.model_copy(update={"captured_feed_id": by_list_id.get(playlist.id)})
+        for playlist in playlists
+    ]
+    return YouTubePlaylistList(playlists=marked)
+
+
 @capability("search_videos", response=VideoSearchPage)
 async def search_videos(
     ctx: ServiceContext, query: str, limit: int = SEARCH_DEFAULT_LIMIT
@@ -84,6 +112,8 @@ __all__ = [
     "PROBE_TIMEOUT_SECONDS",
     "SEARCH_DEFAULT_LIMIT",
     "SEARCH_MAX_LIMIT",
+    "WATCH_LATER_URL",
+    "list_youtube_playlists",
     "probe_snapshots",
     "probe_source",
     "search_podcasts",

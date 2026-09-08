@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Final
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 COPYCAST_ARTWORK_PATH: Final = "/feeds/copycast-artwork.png"
 """Where the API serves the Copycast logo, the artwork of an Inbox feed without its own."""
@@ -69,6 +69,15 @@ def scheme_candidates(url: str) -> list[str]:
         return [text]
     text = text.lstrip("/")
     return [f"https://{text}", f"http://{text}"]
+
+
+def youtube_playlist_id(url: str) -> str | None:
+    """The ``list=`` id of a YouTube playlist URL, else None."""
+    if not youtube_host(url if "://" in url else f"https://{url}"):
+        return None
+    query = parse_qs(urlsplit(url).query)
+    value = query.get("list", [""])[0].strip()
+    return value or None
 
 
 def youtube_host(url: str) -> bool:

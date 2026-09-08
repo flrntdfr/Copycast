@@ -151,6 +151,7 @@ def _feed_values(
         "min_duration_seconds": body.min_duration_seconds,
         "refresh_interval_hours": body.refresh_interval_hours,
         "sync_deletions": bool(body.sync_deletions),
+        "playlist_capture": bool(body.playlist_capture),
         "source_url": candidate.source_url,
         "source_dedup_key": dedup_key,
         "source_kind": candidate.source_kind.value,

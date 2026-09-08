@@ -91,3 +91,63 @@ async def test_search_videos_lists_engine_hits(
 
     blank = await client.get(api("/search/videos"), params={"query": "   "})
     assert blank.status_code == 200 and blank.json()["results"] == []
+
+
+async def test_youtube_playlists_list_the_account_and_mark_captures(
+    client: httpx.AsyncClient, engine: FakeEngine
+) -> None:
+    from copycast.app import PLAYLISTS_URL
+
+    mine = listing(
+        2,
+        service="YouTube",
+        title="Playlists",
+        items=[
+            listing_item(
+                1,
+                key="YoutubeTab:PLabc",
+                title="Talks",
+                source_url="https://www.youtube.com/playlist?list=PLabc",
+            ),
+            listing_item(
+                2,
+                key="YoutubeTab:PLdef",
+                title="Music",
+                source_url="https://www.youtube.com/playlist?list=PLdef",
+            ),
+            listing_item(3, key="YoutubeTab:PLabc", title="Talks again", source_url=None),
+        ],
+    )
+    engine.script_listing(PLAYLISTS_URL, mine)
+    response = await client.get(api("/youtube/playlists"))
+    assert response.status_code == 200, response.text
+    playlists = response.json()["playlists"]
+    assert [p["id"] for p in playlists] == ["WL", "PLabc", "PLdef"]
+    assert playlists[0] == {
+        "id": "WL",
+        "title": "Watch Later",
+        "url": "https://www.youtube.com/playlist?list=WL",
+        "item_count": None,
+        "captured_feed_id": None,
+    }
+
+    # Capturing a playlist marks it, and the Mirror carries the flags.
+    engine.script_listing(
+        "https://www.youtube.com/playlist?list=PLabc",
+        listing(1, service="YouTube", title="Talks", raw={"_type": "playlist"}),
+    )
+    created = await client.post(
+        api("/mirrors"),
+        json={
+            "source_url": "https://www.youtube.com/playlist?list=PLabc",
+            "sync_deletions": True,
+            "playlist_capture": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    mirror = created.json()
+    assert mirror["playlist_capture"] is True and mirror["sync_deletions"] is True
+    assert mirror["backfill"]["mode"] == "automatic"
+    again = (await client.get(api("/youtube/playlists"))).json()["playlists"]
+    assert next(p for p in again if p["id"] == "PLabc")["captured_feed_id"] == mirror["id"]
+    assert next(p for p in again if p["id"] == "PLdef")["captured_feed_id"] is None

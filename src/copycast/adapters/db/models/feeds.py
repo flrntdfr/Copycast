@@ -71,6 +71,10 @@ class Feed(TimestampMixin, Base):
         Boolean, nullable=False, server_default=text("false"), default=False
     )
     """Delete an Episode when the Source drops its item (a playlist kept in sync)."""
+    playlist_capture: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    """A YouTube playlist captured from the Inboxes screen: listed there, not with the Mirrors."""
     follow: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true"), default=True
     )
