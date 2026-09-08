@@ -50,8 +50,12 @@ done
 log()  { printf '\033[1m[smoke]\033[0m %s\n' "$*"; }
 fail() { printf '\033[31m[smoke] FAIL:\033[0m %s\n' "$*" >&2; exit 1; }
 
-# PEP 440-ish normalization so "2026.08.19" (yt_dlp.version) equals "2026.8.19" (uv.lock).
-normalize_version() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/(^|[^0-9])0+([0-9])/\1\2/g'; }
+# PEP 440-ish normalization so "2026.08.19" (yt_dlp.version) equals "2026.8.19" (uv.lock),
+# and a nightly's "2026.8.30.232658.dev0" (the lock) equals the "2026.08.30.232658" it reports.
+normalize_version() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/(^|[^0-9])0+([0-9])/\1\2/g; s/\.dev[0-9]+$//'
+}
 
 # Run something as root inside the image, e.g. to fix ownership of bind-mounted directories.
 as_root() { docker run --rm --user 0 --entrypoint sh -v "$WORK:/work" "$IMAGE" -c "$1"; }
