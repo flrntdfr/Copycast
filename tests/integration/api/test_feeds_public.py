@@ -172,7 +172,8 @@ async def test_fetch_waits_for_the_refresh_it_triggers(
     from copycast.adapters.api.routes import public
 
     url = source.write_rss("pull", items=[1], artwork=False)
-    mirror = await create_mirror(client, url)
+    # Automatic: a listed item is in the feed as soon as the Refresh knows it, archived or not.
+    mirror = await create_mirror(client, url, mode="automatic")
     await runner.run_until_idle()
     async with container.uow_factory() as uow:
         await uow.feeds.set_refresh_attempt(mirror["id"], datetime.now(UTC) - timedelta(hours=1))
@@ -181,8 +182,12 @@ async def test_fetch_waits_for_the_refresh_it_triggers(
     monkeypatch.setattr(public, "FEED_FETCH_POLL_SECONDS", 0.05)
 
     async def work() -> None:
-        # The worker picks the Refresh up while the fetch is waiting for it.
-        await asyncio.sleep(0.2)
+        # The worker picks the Refresh up once the fetch has queued it (the fetch waits).
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            jobs = await refresh_jobs(container, mirror["id"])
+            if any(j.trigger == JobTrigger.feed_fetch for j in jobs):  # type: ignore[attr-defined]
+                break
         await runner.run_until_idle()
 
     worker = asyncio.create_task(work())
