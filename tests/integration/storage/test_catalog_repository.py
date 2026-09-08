@@ -124,7 +124,52 @@ async def test_upsert_refreshes_metadata_non_blank(uow_factory: UnitOfWorkFactor
         assert loaded.title == "Episode 1"
         assert loaded.description == "Description of episode 1"
         assert loaded.published_at == NOW
+        assert loaded.published_at_approximate is False
         assert (loaded.source_number, loaded.tab, loaded.archivable) == (7, "videos", False)
+
+
+async def test_approximate_dates_fill_blanks_only_and_are_flagged(
+    uow_factory: UnitOfWorkFactory,
+) -> None:
+    feed_id = await _mirror(uow_factory)
+    undated = listing(1).model_copy(update={"items": [listing_item(1, published_at=None)]})
+    rough = listing(1).model_copy(
+        update={"items": [listing_item(1, published_at=NOW, published_at_exact=False)]}
+    )
+    drifted = listing(1).model_copy(
+        update={
+            "items": [
+                listing_item(1, published_at=NOW + timedelta(days=2), published_at_exact=False)
+            ]
+        }
+    )
+    exact = listing(1).model_copy(
+        update={"items": [listing_item(1, published_at=NOW - timedelta(days=1))]}
+    )
+    async with uow_factory() as uow:
+        await uow.catalog.upsert_listing(feed_id, undated)
+        row = await uow.catalog.by_source_key(feed_id, "urn:test:item:1")
+        assert row is not None and row.published_at is None and not row.published_at_approximate
+        await uow.catalog.upsert_listing(feed_id, rough)
+        assert row.published_at == NOW and row.published_at_approximate is True
+        await uow.catalog.upsert_listing(feed_id, drifted)
+        assert row.published_at == NOW and row.published_at_approximate is True
+        await uow.catalog.upsert_listing(feed_id, exact)
+        assert row.published_at == NOW - timedelta(days=1)
+        assert row.published_at_approximate is False
+        # A new row from an approximate listing is flagged from the start.
+        two = listing(2).model_copy(
+            update={"items": [listing_item(2, published_at=NOW, published_at_exact=False)]}
+        )
+        await uow.catalog.upsert_listing(feed_id, two)
+        second = await uow.catalog.by_source_key(feed_id, "urn:test:item:2")
+        assert second is not None and second.published_at_approximate is True
+        # The archive's exact date clears it; a manual fetch may overwrite the text.
+        await uow.catalog.fill_metadata(second.id, published_at=NOW, description="Full")
+        assert second.published_at_approximate is False
+        assert second.description == "Description of episode 2"  # never overwritten by default
+        await uow.catalog.fill_metadata(second.id, description="Full", overwrite=True)
+        assert second.description == "Full"
 
 
 async def test_upsert_with_wanted_reason_marks_new_and_deleted_rows(

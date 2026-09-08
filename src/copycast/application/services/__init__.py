@@ -143,6 +143,9 @@ class Services:
     ) -> JobRead:
         return await _items.archive_item(self.ctx, feed_id, item_id, trigger=trigger)
 
+    async def fetch_item_metadata(self, feed_id: str, item_id: str) -> ItemRead:
+        return await _items.fetch_item_metadata(self.ctx, feed_id, item_id)
+
     async def delete_item(self, feed_id: str, item_id: str) -> None:
         await _items.delete_item(self.ctx, feed_id, item_id)
 

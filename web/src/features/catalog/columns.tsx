@@ -14,6 +14,7 @@ import {
   formatDateTime,
   formatDuration,
   formatNumber,
+  formatRelative,
   secondsToMinutes,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -185,11 +186,27 @@ export function buildColumns(ctx: CatalogColumnContext): ColumnDef<ItemRead>[] {
       id: "published",
       accessorKey: "published_at",
       header: "Published",
-      cell: ({ row }) => (
-        <span title={formatDateTime(row.original.published_at)} className="whitespace-nowrap">
-          {formatDate(row.original.published_at)}
-        </span>
-      ),
+      cell: ({ row }) =>
+        row.original.published_at_approximate && row.original.published_at ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className="whitespace-nowrap text-muted-foreground"
+                data-testid="approximate-date"
+              >
+                ≈ {formatRelative(row.original.published_at)}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              Approximate: YouTube only says roughly when, until the video is downloaded or its
+              description fetched ({formatDate(row.original.published_at)})
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <span title={formatDateTime(row.original.published_at)} className="whitespace-nowrap">
+            {formatDate(row.original.published_at)}
+          </span>
+        ),
       size: 110,
     },
     {

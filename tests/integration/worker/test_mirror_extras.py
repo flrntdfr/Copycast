@@ -157,6 +157,9 @@ async def test_refresh_fills_dates_and_descriptions_and_keeps_the_first_date(
     async with uow(container) as unit:
         rows = {i.source_number: i for i in await unit.catalog.for_feed(mirror.id)}
     assert rows[1].published_at == first and rows[1].description == "Notes 1"
+    assert rows[1].published_at_approximate is True
+    read = await container.services.get_item(mirror.id, rows[1].id)
+    assert read.published_at_approximate is True
 
     drifted = [
         listing_item(
@@ -197,4 +200,27 @@ async def test_refresh_fills_dates_and_descriptions_and_keeps_the_first_date(
     await runner.run_until_idle()
     async with uow(container) as unit:
         row = await unit.catalog.require(rows[1].id, mirror.id)
-    assert row.published_at == exact
+    assert row.published_at == exact and row.published_at_approximate is False
+
+    # The manual fetch asks the Source for the other item's full metadata.
+    page_url = rows[2].source_url
+    assert page_url
+    engine.script_listing(
+        page_url,
+        listing(
+            1,
+            service="YouTube",
+            items=[
+                listing_item(
+                    2,
+                    published_at=datetime(2026, 6, 1, 8, 0, tzinfo=UTC),
+                    description="Fetched by hand",
+                    author="The channel",
+                )
+            ],
+        ),
+    )
+    fetched = await container.services.fetch_item_metadata(mirror.id, rows[2].id)
+    assert fetched.description == "Fetched by hand"
+    assert fetched.published_at == datetime(2026, 6, 1, 8, 0, tzinfo=UTC)
+    assert fetched.published_at_approximate is False

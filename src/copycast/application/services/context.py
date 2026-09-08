@@ -48,7 +48,7 @@ from copycast.domain.enums import (
     SourceKind,
     WantedReason,
 )
-from copycast.domain.listing import SourceListing
+from copycast.domain.listing import SourceListing, SourceListingItem
 from copycast.domain.selection import ResolvedSelection, SelectionCandidate
 from copycast.settings import Settings
 
@@ -134,6 +134,8 @@ class ItemRow(Protocol):
     def artwork_url(self) -> str | None: ...
     @property
     def published_at(self) -> datetime | None: ...
+    @property
+    def published_at_approximate(self) -> bool: ...
     @property
     def duration_seconds(self) -> int | None: ...
     @property
@@ -398,6 +400,16 @@ class CatalogRepositoryPort(Protocol):
         wanted_reason: WantedReason | None = None,
     ) -> ListingUpsertResult: ...
     async def set_wanted(self, item_ids: Iterable[str], reason: WantedReason) -> Sequence[str]: ...
+    async def fill_metadata(
+        self,
+        item_id: str,
+        *,
+        description: str | None = None,
+        published_at: datetime | None = None,
+        author: str | None = None,
+        artwork_url: str | None = None,
+        overwrite: bool = False,
+    ) -> bool: ...
     async def mark_state(
         self,
         item_id: str,
@@ -654,6 +666,9 @@ class SourceGateway(Protocol):
     def cached(self, *, token: str | None, url: str | None) -> SourceSnapshot | None: ...
     def search_podcasts(self, query: str, limit: int) -> list[PodcastSearchResult]: ...
     def search_videos(self, query: str, limit: int) -> list[VideoSearchResult]: ...
+    def inspect_video(
+        self, url: str, *, options: Mapping[str, Any], language: str | None
+    ) -> SourceListingItem | None: ...
     def save_snapshot(self, feed_id: str, snapshot: SourceSnapshot) -> None: ...
 
 

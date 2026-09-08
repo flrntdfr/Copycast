@@ -246,6 +246,7 @@ def item_read(
         title=item.title,
         description=item.description,
         published_at=item.published_at,
+        published_at_approximate=item.published_at_approximate,
         added_at=item.first_seen_at,
         duration_seconds=item.duration_seconds,
         state=ArchiveState(item.archive_state),

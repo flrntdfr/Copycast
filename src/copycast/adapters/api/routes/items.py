@@ -75,6 +75,19 @@ async def archive_item(services: ServicesDep, feed_id: str, item_id: str) -> Job
     return await services.archive_item(feed_id, item_id, trigger=JobTrigger.manual)
 
 
+@router.post(
+    "/feeds/{feed_id}/items/{item_id}/metadata",
+    operation_id="fetch_item_metadata",
+    openapi_extra={"x-capability": "fetch_item_metadata"},
+    response_model=ItemRead,
+    dependencies=[RebuildGuard],
+    responses=problem_responses(404, 422),
+    summary="Ask the Source for the item's description, exact date and artwork now",
+)
+async def fetch_item_metadata(services: ServicesDep, feed_id: str, item_id: str) -> ItemRead:
+    return await services.fetch_item_metadata(feed_id, item_id)
+
+
 @router.delete(
     "/feeds/{feed_id}/items/{item_id}",
     operation_id="delete_item",

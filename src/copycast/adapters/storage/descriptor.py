@@ -99,6 +99,7 @@ class DescriptorItem(_Strict):
     author: str | None = None
     artwork_url: str | None = None
     published_at: datetime | None = None
+    published_at_approximate: bool = False
     duration_seconds: int | None = None
     source_url: str | None = None
     archivable: bool = True

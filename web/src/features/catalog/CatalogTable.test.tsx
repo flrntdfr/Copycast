@@ -92,6 +92,42 @@ describe("CatalogTable", () => {
     expect(screen.getByText("1–4 of 4")).toBeInTheDocument();
   });
 
+  it("marks approximate dates and offers to fetch a missing description", async () => {
+    const rough = item({
+      id: "item-7",
+      feed_id: feed.id,
+      ordinal: 7,
+      title: "Roughly dated",
+      state: "available",
+      description: null,
+      published_at: new Date(Date.now() - 22 * 86_400_000).toISOString(),
+      published_at_approximate: true,
+      item_url: "https://www.youtube.com/watch?v=rough",
+    });
+    const fetched: string[] = [];
+    server.use(
+      http.get("/api/feeds/:feedId/items", () =>
+        HttpResponse.json({ items: [rough, rows[0]], total: 2, limit: 100, offset: 0 }),
+      ),
+      http.post("/api/feeds/:feedId/items/:itemId/metadata", ({ params }) => {
+        fetched.push(String(params.itemId));
+        return HttpResponse.json({ ...rough, description: "Now known" });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(
+      <CatalogTable feed={feed} search={search()} onSearchChange={() => undefined} />,
+    );
+    const row = (await screen.findByText("Roughly dated")).closest("tr") as HTMLElement;
+    expect(within(row).getByTestId("approximate-date")).toHaveTextContent("≈ 3 weeks ago");
+    expect(screen.getByText("First").closest("tr")).not.toContainElement(
+      screen.queryByTestId("approximate-date"),
+    );
+    await user.click(within(row).getByRole("button", { name: "Fetch description" }));
+    await waitFor(() => expect(fetched).toEqual(["item-7"]));
+    expect(await screen.findByText("Description fetched")).toBeInTheDocument();
+  });
+
   it("greys out items shorter than the minimum length and says why", async () => {
     const short = item({
       id: "item-5",

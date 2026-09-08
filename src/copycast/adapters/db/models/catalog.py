@@ -42,6 +42,10 @@ class CatalogItem(TimestampMixin, Base):
     artwork_url: Mapped[str | None] = mapped_column(Text)
 
     published_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    published_at_approximate: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    """True while the date is a flat YouTube listing's "3 weeks ago", not the video's own."""
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
     source_url: Mapped[str | None] = mapped_column(Text)
     archivable: Mapped[bool] = mapped_column(

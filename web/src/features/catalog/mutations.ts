@@ -29,6 +29,17 @@ export function useArchiveItem(feedId: string) {
   });
 }
 
+/** `fetch_item_metadata` for one row: the Source's description, exact date and artwork. */
+export function useFetchMetadata(feedId: string) {
+  const invalidate = useInvalidateCatalog(feedId);
+  return $api.useMutation("post", "/api/feeds/{feed_id}/items/{item_id}/metadata", {
+    onSuccess: (item) => {
+      invalidate();
+      toast.success(item.description ? "Description fetched" : "The Source has no description");
+    },
+  });
+}
+
 /** `delete_item` for one row; leaves a tombstone. */
 export function useDeleteItem(feedId: string) {
   const invalidate = useInvalidateCatalog(feedId);

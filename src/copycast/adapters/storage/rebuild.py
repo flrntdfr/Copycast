@@ -422,6 +422,7 @@ def _item_values(feed_id: str, item: DescriptorItem) -> dict[str, Any]:
         "author": item.author,
         "artwork_url": item.artwork_url,
         "published_at": item.published_at,
+        "published_at_approximate": item.published_at_approximate,
         "duration_seconds": item.duration_seconds,
         "source_url": item.source_url,
         "archivable": item.archivable,

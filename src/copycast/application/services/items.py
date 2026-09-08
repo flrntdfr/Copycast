@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 
 from copycast.application.capabilities import capability
@@ -15,7 +16,9 @@ from copycast.application.services.context import (
     ServiceContext,
     UnitOfWorkPort,
 )
+from copycast.application.services.defaults import effective
 from copycast.application.services.episodes import delete_episode
+from copycast.application.services.policy import defaults_for
 from copycast.application.services.readmodels import item_reads, job_read
 from copycast.application.services.retry import retry_concurrent
 from copycast.domain.enums import (
@@ -26,6 +29,7 @@ from copycast.domain.enums import (
     WantedReason,
 )
 from copycast.domain.exceptions import Conflict, Unsupported
+from copycast.logging import get_logger
 
 PRIORITY_MANUAL = 50
 PRIORITY_FOLLOW = 100
@@ -47,6 +51,9 @@ def expand_dedup_key(request_id: object) -> str:
 
 def prune_dedup_key(feed_id: str) -> str:
     return f"prune:{feed_id}"
+
+
+log = get_logger(__name__)
 
 
 @capability("list_items", response=ItemPage)
@@ -143,6 +150,47 @@ async def archive_item(
         return job_read(job)
 
 
+@capability("fetch_item_metadata", response=ItemRead)
+async def fetch_item_metadata(ctx: ServiceContext, feed_id: str, item_id: str) -> ItemRead:
+    """Ask the Source for one item's full metadata now: description, exact date, artwork.
+
+    A flat YouTube listing has neither a description nor an exact date; this is
+    the manual, one-request way to get them before the item is archived.
+    """
+    async with ctx.uow_factory() as uow:
+        item = await uow.catalog.require(item_id, feed_id)
+        feed = await uow.feeds.require(feed_id)
+        url = item.source_url
+        options = dict(feed.engine_options or {})
+        language = effective(
+            defaults_for(ctx), language=feed.preferred_language, min_duration_seconds=None
+        ).language
+    if not url:
+        raise Unsupported(f"item {item_id!r} has no Source page to ask")
+    found = await asyncio.to_thread(
+        ctx.sources.inspect_video, url, options=options, language=language
+    )
+    if found is None:
+        raise Unsupported(f"the Source returned nothing for {url}")
+    async with ctx.uow_factory() as uow:
+        await uow.catalog.fill_metadata(
+            item_id,
+            description=found.description,
+            published_at=found.published_at if found.published_at_exact else None,
+            author=found.author,
+            artwork_url=found.artwork_url,
+            overwrite=True,
+        )
+        item = await uow.catalog.require(item_id, feed_id)
+        _, revision = await uow.update_intent(feed_id)
+        await uow.publish(
+            ItemEvent(feed_id=feed_id, item_id=item_id, state=ArchiveState(item.archive_state))
+        )
+        await uow.publish(FeedEvent(feed_id=feed_id, revision=revision, reason="metadata"))
+    log.info("item.metadata_fetched", feed_id=feed_id, item_id=item_id, url=url)
+    return await get_item(ctx, feed_id, item_id)
+
+
 @capability("delete_item")
 async def delete_item(ctx: ServiceContext, feed_id: str, item_id: str) -> None:
     """Delete an Episode's media and tombstone the row (never re-archived automatically).
@@ -188,6 +236,7 @@ __all__ = [
     "delete_item",
     "enqueue_archive",
     "expand_dedup_key",
+    "fetch_item_metadata",
     "get_item",
     "list_items",
     "prune_dedup_key",

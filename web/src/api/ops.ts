@@ -23,6 +23,7 @@ export const OPS = {
   list_items: ["get", "/api/feeds/{feed_id}/items"],
   get_item: ["get", "/api/feeds/{feed_id}/items/{item_id}"],
   archive_item: ["post", "/api/feeds/{feed_id}/items/{item_id}/archive"],
+  fetch_item_metadata: ["post", "/api/feeds/{feed_id}/items/{item_id}/metadata"],
   delete_item: ["delete", "/api/feeds/{feed_id}/items/{item_id}"],
   probe_source: ["post", "/api/probe"],
   search_podcasts: ["get", "/api/search/podcasts"],

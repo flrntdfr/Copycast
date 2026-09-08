@@ -32,6 +32,7 @@ from copycast.domain.enums import (
     SourceKind,
 )
 from copycast.domain.exceptions import EngineUnavailable
+from copycast.domain.listing import SourceListingItem
 from copycast.logging import get_logger
 from copycast.settings import Settings, SettingsError, get_settings
 
@@ -132,6 +133,15 @@ class SourceGatewayAdapter:
                 )
             )
         return results[:limit]
+
+    def inspect_video(
+        self, url: str, *, options: Mapping[str, Any], language: str | None
+    ) -> SourceListingItem | None:
+        """One item's full metadata from the engine (a single video is never flat)."""
+        with_language = _load("copycast.adapters.engine.options", "with_language")
+        merged = with_language({**self._settings.engine.options, **options}, language)
+        listing = self._engine.list_source(url, merged, CancelToken(), _SearchLog())
+        return listing.items[0] if listing.items else None
 
     def save_snapshot(self, feed_id: str, snapshot: SourceSnapshot) -> None:
         """``source/feed.xml`` (RSS, verbatim) or ``source/listing.json`` (yt-dlp raw listing)."""
@@ -293,6 +303,7 @@ class FeedRendererAdapter:
                     description=item.description,
                     author=item.author,
                     published_at=item.published_at,
+                    published_at_approximate=bool(item.published_at_approximate),
                     first_seen_at=item.first_seen_at,
                     duration_seconds=item.duration_seconds,
                     source_url=item.source_url,

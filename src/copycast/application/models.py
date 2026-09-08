@@ -183,6 +183,10 @@ class ItemRead(ReadModel):
     title: str
     description: str | None = None
     published_at: datetime | None = None
+    published_at_approximate: bool = Field(
+        default=False,
+        description='True while the date is YouTube\'s "3 weeks ago", until the video is archived',
+    )
     added_at: datetime = Field(description="first_seen_at")
     duration_seconds: int | None = None
     state: ArchiveState

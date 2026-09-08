@@ -108,6 +108,7 @@ class ItemView:
     description: str | None = None
     author: str | None = None
     published_at: datetime | None = None
+    published_at_approximate: bool = False
     first_seen_at: datetime | None = None
     duration_seconds: int | None = None
     source_url: str | None = None
@@ -371,6 +372,30 @@ def localized_notes(
     return text
 
 
+def approximate_phrase(published_at: datetime, now: datetime) -> str:
+    """YouTube's own wording, regenerated from the approximate date: "3 weeks ago"."""
+    seconds = max(0.0, (now - published_at).total_seconds())
+    days = seconds / 86_400
+    if days < 1:
+        hours = int(seconds // 3_600)
+        return "today" if hours < 1 else f"{hours} hour{'s' if hours != 1 else ''} ago"
+    for unit, length in (("year", 365.0), ("month", 30.0), ("week", 7.0), ("day", 1.0)):
+        count = int(days // length)
+        if count >= 1:
+            return f"{count} {unit}{'s' if count != 1 else ''} ago"
+    return "today"
+
+
+def with_approximate_note(description: str | None, published_at: datetime, now: datetime) -> str:
+    """Tell the listener the date is YouTube's rough one until the video is archived."""
+    note = (
+        f"Published about {approximate_phrase(published_at, now)} "
+        "(approximate date from YouTube; exact once downloaded)."
+    )
+    text = (description or "").strip()
+    return f"{note}\n\n{text}" if text else note
+
+
 def with_source_link(description: str | None, source_url: str | None) -> str | None:
     """The description with the Source's page appended (podcast apps rarely show ``<link>``)."""
     if not source_url:
@@ -413,6 +438,8 @@ def _synthesized_item(
     description = with_source_link(
         localized_notes(item.description, base_url, feed.id, item.assets), item.source_url
     )
+    if item.published_at_approximate and item.published_at is not None:
+        description = with_approximate_note(description, item.published_at, now)
     if description:
         _sub(element, "description", description)
     if item.source_url:
@@ -568,6 +595,7 @@ __all__ = [
     "FeedView",
     "ItemView",
     "RenderedFeed",
+    "approximate_phrase",
     "localized_notes",
     "placeholder_length",
     "render_feed",

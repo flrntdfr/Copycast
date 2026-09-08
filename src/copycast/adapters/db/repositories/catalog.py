@@ -632,17 +632,21 @@ class CatalogRepository:
         published_at: datetime | None = None,
         author: str | None = None,
         artwork_url: str | None = None,
+        overwrite: bool = False,
     ) -> bool:
         """Fill columns the listing left empty from the engine's full info.
 
-        Text is never overwritten; ``published_at`` is, since the engine's date is
-        exact where a flat listing's was approximate.
+        Text is never overwritten unless ``overwrite`` (a manual fetch); ``published_at``
+        always is, since the engine's date is exact where a flat listing's was approximate.
         """
         values: dict[str, Any] = {}
         if description:
-            values["description"] = func.coalesce(CatalogItem.description, description)
+            values["description"] = (
+                description if overwrite else func.coalesce(CatalogItem.description, description)
+            )
         if published_at is not None:
             values["published_at"] = published_at
+            values["published_at_approximate"] = False
         if author:
             values["author"] = func.coalesce(CatalogItem.author, author)
         if artwork_url:
@@ -675,6 +679,7 @@ def _metadata_values(entry: SourceListingItem) -> dict[str, Any]:
         "author": entry.author,
         "artwork_url": entry.artwork_url,
         "published_at": entry.published_at,
+        "published_at_approximate": entry.published_at is not None and not entry.published_at_exact,
         "duration_seconds": entry.duration_seconds,
         "source_url": entry.source_url,
         "source_number": entry.source_number,
@@ -727,6 +732,23 @@ _REFRESH_STMT: Update = (
                 func.coalesce(bindparam("b_published_at", type_=TZDateTime), _T.c.published_at),
             ),
             else_=func.coalesce(_T.c.published_at, bindparam("b_published_at", type_=TZDateTime)),
+        ),
+        published_at_approximate=case(
+            (
+                and_(
+                    bindparam("b_published_at_exact", type_=Boolean),
+                    bindparam("b_published_at", type_=TZDateTime).is_not(None),
+                ),
+                False,
+            ),
+            (
+                and_(
+                    _T.c.published_at.is_(None),
+                    bindparam("b_published_at", type_=TZDateTime).is_not(None),
+                ),
+                True,
+            ),
+            else_=_T.c.published_at_approximate,
         ),
         duration_seconds=func.coalesce(
             bindparam("b_duration_seconds", type_=Integer), _T.c.duration_seconds

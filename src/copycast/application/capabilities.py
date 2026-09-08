@@ -30,6 +30,7 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "get_item",
         "archive_item",
         "delete_item",
+        "fetch_item_metadata",
         # sources
         "probe_source",
         "search_podcasts",

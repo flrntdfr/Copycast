@@ -1,4 +1,4 @@
-import { Download, Pause, Play, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Download, FileText, Pause, Play, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import type { ItemRead } from "@/api/types";
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useArchiveItem, useDeleteItem } from "./mutations";
+import { useArchiveItem, useDeleteItem, useFetchMetadata } from "./mutations";
 import { canArchive, canDelete } from "./catalog-state";
 import { play, useIsPlaying } from "@/stores/player";
 
@@ -54,6 +54,7 @@ function Action({
 export function RowActions({ item, feedTitle }: { item: ItemRead; feedTitle: string }) {
   const archive = useArchiveItem(item.feed_id);
   const remove = useDeleteItem(item.feed_id);
+  const fetchMetadata = useFetchMetadata(item.feed_id);
   const [confirming, setConfirming] = useState(false);
   const playing = useIsPlaying(item.id);
 
@@ -90,6 +91,19 @@ export function RowActions({ item, feedTitle }: { item: ItemRead; feedTitle: str
             </a>
           </Action>
         </>
+      ) : null}
+      {!item.description && item.item_url ? (
+        <Action
+          label="Fetch description"
+          onClick={() =>
+            fetchMetadata.mutate({
+              params: { path: { feed_id: item.feed_id, item_id: item.id } },
+            })
+          }
+          disabled={fetchMetadata.isPending}
+        >
+          <FileText className={fetchMetadata.isPending ? "animate-pulse" : undefined} />
+        </Action>
       ) : null}
       {canArchive(item) ? (
         <Action

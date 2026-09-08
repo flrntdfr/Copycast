@@ -995,6 +995,68 @@
         "x-capability": "archive_item"
       }
     },
+    "/api/feeds/{feed_id}/items/{item_id}/metadata": {
+      "post": {
+        "tags": [
+          "items"
+        ],
+        "summary": "Ask the Source for the item's description, exact date and artwork now",
+        "operationId": "fetch_item_metadata",
+        "parameters": [
+          {
+            "name": "feed_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feed Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "fetch_item_metadata"
+      }
+    },
     "/api/probe": {
       "post": {
         "tags": [
@@ -3654,6 +3716,12 @@
               }
             ],
             "title": "Published At"
+          },
+          "published_at_approximate": {
+            "type": "boolean",
+            "title": "Published At Approximate",
+            "description": "True while the date is YouTube's \"3 weeks ago\", until the video is archived",
+            "default": false
           },
           "added_at": {
             "type": "string",

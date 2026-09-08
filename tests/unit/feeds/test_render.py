@@ -732,3 +732,42 @@ def test_show_notes_point_at_the_mirrored_attachments() -> None:
     assert local in description
     assert "https://cdn.example/pic.jpg" not in description
     assert "https://cdn.example/gone.pdf" in description  # not mirrored: the original stays
+
+
+def test_approximate_dates_are_said_in_the_show_notes() -> None:
+    from copycast.adapters.feeds.render import approximate_phrase
+
+    assert approximate_phrase(NOW - timedelta(days=22), NOW) == "3 weeks ago"
+    assert approximate_phrase(NOW - timedelta(days=400), NOW) == "1 year ago"
+    assert approximate_phrase(NOW - timedelta(hours=5), NOW) == "5 hours ago"
+    assert approximate_phrase(NOW, NOW) == "today"
+    feed = FeedView(id=FEED_ID, kind=FeedKind.mirror, title="Rough", source_kind=SourceKind.ytdlp)
+    items = [
+        item(
+            "aaaaaaaaaaaaaaaa",
+            1,
+            "Roughly dated",
+            state=ArchiveState.available,
+            media_ext=None,  # type: ignore[arg-type]
+            media_mime=None,  # type: ignore[arg-type]
+            media_bytes=0,
+            published_at=NOW - timedelta(days=22),
+            published_at_approximate=True,
+            description="Notes.",
+        ),
+        item("bbbbbbbbbbbbbbbb", 2, "Exactly dated", published_at=NOW, description="Notes."),
+    ]
+    feed = FeedView(
+        id=FEED_ID,
+        kind=FeedKind.mirror,
+        title="Rough",
+        source_kind=SourceKind.ytdlp,
+        backfill_mode=BackfillMode.automatic,
+    )
+    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    descriptions = [
+        e.findtext("description") or "" for e in etree.fromstring(rendered.body).findall(".//item")
+    ]
+    assert descriptions[0].startswith("Notes.")
+    note = "Published about 3 weeks ago (approximate date from YouTube; exact once downloaded)."
+    assert descriptions[1].startswith(f"{note}\n\nNotes.")

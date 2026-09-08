@@ -190,6 +190,14 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         """
         return await container.services.select_items(feed_id, selection, trigger=JobTrigger.mcp)
 
+    async def fetch_item_metadata(feed_id: str, item_id: str) -> ItemRead:
+        """Ask the Source for one item's description, exact date and artwork now.
+
+        One request to the Source; useful for a YouTube video listed without
+        a description before it is archived.
+        """
+        return await container.services.fetch_item_metadata(feed_id, item_id)
+
     async def delete_item(feed_id: str, item_id: str) -> dict[str, Any]:
         """Delete one Episode's media.
 
@@ -298,6 +306,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         (archive_available, "archive_available", "archive_available", False),
         (retry_failed, "retry_failed", "retry_failed", False),
         (delete_item, "delete_item", "delete_item", False),
+        (fetch_item_metadata, "fetch_item_metadata", "fetch_item_metadata", False),
         (refresh_mirror, "refresh_mirror", "request_refresh", False),
         (set_mirror_paused, "set_mirror_paused", "set_paused", False),
         (update_mirror, "update_mirror", "update_mirror", False),

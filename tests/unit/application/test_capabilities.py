@@ -20,6 +20,7 @@ PLAN_TOOLS = {
     "archive_available",
     "retry_failed",
     "delete_item",
+    "fetch_item_metadata",
     "request_refresh",
     "set_paused",
     "update_mirror",

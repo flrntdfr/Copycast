@@ -136,6 +136,7 @@ def item_row(**overrides: Any) -> Any:
         "author": None,
         "artwork_url": None,
         "published_at": NOW,
+        "published_at_approximate": False,
         "duration_seconds": 60,
         "source_url": "https://x.example/1",
         "archivable": True,

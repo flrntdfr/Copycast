@@ -208,8 +208,10 @@ undated (and unordered in Overcast) until it was archived. Listings now ask yt-d
 approximate date (``youtubetab:approximate_date``, from the "3 weeks ago" text) and merge the
 channel's Atom feed (``/feeds/videos.xml?channel_id=…``, one request, no cookies), which
 carries the exact date and the full description of the fifteen newest videos. A Refresh fills
-what a row still lacks and keeps the first date it learnt, so approximate dates do not drift;
-archiving replaces it with the exact date from the download.
+what a row still lacks; an approximate date never replaces a stored one (it would drift), an
+exact one does, and archiving fills in the download's own date. While a date is approximate the
+Catalog shows it as "≈ 3 weeks ago" and the feed's show notes open with "Published about 3
+weeks ago (approximate date from YouTube; exact once downloaded)".
 
 ## Show notes, OPML and the player
 

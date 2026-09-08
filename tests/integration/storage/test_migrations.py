@@ -36,7 +36,7 @@ EXPECTED_TABLES = {
     "engine_versions",
     "api_keys",
 }
-HEAD = "0006"
+HEAD = "0007"
 
 
 def _table_names(conn: Connection) -> set[str]:

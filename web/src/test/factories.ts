@@ -94,6 +94,7 @@ export function item(overrides: Partial<ItemRead> = {}): ItemRead {
     title: `Episode ${id}`,
     description: "<p>Show notes</p>",
     published_at: "2024-01-12T08:00:00Z",
+    published_at_approximate: false,
     added_at: "2024-01-12T09:00:00Z",
     duration_seconds: 1800,
     state,
