@@ -368,13 +368,13 @@ the engine tests, and pushes the lock change to `main`; `image.yml` then builds 
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
-| `1.1.1` | yes, on every engine bump | "the current 1.1.1" |
-| `1.1.1-yt2026.8.19` | never | exactly this app + engine combination |
+| `1.1.2` | yes, on every engine bump | "the current 1.1.2" |
+| `1.1.2-yt2026.8.19` | never | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
 Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. To roll back an engine
 that broke a site, pin the previous immutable tag in `.env`
-(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:1.1.1-yt<previous>`) or in the kustomize overlay
+(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:1.1.2-yt<previous>`) or in the kustomize overlay
 (`images[].newTag`), and `docker compose up -d` / `kubectl apply -k`. The About page and
 `copycast --version` show which engine is running; `jobs.engine_version` records which engine
 archived each item.

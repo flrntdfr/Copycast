@@ -16,7 +16,7 @@ def test_version_prints_app_and_engine() -> None:
     lines = result.output.strip().splitlines()
     assert lines[0] == f"copycast {APP_VERSION}"
     assert lines[1].startswith("engine ")
-    assert APP_VERSION == "1.1.1"
+    assert APP_VERSION == "1.1.2"
 
 
 def test_config_prints_redacted_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
