@@ -1,4 +1,4 @@
-"""Health endpoints, request ids, cache headers, the MCP mount, the About route."""
+"""Health endpoints, request ids, cache headers, the request log, the MCP mount, the About route."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import structlog
 
 from copycast.app import Container
 from copycast.version import APP_VERSION
@@ -60,6 +61,18 @@ async def test_request_id_is_echoed_or_minted(client: httpx.AsyncClient) -> None
     assert echoed.headers["x-request-id"] == "abc-123"
     minted = await client.get(ABOUT_PATH)
     assert minted.headers["x-request-id"] and minted.headers["x-request-id"] != "abc-123"
+
+
+async def test_requests_are_logged_except_health(client: httpx.AsyncClient) -> None:
+    with structlog.testing.capture_logs() as captured:
+        about = await client.get(ABOUT_PATH, headers={"X-Request-ID": "log-1"})
+        assert about.status_code == 200
+        assert (await client.get(HEALTH_READY)).status_code == 200
+    lines = [event for event in captured if event["event"] == "http.request"]
+    assert [event["path"] for event in lines] == [ABOUT_PATH]
+    (line,) = lines
+    assert line["method"] == "GET" and line["status"] == 200 and line["completed"] is True
+    assert line["request_id"] == "log-1" == about.headers["x-request-id"]
 
 
 async def test_json_responses_are_no_store(client: httpx.AsyncClient) -> None:
