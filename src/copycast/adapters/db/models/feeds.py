@@ -94,6 +94,8 @@ class Feed(TimestampMixin, Base):
     last_refresh_attempt_at: Mapped[datetime | None] = mapped_column(TZDateTime)
     last_refresh_success_at: Mapped[datetime | None] = mapped_column(TZDateTime)
     last_error: Mapped[str | None] = mapped_column(Text)
+    last_light_refresh_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    """When a feed fetch last ran a light Refresh inline (its own cooldown, not the schedule's)."""
 
     storage_bytes: Mapped[int] = mapped_column(
         BigInteger, nullable=False, server_default=text("0"), default=0

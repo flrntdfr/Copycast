@@ -78,6 +78,11 @@ class CatalogItem(TimestampMixin, Base):
     media_path: Mapped[str | None] = mapped_column(Text)
     media_mime: Mapped[str | None] = mapped_column(Text)
     media_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    public_ext: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'mp3'"), default="mp3"
+    )
+    """Extension of the media URL the feed advertises: fixed at listing time, never changed
+    by an archive or an expiry, so podcast apps never see the URL move."""
 
     download_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0"), default=0

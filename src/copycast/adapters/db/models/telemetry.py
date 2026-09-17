@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Date,
     ForeignKey,
     Identity,
@@ -63,6 +64,10 @@ class RefreshRun(TimestampMixin, Base):
     )
     error: Mapped[str | None] = mapped_column(Text)
     engine_version: Mapped[str | None] = mapped_column(Text)
+    light: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    """True for a light Refresh run inline by a feed fetch (newest items only, no job)."""
 
     __table_args__ = (
         enum_check("trigger", JobTrigger, "trigger"),
