@@ -29,6 +29,7 @@ from copycast.adapters.api.container import ApiContainer
 from copycast.adapters.api.events import EventHub, psycopg_conninfo
 from copycast.adapters.api.health import create_health_router
 from copycast.adapters.api.middleware import (
+    AccessLogMiddleware,
     NoRobotsMiddleware,
     NoStoreJsonMiddleware,
     RequestContextMiddleware,
@@ -195,6 +196,8 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
     app.add_middleware(
         GZipMiddleware, minimum_size=GZIP_MINIMUM_SIZE, exclude_content_types=GZIP_EXCLUDED_TYPES
     )
+    # Outermost: one http.request line per request, after every other layer has answered.
+    app.add_middleware(AccessLogMiddleware)
 
     app.include_router(create_api_router(), prefix=API_PREFIX)
     app.include_router(public_routes.open_router, prefix=FEEDS_PREFIX)

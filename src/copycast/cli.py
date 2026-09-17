@@ -92,7 +92,7 @@ def api(reload: bool) -> None:
         port=settings.port,
         reload=reload,
         log_config=None,
-        access_log=True,
+        access_log=False,
         timeout_graceful_shutdown=25,
     )
 

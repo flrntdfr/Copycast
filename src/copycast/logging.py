@@ -3,7 +3,9 @@
 Every record carries the contextvars bound with :func:`bind_context`
 (``process``, ``request_id``, ``job_id``, ``mirror_id``, ``inbox_id``).
 Stdlib loggers (uvicorn, sqlalchemy, alembic, yt_dlp) are routed through the
-same processor chain so both processes emit one format.
+same processor chain so both processes emit one format. The request log is
+Copycast's own ``http.request`` line (``adapters.api.middleware``); uvicorn's
+access log stays off.
 """
 
 from __future__ import annotations
@@ -19,8 +21,6 @@ from copycast.settings import Settings
 
 LogFormat = Literal["console", "json"]
 
-HEALTH_PREFIX = "/healthz/"
-
 _NOISY_LOGGERS: dict[str, int] = {
     "sqlalchemy.engine": logging.WARNING,
     "sqlalchemy.pool": logging.WARNING,
@@ -29,20 +29,7 @@ _NOISY_LOGGERS: dict[str, int] = {
     "httpcore": logging.WARNING,
     "yt_dlp": logging.INFO,
     "uvicorn.error": logging.INFO,
-    "uvicorn.access": logging.INFO,
 }
-
-
-class HealthAccessFilter(logging.Filter):
-    """Drops uvicorn access-log lines for the health endpoints."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        args = record.args
-        if isinstance(args, tuple):
-            for arg in args:
-                if isinstance(arg, str) and HEALTH_PREFIX in arg:
-                    return False
-        return HEALTH_PREFIX not in record.getMessage()
 
 
 def _drop_color_message(_: Any, __: str, event_dict: EventDict) -> EventDict:
@@ -109,10 +96,6 @@ def configure_logging(
         logger.handlers.clear()
         logger.propagate = True
         logger.setLevel(max(min_level, logging.getLevelNamesMapping()[log_level]))
-
-    access = logging.getLogger("uvicorn.access")
-    if not any(isinstance(f, HealthAccessFilter) for f in access.filters):
-        access.addFilter(HealthAccessFilter())
 
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(process=process)
