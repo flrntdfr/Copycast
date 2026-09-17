@@ -347,6 +347,7 @@ class FeedRendererAdapter:
                     media_ext=item.media_ext,
                     media_mime=item.media_mime,
                     media_bytes=item.media_bytes,
+                    public_ext=item.public_ext,
                     source_item_xml=item.source_item_xml,
                     archivable=bool(item.archivable),
                     assets=tuple(by_item.get(item.id, [])),

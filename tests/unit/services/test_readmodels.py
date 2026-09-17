@@ -154,6 +154,7 @@ def item_row(**overrides: Any) -> Any:
         "media_mime": "audio/mp4",
         "media_bytes": 123,
         "media_ext": "m4a",
+        "public_ext": "m4a",
         "download_count": 2,
         "first_downloaded_at": NOW,
         "last_downloaded_at": NOW,
@@ -189,16 +190,29 @@ def test_item_read_media_and_assets() -> None:
     assert read.media is not None
     assert read.media.url == "http://t/feeds/abc/media/0123456789abcdef.m4a"
     assert read.media.bytes == 123 and read.media.ext == "m4a"
+    assert read.public_media_url == read.media.url
     assert read.state is ArchiveState.archived and read.added_at == NOW
     assert read.item_url == "https://x.example/1" and read.request_ids == [rid]
     assert (
         read.assets[0].url
         == "http://t/feeds/abc/assets/0123456789abcdef.transcript.en.mirrored.vtt"
     )
+    # The feed's URL keeps the row's public_ext whatever the archive got; media names the file.
+    moved = readmodels.item_read(item_row(public_ext="mp3"), Urls())
+    assert moved.media is not None and moved.media.url.endswith(".m4a")
+    assert moved.public_media_url == "http://t/feeds/abc/media/0123456789abcdef.mp3"
     wanted = readmodels.item_read(
-        item_row(archive_state="wanted", media_path=None, media_ext=None, media_bytes=None), Urls()
+        item_row(
+            archive_state="wanted",
+            media_path=None,
+            media_ext=None,
+            media_bytes=None,
+            public_ext="mp3",
+        ),
+        Urls(),
     )
     assert wanted.media is None and wanted.state is ArchiveState.wanted
+    assert wanted.public_media_url == "http://t/feeds/abc/media/0123456789abcdef.mp3"
     failed_asset = readmodels.asset_read(
         asset_row(state="failed", local_path=None, last_error="too big"), Urls()
     )

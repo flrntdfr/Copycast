@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 import pytest
 from lxml import etree
@@ -9,6 +11,8 @@ from lxml import etree
 from copycast.adapters.api.routes import public
 from copycast.worker.runner import Runner
 from tests.integration.api.conftest import Source, create_mirror, items_of
+from tests.support.factories import listing
+from tests.support.fake_engine import FakeEngine
 from tests.support.paths import MEDIA_URL, api
 
 pytestmark = pytest.mark.integration
@@ -38,7 +42,12 @@ async def test_preview_counts_without_changing_anything(
     assert (await client.post(api("/mirrors/nope/preview"), json={})).status_code == 404
 
 
-async def test_automatic_feed_lists_everything_and_archives_on_request(
+def enclosures_of(feed: httpx.Response) -> list[Any]:
+    assert feed.status_code == 200, feed.text
+    return etree.fromstring(feed.content).findall(".//item/enclosure")
+
+
+async def test_automatic_feed_lists_everything_under_stable_urls_and_archives_on_request(
     client: httpx.AsyncClient,
     source: Source,
     runner: Runner,
@@ -50,23 +59,25 @@ async def test_automatic_feed_lists_everything_and_archives_on_request(
     await runner.run_until_idle()
     assert await items_of(client, mirror["id"], state="archived") == []
 
-    # The feed lists both items with placeholder enclosures.
-    feed = await client.get(f"/feeds/{mirror['id']}.xml")
-    assert feed.status_code == 200
-    root = etree.fromstring(feed.content)
-    enclosures = root.findall(".//item/enclosure")
+    # The feed lists both items under the URL they keep for good: the RSS enclosures say
+    # audio/mpeg, so ".mp3", whatever container the archive gets later.
+    enclosures = enclosures_of(await client.get(f"/feeds/{mirror['id']}.xml"))
     assert len(enclosures) == 2
     assert {e.get("type") for e in enclosures} == {"audio/mpeg"}
     # Unarchived items claim 128 kbit/s worth of bytes for their duration (60 s and 120 s here).
     assert {e.get("length") for e in enclosures} == {"960000", "1920000"}
-    urls = [e.get("url") or "" for e in enclosures]
-    assert all(u.endswith(".mp3") for u in urls)
+    advertised = {e.get("url") or "" for e in enclosures}
+    assert all(u.endswith(".mp3") for u in advertised)
+    items = await items_of(client, mirror["id"])
+    assert {i["public_media_url"] for i in items} == advertised
+    assert all(i["media"] is None for i in items)
 
     # The worker is not running: the request waits (shortened here) then says retry.
     monkeypatch.setattr(public, "ON_DEMAND_WAIT_SECONDS", 0.0)
-    items = await items_of(client, mirror["id"])
     newest = next(i for i in items if i["source_number"] == 2)
-    first = await client.get(MEDIA_URL(mirror["id"], newest["id"], "mp3"))
+    stable = MEDIA_URL(mirror["id"], newest["id"], "mp3")
+    assert newest["public_media_url"] == "http://testserver" + stable
+    first = await client.get(stable)
     assert first.status_code == 503, first.text
     assert first.headers["retry-after"] == "30"
     assert first.headers["content-type"].startswith("application/problem+json")
@@ -74,24 +85,58 @@ async def test_automatic_feed_lists_everything_and_archives_on_request(
     await runner.run_until_idle()
     archived = await items_of(client, mirror["id"], state="archived")
     assert [i["id"] for i in archived] == [newest["id"]]
-    again = await client.get(MEDIA_URL(mirror["id"], newest["id"], "mp3"))
+    # The FakeEngine archives m4a: the stable URL serves the file under its real type, and
+    # so does the file's own name; any other extension is unknown.
+    assert archived[0]["media"]["ext"] == "m4a"
+    assert archived[0]["public_media_url"] == newest["public_media_url"]
+    again = await client.get(stable)
     assert again.status_code == 200 and again.headers["content-type"] == "audio/mp4"
-    # The feed now carries the real enclosure for that item and the placeholder for the other.
-    feed = await client.get(f"/feeds/{mirror['id']}.xml")
-    types = sorted(
-        e.get("type") or "" for e in etree.fromstring(feed.content).findall(".//enclosure")
-    )
-    assert types == ["audio/mp4", "audio/mpeg"]
-    # A non-Automatic Mirror keeps 404ing unknown extensions (test_media covers it).
+    real = await client.get(MEDIA_URL(mirror["id"], newest["id"], "m4a"))
+    assert real.status_code == 200 and real.headers["content-type"] == "audio/mp4"
+    assert (await client.get(MEDIA_URL(mirror["id"], newest["id"], "ogg"))).status_code == 404
+    # The feed advertises the very same URLs; only the archived item's type is now the file's.
+    enclosures = enclosures_of(await client.get(f"/feeds/{mirror['id']}.xml"))
+    assert {e.get("url") or "" for e in enclosures} == advertised
+    assert sorted(e.get("type") or "" for e in enclosures) == ["audio/mp4", "audio/mpeg"]
+    # An unknown item 404s whatever the extension.
     other = await client.get(MEDIA_URL(mirror["id"], "0123456789abcdef", "mp3"))
     assert other.status_code == 404
 
-    # A deleted (or expired) Episode stays listed and downloads again on request.
+    # A deleted (or expired) Episode stays listed under the same URL and downloads again.
     gone = await client.delete(api(f"/feeds/{mirror['id']}/items/{newest['id']}"))
     assert gone.status_code == 204
-    feed = await client.get(f"/feeds/{mirror['id']}.xml")
-    assert len(etree.fromstring(feed.content).findall(".//item/enclosure")) == 2
-    retry = await client.get(MEDIA_URL(mirror["id"], newest["id"], "mp3"))
+    enclosures = enclosures_of(await client.get(f"/feeds/{mirror['id']}.xml"))
+    assert {e.get("url") or "" for e in enclosures} == advertised
+    assert {e.get("type") for e in enclosures} == {"audio/mpeg"}
+    retry = await client.get(stable)
     assert retry.status_code == 503
     await runner.run_until_idle()
-    assert (await client.get(MEDIA_URL(mirror["id"], newest["id"], "mp3"))).status_code == 200
+    assert (await client.get(stable)).status_code == 200
+
+
+async def test_automatic_ytdlp_feed_advertises_m4a_and_still_serves_the_legacy_mp3_url(
+    client: httpx.AsyncClient,
+    engine: FakeEngine,
+    runner: Runner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://www.youtube.com/@ondemand/videos"
+    engine.script_listing(url, listing(2, service="YouTube", title="Tube"))
+    mirror = await create_mirror(client, url, mode="automatic")
+    await runner.run_until_idle()
+    items = await items_of(client, mirror["id"])
+    assert len(items) == 2 and all(i["public_media_url"].endswith(".m4a") for i in items)
+    enclosures = enclosures_of(await client.get(f"/feeds/{mirror['id']}.xml"))
+    assert {e.get("type") for e in enclosures} == {"audio/mp4"}
+    assert {e.get("url") for e in enclosures} == {i["public_media_url"] for i in items}
+
+    # An app that subscribed before 1.3 holds "{id}.mp3": it still archives and serves.
+    monkeypatch.setattr(public, "ON_DEMAND_WAIT_SECONDS", 0.0)
+    newest = next(i for i in items if i["source_number"] == 2)
+    legacy = MEDIA_URL(mirror["id"], newest["id"], "mp3")
+    assert (await client.get(legacy)).status_code == 503
+    await runner.run_until_idle()
+    served = await client.get(legacy)
+    assert served.status_code == 200 and served.headers["content-type"] == "audio/mp4"
+    assert (await client.get(MEDIA_URL(mirror["id"], newest["id"], "m4a"))).status_code == 200
+    assert (await client.get(MEDIA_URL(mirror["id"], newest["id"], "ogg"))).status_code == 404

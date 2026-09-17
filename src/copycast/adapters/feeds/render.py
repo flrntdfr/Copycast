@@ -38,6 +38,7 @@ from copycast.domain.enums import (
     FeedKind,
     SourceKind,
 )
+from copycast.domain.media import FALLBACK_MIME, mime_for_ext
 from copycast.domain.urls import COPYCAST_ARTWORK_PATH
 from copycast.version import APP_VERSION
 
@@ -116,6 +117,9 @@ class ItemView:
     media_ext: str | None = None
     media_mime: str | None = None
     media_bytes: int | None = None
+    public_ext: str = "mp3"
+    """The extension of the URL the feed advertises: fixed at listing time, whatever
+    container the archive got, so podcast apps never see the enclosure URL move."""
     source_item_xml: str | None = None
     archivable: bool = True
     assets: tuple[AssetView, ...] = ()
@@ -179,8 +183,8 @@ def render_feed(
 
     Items are ordered ``published_at DESC NULLS LAST, ordinal DESC``;
     tombstoned and never-archived items are excluded, Delisted ones kept. An
-    Automatic feed also lists what is not archived yet, with a placeholder
-    enclosure the media route fills on the first request.
+    Automatic feed also lists what is not archived yet, under the same URL the
+    item keeps once archived; the media route archives it on the first request.
     """
     current = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
     last_modified = (feed.last_modified or current).astimezone(UTC).replace(microsecond=0)
@@ -406,8 +410,6 @@ def with_source_link(description: str | None, source_url: str | None) -> str | N
     return f"{text}\n\n{source_url}" if text else source_url
 
 
-PLACEHOLDER_EXT = "mp3"
-PLACEHOLDER_MIME = "audio/mpeg"
 PLACEHOLDER_BYTES_PER_SECOND = 16_000
 """128 kbit/s: what an on-demand item's enclosure claims until the real file exists."""
 
@@ -418,15 +420,18 @@ def placeholder_length(duration_seconds: int | None) -> int:
 
 
 def _enclosure(base_url: str, feed: FeedView, item: ItemView) -> Element:
-    """The enclosure of an archived item, or a placeholder an Automatic feed serves on demand."""
+    """The item's enclosure: always at its stable URL (``public_ext``), so an Automatic
+    feed's item keeps the URL it was listed under once archived. ``type`` and ``length``
+    are the archived file's, else the predicted MIME and a 128 kbit/s estimate."""
     enclosure = etree.Element("enclosure")
-    enclosure.set("url", media_url(base_url, feed.id, item.id, item.media_ext or PLACEHOLDER_EXT))
-    length = item.media_bytes if item.media_ext else placeholder_length(item.duration_seconds)
+    enclosure.set("url", media_url(base_url, feed.id, item.id, item.public_ext))
+    archived = bool(item.media_ext)
+    length = item.media_bytes if archived else None
     enclosure.set("length", str(length or placeholder_length(item.duration_seconds)))
-    enclosure.set(
-        "type",
-        item.media_mime or (PLACEHOLDER_MIME if not item.media_ext else "application/octet-stream"),
-    )
+    if archived:
+        enclosure.set("type", item.media_mime or FALLBACK_MIME)
+    else:
+        enclosure.set("type", mime_for_ext(item.public_ext))
     return enclosure
 
 

@@ -22,6 +22,7 @@ from copycast.domain.enums import (
     AssetKind,
     AssetState,
     RequestedVia,
+    SourceKind,
     WantedReason,
 )
 from copycast.domain.ids import item_id
@@ -332,6 +333,8 @@ async def test_reconciles_media_and_ignores_tmp_leftovers(
         assert rows[2].media_mime == "audio/mpeg" and rows[2].media_bytes == 4407
         orphan = rows[3]
         assert orphan.id == orphan_id and orphan.listed is False
+        assert orphan.public_ext == "m4a"  # the file's: the only URL it can be served under
+        assert rows[2].public_ext == "mp3"  # from the descriptor, as listed
         assert orphan.source_key == "Youtube:xyz" and orphan.title == "Orphan"
         assert orphan.duration_seconds == 61 and orphan.author == "Someone"
         assert orphan.published_at is not None and orphan.published_at.year == 2023
@@ -342,6 +345,62 @@ async def test_reconciles_media_and_ignores_tmp_leftovers(
         feed = await session.get(Feed, mirror.id)
         assert feed is not None
         assert feed.storage_bytes == 4407 + 10 + 1  # the .part in tmp/ never counts
+
+
+async def test_rebuild_keeps_public_ext_and_falls_back_for_older_descriptors(
+    uow_factory: UnitOfWorkFactory,
+    layout: Layout,
+    settings: Settings,
+    db_engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    async with uow_factory() as uow:
+        mirror = await uow.feeds.add(
+            mirror_row("https://www.youtube.com/@show/videos", source_kind=SourceKind.ytdlp)
+        )
+        await uow.catalog.upsert_listing(mirror.id, listing(3, service="YouTube"))
+        rows = await uow.catalog.for_feed(mirror.id)
+        assert {r.public_ext for r in rows} == {"m4a"}
+        layout.ensure_feed_dirs(mirror.id)
+        # ordinal 1 archived in another container than the URL the feed advertises.
+        media = layout.media_path(mirror.id, rows[0].id, "mp3")
+        media.write_bytes(b"\0" * 10)
+        await uow.catalog.mark_state(
+            rows[0].id,
+            ArchiveState.archived,
+            media_path=layout.relative(mirror.id, media),
+            media_mime="audio/mpeg",
+            media_bytes=10,
+            archived_at=NOW,
+        )
+        await uow.update_intent(mirror.id)
+    ids = [r.id for r in rows]
+
+    async def public_exts() -> dict[str, str]:
+        async with sessionmaker() as session:
+            found = await session.execute(
+                select(CatalogItem.id, CatalogItem.public_ext).where(
+                    CatalogItem.feed_id == mirror.id
+                )
+            )
+            return {row[0]: row[1] for row in found}
+
+    await _wipe(sessionmaker)
+    report = await rebuild(settings, yes=False, db_engine=db_engine)
+    assert report.items_upserted == 3 and report.media_archived == 1
+    assert await public_exts() == dict.fromkeys(ids, "m4a")
+
+    # A descriptor written before 1.3 carries no public_ext: the archived row gets its
+    # file's extension (the URL apps have been downloading), the rest the prediction
+    # for their Source.
+    path = layout.descriptor_path(mirror.id)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for item in data["items"]:
+        del item["public_ext"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    await _wipe(sessionmaker)
+    await rebuild(settings, yes=False, db_engine=db_engine)
+    assert await public_exts() == {ids[0]: "mp3", ids[1]: "m4a", ids[2]: "m4a"}
 
 
 async def test_yes_deletes_rows_absent_from_disk_and_skips_unreadable_dirs(

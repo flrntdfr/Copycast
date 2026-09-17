@@ -80,6 +80,18 @@ def test_media_type_from_mime_then_url(
     assert media_type(mime, url) == expected
 
 
+def test_tables_are_the_domain_tables() -> None:
+    """The engine's MIME table is the one ``domain.media`` predicts public URLs with."""
+    from copycast.adapters.engine.synth import EXT_CODEC, EXT_MIME, MIME_MEDIA
+    from copycast.domain import media
+
+    assert EXT_MIME is media.EXT_MIME
+    assert {mime: ext for mime, (ext, _) in MIME_MEDIA.items()} == media.MIME_EXT
+    assert set(EXT_CODEC) <= media.KNOWN_EXTS
+    assert MIME_MEDIA["audio/wav"] == ("wav", "pcm_s16le")
+    assert MIME_MEDIA["video/quicktime"] == ("mov", "aac")
+
+
 def test_mime_helpers() -> None:
     assert clean_mime(" Audio/MPEG ; x=y") == "audio/mpeg"
     assert clean_mime("") is None and clean_mime(None) is None

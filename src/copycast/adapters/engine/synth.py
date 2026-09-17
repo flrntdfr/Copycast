@@ -8,87 +8,45 @@ pipeline as a yt-dlp extraction. ``extractor`` is always ``copycast:rss``.
 from __future__ import annotations
 
 from datetime import datetime
-from posixpath import basename
 from typing import Any, Final
 from urllib.parse import urlsplit
 
 from copycast.application.ports import SynthItem
 from copycast.domain.listing import SourceListingItem
+from copycast.domain.media import (
+    EXT_MIME,
+    KNOWN_EXTS,
+    MIME_EXT,
+    clean_mime,
+    mime_for_ext,
+    url_ext,
+)
 
 EXTRACTOR: Final = "copycast:rss"
 EXTRACTOR_KEY: Final = "CopycastRss"
 
-# MIME type -> (yt-dlp ext, audio codec name). Codec names follow ffprobe.
+# yt-dlp ext -> audio codec name (ffprobe's); the containers ``domain.media`` knows.
+EXT_CODEC: Final[dict[str, str]] = {
+    "mp3": "mp3",
+    "m4a": "aac",
+    "m4b": "aac",
+    "mp4": "aac",
+    "mov": "aac",
+    "aac": "aac",
+    "ogg": "vorbis",
+    "oga": "vorbis",
+    "ogv": "vorbis",
+    "opus": "opus",
+    "webm": "opus",
+    "flac": "flac",
+    "wav": "pcm_s16le",
+    "aiff": "pcm_s16be",
+}
+
+# MIME type -> (yt-dlp ext, audio codec name): the domain table plus the codec per ext.
 MIME_MEDIA: Final[dict[str, tuple[str, str | None]]] = {
-    "audio/mpeg": ("mp3", "mp3"),
-    "audio/mp3": ("mp3", "mp3"),
-    "audio/mpeg3": ("mp3", "mp3"),
-    "audio/x-mpeg": ("mp3", "mp3"),
-    "audio/x-mp3": ("mp3", "mp3"),
-    "audio/mp4": ("m4a", "aac"),
-    "audio/x-m4a": ("m4a", "aac"),
-    "audio/m4a": ("m4a", "aac"),
-    "audio/mp4a-latm": ("m4a", "aac"),
-    "audio/aac": ("aac", "aac"),
-    "audio/aacp": ("aac", "aac"),
-    "audio/x-aac": ("aac", "aac"),
-    "audio/ogg": ("ogg", "vorbis"),
-    "audio/vorbis": ("ogg", "vorbis"),
-    "audio/x-vorbis": ("ogg", "vorbis"),
-    "audio/opus": ("opus", "opus"),
-    "audio/x-opus": ("opus", "opus"),
-    "audio/webm": ("webm", "opus"),
-    "audio/flac": ("flac", "flac"),
-    "audio/x-flac": ("flac", "flac"),
-    "audio/wav": ("wav", "pcm_s16le"),
-    "audio/x-wav": ("wav", "pcm_s16le"),
-    "audio/wave": ("wav", "pcm_s16le"),
-    "audio/vnd.wave": ("wav", "pcm_s16le"),
-    "audio/aiff": ("aiff", "pcm_s16be"),
-    "audio/x-aiff": ("aiff", "pcm_s16be"),
-    "video/mp4": ("mp4", "aac"),
-    "video/x-m4v": ("mp4", "aac"),
-    "video/quicktime": ("mov", "aac"),
-    "video/webm": ("webm", "opus"),
-    "video/ogg": ("ogv", "vorbis"),
+    mime: (ext, EXT_CODEC.get(ext)) for mime, ext in MIME_EXT.items()
 }
-
-EXT_MIME: Final[dict[str, str]] = {
-    "m4a": "audio/mp4",
-    "mp4": "audio/mp4",
-    "m4b": "audio/mp4",
-    "mp3": "audio/mpeg",
-    "aac": "audio/aac",
-    "ogg": "audio/ogg",
-    "oga": "audio/ogg",
-    "opus": "audio/opus",
-    "webm": "audio/webm",
-    "flac": "audio/flac",
-    "wav": "audio/wav",
-    "aiff": "audio/aiff",
-    "mka": "audio/x-matroska",
-    "mov": "video/quicktime",
-    "ogv": "video/ogg",
-}
-
-KNOWN_EXTS: Final = frozenset(EXT_MIME)
-
-
-def clean_mime(mime: str | None) -> str | None:
-    if not mime:
-        return None
-    value = mime.split(";", 1)[0].strip().lower()
-    return value or None
-
-
-def url_ext(url: str | None) -> str | None:
-    if not url:
-        return None
-    name = basename(urlsplit(url).path)
-    if "." not in name:
-        return None
-    ext = name.rsplit(".", 1)[1].lower()
-    return ext if ext in KNOWN_EXTS else None
 
 
 def media_type(mime: str | None, url: str | None) -> tuple[str | None, str | None]:
@@ -98,13 +56,8 @@ def media_type(mime: str | None, url: str | None) -> tuple[str | None, str | Non
         return MIME_MEDIA[clean]
     ext = url_ext(url)
     if ext is not None:
-        return ext, MIME_MEDIA.get(EXT_MIME[ext], (ext, None))[1]
+        return ext, EXT_CODEC.get(ext)
     return None, None
-
-
-def mime_for_ext(ext: str) -> str:
-    """The MIME type Copycast serves for a media extension (``audio/mp4`` for m4a)."""
-    return EXT_MIME.get(ext.lower().lstrip("."), "application/octet-stream")
 
 
 def build(item: SynthItem) -> dict[str, Any]:
@@ -179,7 +132,9 @@ def _timestamp(value: datetime | None) -> int | None:
 __all__ = [
     "EXTRACTOR",
     "EXTRACTOR_KEY",
+    "EXT_CODEC",
     "EXT_MIME",
+    "KNOWN_EXTS",
     "MIME_MEDIA",
     "build",
     "clean_mime",

@@ -42,10 +42,12 @@ from copycast.domain.enums import (
     ArchiveState,
     AssetKind,
     AssetState,
+    SourceKind,
     WantedReason,
 )
 from copycast.domain.exceptions import Conflict
 from copycast.domain.ids import asset_id as make_asset_id
+from copycast.domain.media import predicted_ext
 from copycast.logging import get_logger
 from copycast.settings import Settings
 
@@ -242,7 +244,7 @@ async def _rebuild_feed(
     await _upsert_feed(session, layout, descriptor)
     counters.add("feeds_upserted")
 
-    counters.add("items_upserted", await _upsert_items(session, descriptor))
+    counters.add("items_upserted", await _upsert_items(session, layout, descriptor))
     counters.add("assets_upserted", await _upsert_assets(session, descriptor))
     counters.add("requests_upserted", await _upsert_requests(session, descriptor))
 
@@ -381,11 +383,15 @@ async def _upsert_feed(session: AsyncSession, layout: Layout, descriptor: FeedDe
     layout.ensure_feed_dirs(feed.id)
 
 
-async def _upsert_items(session: AsyncSession, descriptor: FeedDescriptor) -> int:
+async def _upsert_items(session: AsyncSession, layout: Layout, descriptor: FeedDescriptor) -> int:
     if not descriptor.items:
         return 0
     feed_id = descriptor.feed.id
-    rows = [_item_values(feed_id, item) for item in descriptor.items]
+    source_kind = descriptor.feed.source_kind
+    rows = [
+        _item_values(feed_id, item, _restored_public_ext(layout, feed_id, source_kind, item))
+        for item in descriptor.items
+    ]
     # Ordinals are unique per feed: park conflicting existing rows first so an
     # upsert never trips over a row that moved (rebuild never renumbers).
     ordinals = {row["ordinal"] for row in rows}
@@ -410,7 +416,23 @@ async def _upsert_items(session: AsyncSession, descriptor: FeedDescriptor) -> in
     return len(rows)
 
 
-def _item_values(feed_id: str, item: DescriptorItem) -> dict[str, Any]:
+def _restored_public_ext(
+    layout: Layout, feed_id: str, source_kind: SourceKind | None, item: DescriptorItem
+) -> str:
+    """The item's stable URL extension: as written, else its media file's, else predicted.
+
+    Descriptors written before 1.3 carry no ``public_ext``; the media file (when there
+    is one) is what apps have been downloading, so its extension is the URL they hold.
+    """
+    if item.public_ext:
+        return item.public_ext
+    media = layout.find_media(feed_id, item.id)
+    if media is not None:
+        return media.suffix.lstrip(".").lower()
+    return predicted_ext(source_kind)
+
+
+def _item_values(feed_id: str, item: DescriptorItem, public_ext: str) -> dict[str, Any]:
     return {
         "id": item.id,
         "feed_id": feed_id,
@@ -439,6 +461,7 @@ def _item_values(feed_id: str, item: DescriptorItem) -> dict[str, Any]:
         "media_path": item.media_path,
         "media_mime": item.media_mime,
         "media_bytes": item.media_bytes,
+        "public_ext": public_ext,
     }
 
 
@@ -608,6 +631,7 @@ def _draft_from_sidecars(layout: Layout, feed_id: str, media: Path) -> dict[str,
         "media_path": layout.relative(feed_id, media),
         "media_mime": mime_for(ext),
         "media_bytes": stat.st_size,
+        "public_ext": ext,
         "archived_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC),
     }
 

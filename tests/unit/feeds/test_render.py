@@ -117,10 +117,12 @@ def item(
     media_bytes: int = 5155,
     media_ext: str = "mp3",
     media_mime: str = "audio/mpeg",
+    public_ext: str | None = None,
     source_item_xml: str | None = None,
     assets: tuple[AssetView, ...] = (),
     **extra: object,
 ) -> ItemView:
+    """``public_ext`` defaults to the archived container (else mp3): the goldens' URLs."""
     return ItemView(
         id=ident,
         ordinal=ordinal,
@@ -132,6 +134,7 @@ def item(
         media_ext=media_ext,
         media_mime=media_mime,
         media_bytes=media_bytes,
+        public_ext=public_ext or media_ext or "mp3",
         source_item_xml=source_item_xml,
         assets=assets,
         **extra,  # type: ignore[arg-type]
@@ -560,7 +563,7 @@ def test_artwork_local(rich: ParsedFeed) -> None:
 # --------------------------------------------------------------------------- behaviour
 
 
-def test_automatic_feed_lists_unarchived_items_with_a_placeholder() -> None:
+def test_automatic_feed_lists_unarchived_items_under_their_stable_url() -> None:
     feed = FeedView(
         id=FEED_ID,
         kind=FeedKind.mirror,
@@ -569,7 +572,17 @@ def test_automatic_feed_lists_unarchived_items_with_a_placeholder() -> None:
         backfill_mode=BackfillMode.automatic,
     )
     items = [
-        item("aaaaaaaaaaaaaaaa", 1, "Archived", published_at=NOW),
+        # Listed before 1.3 under the ".mp3" placeholder, archived as m4a: the URL apps
+        # hold stays, the type is the file's.
+        item(
+            "aaaaaaaaaaaaaaaa",
+            1,
+            "Archived",
+            published_at=NOW,
+            media_ext="m4a",
+            media_mime="audio/mp4",
+            public_ext="mp3",
+        ),
         item(
             "bbbbbbbbbbbbbbbb",
             2,
@@ -578,6 +591,7 @@ def test_automatic_feed_lists_unarchived_items_with_a_placeholder() -> None:
             media_ext=None,  # type: ignore[arg-type]
             media_mime=None,  # type: ignore[arg-type]
             media_bytes=0,
+            public_ext="m4a",
             published_at=NOW - timedelta(days=1),
         ),
         item(
@@ -588,6 +602,7 @@ def test_automatic_feed_lists_unarchived_items_with_a_placeholder() -> None:
             media_ext=None,  # type: ignore[arg-type]
             media_mime=None,  # type: ignore[arg-type]
             media_bytes=0,
+            public_ext="m4a",
             published_at=NOW - timedelta(days=2),
         ),
         item("dddddddddddddddd", 4, "No media", state=ArchiveState.available, archivable=False),
@@ -595,15 +610,46 @@ def test_automatic_feed_lists_unarchived_items_with_a_placeholder() -> None:
     rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
     enclosures = etree.fromstring(rendered.body).findall(".//item/enclosure")
     # The archived one, the pending one and the Tombstone (downloaded again on request);
-    # unarchived items claim a plausible size (128 kbit/s) since apps reject 0 bytes.
-    assert [(e.get("type"), e.get("length")) for e in enclosures] == [
-        ("audio/mpeg", "5155"),
-        ("audio/mpeg", "16000"),
-        ("audio/mpeg", "16000"),
+    # every URL ends with the row's public_ext and the type follows it until the file
+    # exists; unarchived items claim a plausible size (128 kbit/s) since apps reject 0 bytes.
+    media = f"{BASE_URL}/feeds/{FEED_ID}/media"
+    assert [(e.get("url"), e.get("type"), e.get("length")) for e in enclosures] == [
+        (f"{media}/aaaaaaaaaaaaaaaa.mp3", "audio/mp4", "5155"),
+        (f"{media}/bbbbbbbbbbbbbbbb.m4a", "audio/mp4", "16000"),
+        (f"{media}/cccccccccccccccc.m4a", "audio/mp4", "16000"),
     ]
     assert placeholder_length(None) == 16_000 and placeholder_length(3600) == 57_600_000
-    assert (enclosures[1].get("url") or "").endswith("/bbbbbbbbbbbbbbbb.mp3")
-    assert (enclosures[2].get("url") or "").endswith("/cccccccccccccccc.mp3")
+    # An RSS Source's unarchived item is advertised as its enclosure's type predicted.
+    rss = render_feed(
+        FeedView(
+            id=FEED_ID,
+            kind=FeedKind.mirror,
+            title="RSS",
+            source_kind=SourceKind.rss,
+            backfill_mode=BackfillMode.automatic,
+        ),
+        [
+            item(
+                "eeeeeeeeeeeeeeee",
+                5,
+                "Pending",
+                state=ArchiveState.available,
+                media_ext=None,  # type: ignore[arg-type]
+                media_mime=None,  # type: ignore[arg-type]
+                media_bytes=0,
+                public_ext="ogg",
+                duration_seconds=10,
+            )
+        ],
+        base_url=BASE_URL,
+        now=NOW,
+    )
+    (pending,) = etree.fromstring(rss.body).findall(".//item/enclosure")
+    assert (pending.get("url"), pending.get("type"), pending.get("length")) == (
+        f"{media}/eeeeeeeeeeeeeeee.ogg",
+        "audio/ogg",
+        "160000",
+    )
     # The same items under any other mode: only the archived one.
     plain = render_feed(
         FeedView(id=FEED_ID, kind=FeedKind.mirror, title="x"), items, base_url=BASE_URL, now=NOW

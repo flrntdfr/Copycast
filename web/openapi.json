@@ -3816,6 +3816,11 @@
               }
             ]
           },
+          "public_media_url": {
+            "type": "string",
+            "title": "Public Media Url",
+            "description": "The media URL the feed advertises: fixed for the item's life, whatever container the archive gets (media.url names the archived file itself)"
+          },
           "artwork_url": {
             "anyOf": [
               {
@@ -3891,7 +3896,8 @@
           "ordinal",
           "title",
           "added_at",
-          "state"
+          "state",
+          "public_media_url"
         ],
         "title": "ItemRead"
       },
