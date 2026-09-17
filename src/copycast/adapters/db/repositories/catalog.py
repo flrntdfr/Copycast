@@ -33,6 +33,7 @@ from copycast.domain.enums import ArchiveState, Numbering, WantedReason
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import item_id as make_item_id
 from copycast.domain.listing import SourceListing, SourceListingItem
+from copycast.domain.media import predicted_ext
 from copycast.domain.ordinals import assign_ordinals
 from copycast.domain.selection import (
     ResolvedSelection,
@@ -399,17 +400,20 @@ class CatalogRepository:
     ) -> ListingUpsert:
         """Apply a Source listing to the Catalog under ``SELECT ... FOR UPDATE`` on the feed.
 
-        Unseen keys get ordinals from the oldest onwards, known keys get their
-        metadata, ``source_number``/``source_position``/``tab`` and ``listed``
-        refreshed, rows absent from a non-empty listing are delisted. With
-        ``wanted_reason`` every archivable item of the listing that is
-        Available, deleted or failed becomes wanted (Requests use this).
+        Unseen keys get ordinals from the oldest onwards and the ``public_ext``
+        their media URL keeps for good (predicted from the Source kind and the
+        enclosure), known keys get their metadata,
+        ``source_number``/``source_position``/``tab`` and ``listed`` refreshed
+        (never ``public_ext``), rows absent from a non-empty listing are
+        delisted. With ``wanted_reason`` every archivable item of the listing
+        that is Available, deleted or failed becomes wanted (Requests use this).
 
         ``partial`` applies a shallow listing (a light Refresh's first page):
         nothing is delisted, and known rows keep their ``source_number``,
         ``source_season``, ``source_position``, ``tab`` and ``archivable``;
         only the coalesced text and duration fields, the published-at rule,
-        ``listed`` and ``last_listed_at`` are refreshed. New rows insert as usual.
+        ``listed`` and ``last_listed_at`` are refreshed. New rows insert as
+        usual, ``public_ext`` included.
         """
         now = now or utcnow()
         feed = (
@@ -452,6 +456,9 @@ class CatalogRepository:
                     "source_key": key,
                     "ordinal": ordinals[key],
                     **_metadata_values(entry),
+                    "public_ext": predicted_ext(
+                        feed.source_kind, entry.enclosure_type, entry.enclosure_url
+                    ),
                     "archivable": entry.archivable,
                     "listed": True,
                     "first_seen_at": now,

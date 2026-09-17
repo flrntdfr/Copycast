@@ -113,6 +113,7 @@ export function item(overrides: Partial<ItemRead> = {}): ItemRead {
             ext: "m4a",
           }
         : null,
+    public_media_url: `http://localhost:8080/feeds/${feedId}/media/${id}.m4a`,
     artwork_url: null,
     assets: [],
     download_count: 0,

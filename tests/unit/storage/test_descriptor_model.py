@@ -60,6 +60,7 @@ def _descriptor() -> FeedDescriptor:
                 last_listed_at=NOW,
                 archive_state=ArchiveState.archived,
                 media_path="media/fedcba9876543210.m4a",
+                public_ext="mp3",
             )
         ],
         assets=[
@@ -99,6 +100,11 @@ def test_defaults_and_round_trip(tmp_path: Path) -> None:
     data["feed"]["future"] = True
     path.write_text(json.dumps(data))
     assert FeedDescriptor.read(path).intent_version == 3
+    # A descriptor written before 1.3 names no public_ext: it reads back as unknown.
+    assert FeedDescriptor.read(path).items[0].public_ext == "mp3"
+    del data["items"][0]["public_ext"]
+    path.write_text(json.dumps(data))
+    assert FeedDescriptor.read(path).items[0].public_ext is None
 
 
 def test_read_errors(tmp_path: Path) -> None:

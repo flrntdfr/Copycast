@@ -169,6 +169,7 @@ def test_draft_from_sidecars_prefers_item_xml(data_dir: Path) -> None:
     assert (draft["source_number"], draft["source_season"]) == (4, 2)
     assert draft["source_url"] == "https://x/page"
     assert draft["media_path"] == f"media/{ITEM}.mp3"
+    assert draft["public_ext"] == "mp3"  # the file's: the only URL it can be served under
     assert (draft["media_mime"], draft["media_bytes"]) == ("audio/mpeg", 4407)
     assert draft["source_item_xml"].startswith("<item>")
     assert isinstance(draft["archived_at"], datetime)

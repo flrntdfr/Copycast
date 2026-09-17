@@ -207,6 +207,10 @@ class ItemRead(ReadModel):
     attempt_count: int = 0
     last_error: str | None = None
     media: ItemMedia | None = None
+    public_media_url: str = Field(
+        description="The media URL the feed advertises: fixed for the item's life, whatever "
+        "container the archive gets (media.url names the archived file itself)"
+    )
     artwork_url: str | None = None
     assets: list[AssetRead] = Field(default_factory=list[AssetRead])
     download_count: int = 0

@@ -7,7 +7,9 @@ conditionals; a GET of a Mirror first runs a light Refresh inline
 and a cooldown, never a wait on the worker) so new items are in the answer.
 ``/feeds/{id}/media/{item_id}.{ext}`` is a ``FileResponse`` (Range 206/416,
 strong ETag) counted as a download only on a GET without Range or with a
-Range starting at byte 0. ``/feeds/{id}/assets/{basename}`` is matched
+Range starting at byte 0; ``ext`` is the one the feed advertises (fixed for
+the item's life), the archived file's own, or an Automatic feed's legacy
+``mp3`` placeholder. ``/feeds/{id}/assets/{basename}`` is matched
 against the feed's archived asset rows and never counted. While authentication
 is on, every route here takes the operator pair or the feed's own pair
 (``adapters.api.auth.require_feed_access``).
@@ -29,7 +31,7 @@ from starlette.background import BackgroundTask
 
 from copycast.adapters.api.auth import FeedAccess
 from copycast.adapters.api.cache import CachedFeed, FeedCache
-from copycast.adapters.api.container import ApiContainer
+from copycast.adapters.api.container import ApiContainer, FeedHeadLike
 from copycast.adapters.api.deps import ContainerDep, FeedCacheDep, ServicesDep
 from copycast.adapters.api.problems import problem_response
 from copycast.application.models import ItemRead
@@ -46,7 +48,8 @@ log = get_logger(__name__)
 FEED_CACHE_CONTROL = "no-cache"
 MEDIA_CACHE_CONTROL = "public, max-age=86400"
 MEDIA_NAME_RE = re.compile(r"^(?P<item_id>[0-9a-f]{16})\.(?P<ext>[A-Za-z0-9]{1,8})$")
-PLACEHOLDER_EXT = "mp3"
+LEGACY_PLACEHOLDER_EXT = "mp3"
+"""What an Automatic feed advertised for unarchived items before 1.3; apps still hold it."""
 ON_DEMAND_WAIT_SECONDS = 120.0
 ON_DEMAND_POLL_SECONDS = 2.0
 ON_DEMAND_RETRY_AFTER = 30
@@ -179,12 +182,18 @@ async def media(
         return problem_response(request, status=404, slug="not-found", detail="no such media")
     item_id, ext = match.group("item_id"), match.group("ext")
     item = await services.get_item(feed_id, item_id)
-    if item.media is None or item.media.ext != ext:
-        # An Automatic feed lists unarchived items under a placeholder ".mp3" URL:
-        # archive on the first request, and serve whatever container the archive got.
+    head: FeedHeadLike | None = None
+    if ext != _public_ext(item) and (item.media is None or ext != item.media.ext):
+        # Neither the URL the feed advertises nor the archived file's own name: only the
+        # ".mp3" placeholder an Automatic feed advertised before 1.3 is still honoured.
         head = await container.renderer.head(feed_id)
-        automatic = head is not None and head.automatic and ext == PLACEHOLDER_EXT
-        if not automatic or not _on_demand(item):
+        if head is None or not head.automatic or ext != LEGACY_PLACEHOLDER_EXT:
+            return problem_response(request, status=404, slug="not-found", detail="no such media")
+    if item.media is None:
+        # An Automatic feed lists unarchived items under their stable URL: archive on the
+        # first request, and serve whatever container the archive got.
+        head = head or await container.renderer.head(feed_id)
+        if head is None or not head.automatic or not _on_demand(item):
             return problem_response(request, status=404, slug="not-found", detail="no such media")
         item = await _archive_on_demand(services, feed_id, item_id)
         if item.media is None:
@@ -208,6 +217,11 @@ async def media(
         content_disposition_type="inline",
         background=background,
     )
+
+
+def _public_ext(item: ItemRead) -> str:
+    """The extension of the URL the feed advertises for ``item`` (``public_media_url``)."""
+    return item.public_media_url.rsplit(".", 1)[-1]
 
 
 def _on_demand(item: ItemRead) -> bool:

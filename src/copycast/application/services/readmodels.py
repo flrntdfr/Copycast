@@ -258,6 +258,7 @@ def item_read(
         attempt_count=item.attempt_count,
         last_error=item.last_error,
         media=media,
+        public_media_url=urls.media_url(item.feed_id, item.id, item.public_ext),
         artwork_url=item.artwork_url,
         assets=[asset_read(asset, urls) for asset in assets],
         download_count=item.download_count,

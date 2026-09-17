@@ -116,6 +116,9 @@ class DescriptorItem(_Strict):
     media_path: str | None = None
     media_mime: str | None = None
     media_bytes: int | None = None
+    public_ext: str | None = None
+    """The extension of the media URL the feed advertises; ``None`` in descriptors written
+    before 1.3 (the rebuild then takes the media file's, else the prediction)."""
 
 
 class DescriptorAsset(_Strict):

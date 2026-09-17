@@ -6,8 +6,8 @@ from datetime import timedelta
 
 import pytest
 
-from copycast.adapters.db.uow import UnitOfWorkFactory
-from copycast.domain.enums import ArchiveState, ListingOrder, Numbering, WantedReason
+from copycast.adapters.db.uow import UnitOfWork, UnitOfWorkFactory
+from copycast.domain.enums import ArchiveState, ListingOrder, Numbering, SourceKind, WantedReason
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import item_id
 from tests.integration.storage.conftest import NOW, inbox_row, item_row, mirror_row, seed
@@ -178,6 +178,76 @@ async def test_upsert_refreshes_metadata_non_blank(uow_factory: UnitOfWorkFactor
         assert loaded.published_at == NOW
         assert loaded.published_at_approximate is False
         assert (loaded.source_number, loaded.tab, loaded.archivable) == (7, "videos", False)
+
+
+async def test_upsert_sets_public_ext_per_source_kind_and_never_rewrites_it(
+    uow_factory: UnitOfWorkFactory,
+) -> None:
+    rss_id = await _mirror(uow_factory)
+    async with uow_factory() as uow:
+        tube = await uow.feeds.add(
+            mirror_row("https://www.youtube.com/@show/videos", source_kind=SourceKind.ytdlp)
+        )
+        inbox = await uow.feeds.add(inbox_row())
+        tube_id, inbox_id = tube.id, inbox.id
+    enclosures = listing(4).model_copy(
+        update={
+            "items": [
+                listing_item(1, source_number=1),  # audio/mpeg
+                listing_item(2, source_number=2, enclosure_type="audio/x-m4a"),
+                listing_item(
+                    3,
+                    source_number=3,
+                    enclosure_type=None,
+                    enclosure_url="https://podcast.example/media/3.ogg",
+                ),
+                listing_item(4, source_number=4, enclosure_type=None, enclosure_url=None),
+            ]
+        }
+    )
+
+    async def exts(uow: UnitOfWork, feed_id: str) -> dict[int | None, str]:
+        return {row.source_number: row.public_ext for row in await uow.catalog.for_feed(feed_id)}
+
+    async with uow_factory() as uow:
+        await uow.catalog.upsert_listing(rss_id, enclosures)
+        await uow.catalog.upsert_listing(tube_id, enclosures)
+        await uow.catalog.upsert_listing(inbox_id, enclosures)
+        # RSS: the enclosure's MIME type, else its URL's extension, else mp3.
+        assert await exts(uow, rss_id) == {1: "mp3", 2: "m4a", 3: "ogg", 4: "mp3"}
+        # A ytdlp Source archives to m4a whatever the listing says.
+        assert await exts(uow, tube_id) == {1: "m4a", 2: "m4a", 3: "m4a", 4: "m4a"}
+        # An Inbox is filled by the Engine, unless the Request named a media file.
+        assert await exts(uow, inbox_id) == {1: "mp3", 2: "m4a", 3: "ogg", 4: "m4a"}
+
+    # The Source changes its enclosures and an item gets archived in another container:
+    # known rows keep the URL podcast apps already hold.
+    changed = enclosures.model_copy(
+        update={
+            "items": [
+                entry.model_copy(
+                    update={
+                        "enclosure_type": "audio/mp4",
+                        "enclosure_url": f"https://podcast.example/media/{n}.m4a",
+                    }
+                )
+                for n, entry in enumerate(enclosures.items, start=1)
+            ]
+        }
+    )
+    async with uow_factory() as uow:
+        rows = await uow.catalog.for_feed(rss_id)
+        await uow.catalog.mark_state(
+            rows[0].id,
+            ArchiveState.archived,
+            media_path=f"media/{rows[0].id}.m4a",
+            media_mime="audio/mp4",
+            media_bytes=5,
+        )
+        await uow.catalog.upsert_listing(rss_id, changed)
+        assert await exts(uow, rss_id) == {1: "mp3", 2: "m4a", 3: "ogg", 4: "mp3"}
+        archived = await uow.catalog.require(rows[0].id)
+        assert archived.media_ext == "m4a" and archived.public_ext == "mp3"
 
 
 async def test_approximate_dates_fill_blanks_only_and_are_flagged(

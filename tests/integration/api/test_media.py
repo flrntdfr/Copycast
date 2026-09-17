@@ -97,7 +97,7 @@ async def test_unsatisfiable_range_is_416(
 async def test_media_404s(client: httpx.AsyncClient, source: Source, runner: Runner) -> None:
     mirror, item = await one_archived(client, source, runner, name="404s")
     problem = "application/problem+json"
-    wrong_ext = await client.get(MEDIA_URL(mirror["id"], item["id"], "mp3"))
+    wrong_ext = await client.get(MEDIA_URL(mirror["id"], item["id"], "ogg"))
     assert wrong_ext.status_code == 404 and wrong_ext.headers["content-type"].startswith(problem)
     unknown_item = await client.get(MEDIA_URL(mirror["id"], "0123456789abcdef", "m4a"))
     assert unknown_item.status_code == 404
@@ -107,6 +107,17 @@ async def test_media_404s(client: httpx.AsyncClient, source: Source, runner: Run
         response = await client.get(f"/feeds/{mirror['id']}/media/{traversal}")
         assert response.status_code == 404, traversal
     assert await download_count(client, mirror["id"], item["id"]) == 0
+
+    # The URL the feed advertises (".mp3", from the RSS enclosure's type) serves the archived
+    # file too, under the file's own MIME type, on any Mirror; a full GET of it counts.
+    assert item["public_media_url"] == "http://testserver" + MEDIA_URL(
+        mirror["id"], item["id"], "mp3"
+    )
+    assert item["media"]["ext"] == "m4a"
+    public = await client.get(MEDIA_URL(mirror["id"], item["id"], "mp3"))
+    assert public.status_code == 200 and public.headers["content-type"] == "audio/mp4"
+    assert len(public.content) == item["media"]["bytes"]
+    assert await download_count(client, mirror["id"], item["id"]) == 1
 
 
 async def test_assets_are_served_and_never_counted(
