@@ -14,6 +14,7 @@ from typing import Any, Final, cast
 from copycast.application.ports import EngineLog
 from copycast.domain.engine_options import ENGINE_OWNED_OPTIONS, EngineOptions
 from copycast.domain.enums import FetchKind
+from copycast.settings import Settings
 
 YTDLP_FORMAT: Final = "bestaudio[ext=m4a]/bestaudio/best"
 DIRECT_FORMAT: Final = "bestaudio/best"
@@ -132,6 +133,22 @@ def subtitle_languages(language: str | None) -> list[str]:
     return languages
 
 
+def engine_options_for(
+    settings: Settings, feed_options: Mapping[str, Any] | None, *, language: str | None
+) -> dict[str, Any]:
+    """config ``[engine.options]`` -> Feed options, with the languages defaulted.
+
+    ``BASE_OPTIONS`` are overlaid by the engine itself; a Feed's own
+    ``subtitleslangs`` wins over the ``[feed language, en]`` default, and its
+    ``language`` becomes the preferred YouTube metadata language unless the
+    Feed's options name one (the engine falls back to ``[engine] language``).
+    Shared by the worker's jobs and the light Refresh's shallow listing.
+    """
+    merged = EngineOptions.merge(settings.engine.options, feed_options, None)
+    merged.setdefault("subtitleslangs", subtitle_languages(language))
+    return with_language(merged, language)
+
+
 def merge_options(
     global_options: Mapping[str, Any] | None,
     feed_options: Mapping[str, Any] | None = None,
@@ -170,11 +187,19 @@ def fetch_params(
 
 
 def listing_params(
-    options: Mapping[str, Any] | None, *, log: EngineLog | None = None
+    options: Mapping[str, Any] | None, *, log: EngineLog | None = None, limit: int | None = None
 ) -> dict[str, Any]:
-    """``YoutubeDL`` params for a flat listing: no downloads, no sidecars."""
+    """``YoutubeDL`` params for a flat listing: no downloads, no sidecars.
+
+    With ``limit`` the listing is shallow: ``lazy_playlist`` stops the tab
+    walk after ``playlistend`` entries (the first page of a channel), which is
+    what a light Refresh asks for instead of the whole channel.
+    """
     params = with_approximate_dates(EngineOptions.merge(strip_owned(options), None, None))
     params.update(LISTING_OPTIONS)
+    if limit is not None:
+        params["lazy_playlist"] = True
+        params["playlistend"] = limit
     if log is not None:
         params["logger"] = log
     return params
@@ -186,6 +211,7 @@ __all__ = [
     "LISTING_OPTIONS",
     "POSTPROCESSORS",
     "YTDLP_FORMAT",
+    "engine_options_for",
     "fetch_params",
     "listing_params",
     "merge_options",

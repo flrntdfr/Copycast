@@ -4583,6 +4583,19 @@
             ],
             "title": "Last Refresh Success At"
           },
+          "last_light_refresh_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Light Refresh At",
+            "description": "When a fetch of the Mirror Feed last checked the Source's newest items"
+          },
           "last_error": {
             "anyOf": [
               {

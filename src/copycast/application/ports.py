@@ -193,8 +193,14 @@ class Engine(Protocol):
         options: EngineOptionsMap,
         cancel: CancelToken,
         log: EngineLog,
+        *,
+        limit: int | None = None,
     ) -> SourceListing:
-        """Flat-extract ``url`` into a :class:`SourceListing` (no downloads)."""
+        """Flat-extract ``url`` into a :class:`SourceListing` (no downloads).
+
+        ``limit`` asks for a shallow listing of at most that many entries from
+        the first page (a light Refresh's check of the newest items).
+        """
         ...
 
     def fetch_item(

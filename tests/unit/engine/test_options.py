@@ -46,6 +46,27 @@ def test_listing_options_are_flat_and_download_nothing() -> None:
     assert params["writeinfojson"] is False
 
 
+def test_listing_params_limit_makes_the_listing_shallow() -> None:
+    """A light Refresh's first page: ``lazy_playlist`` stops the walk after ``playlistend``."""
+    shallow = listing_params({"proxy": "http://proxy:3128"}, limit=15)
+    assert shallow["lazy_playlist"] is True and shallow["playlistend"] == 15
+    assert shallow["extract_flat"] is True and shallow["proxy"] == "http://proxy:3128"
+    full = listing_params({})
+    assert full["lazy_playlist"] is False and "playlistend" not in full
+
+
+def test_engine_options_for_layers_config_and_feed_in_the_engine_adapter() -> None:
+    from copycast.adapters.engine.options import engine_options_for
+    from copycast.settings import get_settings
+
+    settings = get_settings(engine={"options": {"ratelimit": 100, "subtitleslangs": ["fr"]}})
+    merged = engine_options_for(settings, {"ratelimit": 5}, language="de-CH")
+    assert merged["ratelimit"] == 5 and merged["subtitleslangs"] == ["fr"]
+    assert merged["extractor_args"] == {"youtube": {"lang": ["de-CH"]}}
+    defaulted = engine_options_for(get_settings(), None, language=None)
+    assert defaulted["subtitleslangs"] == ["en", "-live_chat"] and "extractor_args" not in defaulted
+
+
 def test_strip_owned_drops_every_engine_owned_key() -> None:
     options = {key: 1 for key in ENGINE_OWNED_OPTIONS} | {"proxy": "p", "ratelimit": 5}
     assert strip_owned(options) == {"proxy": "p", "ratelimit": 5}

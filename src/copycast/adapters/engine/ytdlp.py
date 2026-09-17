@@ -127,11 +127,13 @@ class YtDlpEngine:
         options: Mapping[str, Any],
         cancel: CancelToken,
         log: EngineLog,
+        *,
+        limit: int | None = None,
     ) -> SourceListing:
         _check_cancel(cancel, f"listing of {url}")
         try:
             with cookie_scope(self._cookies_path, options) as with_cookies:
-                params = listing_params(with_cookies, log=log)
+                params = listing_params(with_cookies, log=log, limit=limit)
                 with yt_dlp.YoutubeDL(params) as ydl:
                     info = ydl.extract_info(url, download=False)
                     info = ydl.sanitize_info(info)

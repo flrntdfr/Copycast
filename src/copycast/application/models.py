@@ -136,6 +136,10 @@ class MirrorRead(_FeedReadBase):
     engine_options: dict[str, Any] = Field(default_factory=dict[str, Any])
     last_refresh_attempt_at: datetime | None = None
     last_refresh_success_at: datetime | None = None
+    last_light_refresh_at: datetime | None = Field(
+        default=None,
+        description="When a fetch of the Mirror Feed last checked the Source's newest items",
+    )
     last_error: str | None = None
     health: FeedHealth
     counts: CatalogCounts = Field(default_factory=CatalogCounts)

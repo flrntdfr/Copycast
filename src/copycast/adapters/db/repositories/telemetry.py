@@ -22,13 +22,20 @@ class TelemetryRepository:
     # ------------------------------------------------------------------ refresh runs
 
     async def start_refresh_run(
-        self, feed_id: str, *, trigger: JobTrigger, job_id: uuid.UUID | None = None
+        self,
+        feed_id: str,
+        *,
+        trigger: JobTrigger,
+        job_id: uuid.UUID | None = None,
+        light: bool = False,
     ) -> RefreshRun:
+        """One ``refresh_runs`` row in ``running``; ``light`` marks an inline feed-fetch run."""
         run = RefreshRun(
             feed_id=feed_id,
             job_id=job_id,
             trigger=trigger.value,
             status=RefreshRunStatus.running.value,
+            light=light,
         )
         self._session.add(run)
         await self._session.flush()

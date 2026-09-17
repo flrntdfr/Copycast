@@ -11,7 +11,7 @@ from copycast.domain.enums import ArchiveState, ListingOrder, Numbering, WantedR
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import item_id
 from tests.integration.storage.conftest import NOW, inbox_row, item_row, mirror_row, seed
-from tests.support.factories import listing, listing_item
+from tests.support.factories import EPOCH, listing, listing_item
 
 pytestmark = pytest.mark.integration
 
@@ -95,6 +95,58 @@ async def test_upsert_delists_absent_rows_only_for_non_empty_listings(
         assert result.new_count == 0
         back = await uow.catalog.by_source_key(feed_id, "urn:test:item:1")
         assert back is not None and back.listed is True
+
+
+async def test_partial_upsert_adds_and_refreshes_without_delisting_or_renumbering(
+    uow_factory: UnitOfWorkFactory,
+) -> None:
+    """A light Refresh's first page: known rows keep numbering, position, tab, archivability."""
+    feed_id = await _mirror(uow_factory)
+    async with uow_factory() as uow:
+        await uow.catalog.upsert_listing(feed_id, listing(3))
+        before = {r.source_key: r.last_listed_at for r in await uow.catalog.for_feed(feed_id)}
+    # The first page: one unseen item plus the newest known one, re-served with another
+    # number, position, tab and archivability, a new title and an exact date.
+    redated = EPOCH + timedelta(days=30)
+    page = listing(4).model_copy(
+        update={
+            "items": [
+                listing_item(4, published_at=EPOCH + timedelta(days=4), position=0, tab="videos"),
+                listing_item(
+                    3,
+                    published_at=redated,
+                    position=1,
+                    source_number=99,
+                    source_season=2,
+                    tab="shorts",
+                    archivable=False,
+                    title="Episode 3 (renamed)",
+                ),
+            ]
+        }
+    )
+    async with uow_factory() as uow:
+        result = await uow.catalog.upsert_listing(feed_id, page, partial=True)
+        assert (result.listed_count, result.new_count, result.delisted_count) == (2, 1, 0)
+        rows = await uow.catalog.for_feed(feed_id)
+        assert [(r.ordinal, r.source_key, r.listed) for r in rows] == [
+            (n, f"urn:test:item:{n}", True) for n in range(1, 5)
+        ], "nothing is delisted, the new item gets the next ordinal"
+        first, _second, third, fourth = rows
+        assert first.last_listed_at == before["urn:test:item:1"], "absent rows are untouched"
+        assert third.title == "Episode 3 (renamed)" and third.published_at == redated
+        assert third.published_at_approximate is False
+        assert third.last_listed_at is not None and third.last_listed_at > before[third.source_key]
+        assert (third.source_number, third.source_season, third.source_position) == (3, None, 0)
+        assert (third.tab, third.archivable) == (None, True), "a first page never re-tabs a row"
+        assert (fourth.source_number, fourth.source_position, fourth.tab) == (None, 0, "videos")
+    # The same page applied as a complete listing does delist and renumber.
+    async with uow_factory() as uow:
+        result = await uow.catalog.upsert_listing(feed_id, page)
+        assert (result.new_count, result.delisted_count) == (0, 2)
+        third = await uow.catalog.by_source_key(feed_id, "urn:test:item:3")
+        assert third is not None
+        assert (third.source_number, third.source_position, third.tab) == (99, 1, "shorts")
 
 
 async def test_upsert_refreshes_metadata_non_blank(uow_factory: UnitOfWorkFactory) -> None:

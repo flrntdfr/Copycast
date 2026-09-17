@@ -119,6 +119,7 @@ def mirror_read(
         engine_options=dict(feed.engine_options or {}),
         last_refresh_attempt_at=feed.last_refresh_attempt_at,
         last_refresh_success_at=feed.last_refresh_success_at,
+        last_light_refresh_at=feed.last_light_refresh_at,
         last_error=feed.last_error,
         health=feed_health(feed, counts),
         counts=counts,

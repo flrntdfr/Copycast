@@ -60,6 +60,7 @@ from copycast.application.services import inboxes as _inboxes
 from copycast.application.services import items as _items
 from copycast.application.services import jobs as _jobs
 from copycast.application.services import keys as _keys
+from copycast.application.services import light_refresh as _light_refresh
 from copycast.application.services import mirrors as _mirrors
 from copycast.application.services import policy as _policy
 from copycast.application.services import purge as _purge
@@ -71,6 +72,10 @@ from copycast.application.services.context import (
     ServiceContext,
 )
 from copycast.application.services.episodes import DeletedEpisode, delete_episode
+from copycast.application.services.light_refresh import (
+    LIGHT_REFRESH_DEADLINE_SECONDS,
+    LightRefreshResult,
+)
 from copycast.domain.enums import (
     ArchiveState,
     FeedKind,
@@ -209,6 +214,14 @@ class Services:
     ) -> SelectionResult:
         return await _mirrors.retry_failed(self.ctx, feed_id, trigger=trigger)
 
+    async def light_refresh(
+        self, feed_id: str, *, deadline_seconds: float = LIGHT_REFRESH_DEADLINE_SECONDS
+    ) -> LightRefreshResult:
+        """A fetch's inline check of the Source's newest items (not a capability; never raises)."""
+        return await _light_refresh.light_refresh(
+            self.ctx, feed_id, deadline_seconds=deadline_seconds
+        )
+
     # inboxes and requests
     async def create_inbox(self, body: InboxCreate) -> InboxRead:
         return await _inboxes.create_inbox(self.ctx, body)
@@ -303,6 +316,7 @@ def build_services(container: ServiceContext) -> Services:
 
 __all__ = [
     "DeletedEpisode",
+    "LightRefreshResult",
     "Services",
     "build_services",
     "delete_episode",

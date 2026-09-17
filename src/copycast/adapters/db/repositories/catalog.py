@@ -395,6 +395,7 @@ class CatalogRepository:
         *,
         now: datetime | None = None,
         wanted_reason: WantedReason | None = None,
+        partial: bool = False,
     ) -> ListingUpsert:
         """Apply a Source listing to the Catalog under ``SELECT ... FOR UPDATE`` on the feed.
 
@@ -403,6 +404,12 @@ class CatalogRepository:
         refreshed, rows absent from a non-empty listing are delisted. With
         ``wanted_reason`` every archivable item of the listing that is
         Available, deleted or failed becomes wanted (Requests use this).
+
+        ``partial`` applies a shallow listing (a light Refresh's first page):
+        nothing is delisted, and known rows keep their ``source_number``,
+        ``source_season``, ``source_position``, ``tab`` and ``archivable``;
+        only the coalesced text and duration fields, the published-at rule,
+        ``listed`` and ``last_listed_at`` are refreshed. New rows insert as usual.
         """
         now = now or utcnow()
         feed = (
@@ -470,7 +477,7 @@ class CatalogRepository:
             updates.append(_refresh_params(iid, entry, now))
         if updates:
             connection = await self._session.connection()
-            await connection.execute(_REFRESH_STMT, updates)
+            await connection.execute(_REFRESH_PARTIAL_STMT if partial else _REFRESH_STMT, updates)
 
         if wanted_reason is not None and updates:
             known_ids = [
@@ -496,7 +503,7 @@ class CatalogRepository:
                 wanted_ids.extend(result.scalars())
 
         delisted = 0
-        if items:
+        if items and not partial:
             result = await self._session.execute(
                 update(CatalogItem)
                 .where(
@@ -728,25 +735,26 @@ def _refresh_params(item_id: str, entry: SourceListingItem, now: datetime) -> di
 
 
 _T: Table = CatalogItem.__table__  # type: ignore[assignment]
-_REFRESH_STMT: Update = (
-    _T.update()
-    .where(_T.c.id == bindparam("b_id", type_=String))
-    .values(
+
+
+def _refresh_values() -> dict[str, Any]:
+    """The columns every listing refreshes on a known row (complete and partial alike)."""
+    return {
         # Non-blank overwrite: a missing value keeps what the Catalog already knows.
-        title=func.coalesce(bindparam("b_title", type_=Text), _T.c.title),
-        description=func.coalesce(bindparam("b_description", type_=Text), _T.c.description),
-        author=func.coalesce(bindparam("b_author", type_=Text), _T.c.author),
-        artwork_url=func.coalesce(bindparam("b_artwork_url", type_=Text), _T.c.artwork_url),
+        "title": func.coalesce(bindparam("b_title", type_=Text), _T.c.title),
+        "description": func.coalesce(bindparam("b_description", type_=Text), _T.c.description),
+        "author": func.coalesce(bindparam("b_author", type_=Text), _T.c.author),
+        "artwork_url": func.coalesce(bindparam("b_artwork_url", type_=Text), _T.c.artwork_url),
         # An exact date replaces what is stored; an approximate one (a flat YouTube
         # listing's, which drifts from Refresh to Refresh) only fills a blank.
-        published_at=case(
+        "published_at": case(
             (
                 bindparam("b_published_at_exact", type_=Boolean),
                 func.coalesce(bindparam("b_published_at", type_=TZDateTime), _T.c.published_at),
             ),
             else_=func.coalesce(_T.c.published_at, bindparam("b_published_at", type_=TZDateTime)),
         ),
-        published_at_approximate=case(
+        "published_at_approximate": case(
             (
                 and_(
                     bindparam("b_published_at_exact", type_=Boolean),
@@ -763,20 +771,34 @@ _REFRESH_STMT: Update = (
             ),
             else_=_T.c.published_at_approximate,
         ),
-        duration_seconds=func.coalesce(
+        "duration_seconds": func.coalesce(
             bindparam("b_duration_seconds", type_=Integer), _T.c.duration_seconds
         ),
-        source_url=func.coalesce(bindparam("b_source_url", type_=Text), _T.c.source_url),
+        "source_url": func.coalesce(bindparam("b_source_url", type_=Text), _T.c.source_url),
+        "listed": True,
+        "last_listed_at": bindparam("b_now", type_=TZDateTime),
+    }
+
+
+_REFRESH_STMT: Update = (
+    _T.update()
+    .where(_T.c.id == bindparam("b_id", type_=String))
+    .values(
+        **_refresh_values(),
         # Source numbering and position follow the listing as served.
         source_number=bindparam("b_source_number", type_=Integer),
         source_season=bindparam("b_source_season", type_=Integer),
         source_position=bindparam("b_source_position", type_=Integer),
         tab=bindparam("b_tab", type_=Text),
         archivable=bindparam("b_archivable", type_=Boolean),
-        listed=True,
-        last_listed_at=bindparam("b_now", type_=TZDateTime),
     )
 )
+"""A complete listing: numbering, position, tab and archivability follow the Source."""
+
+_REFRESH_PARTIAL_STMT: Update = (
+    _T.update().where(_T.c.id == bindparam("b_id", type_=String)).values(**_refresh_values())
+)
+"""A shallow (light Refresh) listing: a first page never renumbers, re-tabs or re-flags a row."""
 
 
 __all__ = ["CatalogRepository", "ItemSort", "ListingUpsert"]
