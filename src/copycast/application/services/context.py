@@ -83,6 +83,8 @@ class FeedRow(Protocol):
     def last_refresh_success_at(self) -> datetime | None: ...
     @property
     def last_error(self) -> str | None: ...
+    @property
+    def last_light_refresh_at(self) -> datetime | None: ...
 
     title: str
     title_override: str | None
@@ -333,6 +335,7 @@ class FeedRepositoryPort(Protocol):
     async def ensure_default_inbox(self, title: str = ...) -> FeedRow: ...
     async def bump_revision(self, feed_id: str) -> int: ...
     async def recount_storage(self, feed_id: str) -> int: ...
+    async def set_light_refresh_at(self, feed_id: str, at: datetime | None = None) -> None: ...
     async def apply_metadata(
         self,
         feed_id: str,
@@ -403,6 +406,7 @@ class CatalogRepositoryPort(Protocol):
         *,
         now: datetime | None = None,
         wanted_reason: WantedReason | None = None,
+        partial: bool = False,
     ) -> ListingUpsertResult: ...
     async def set_wanted(self, item_ids: Iterable[str], reason: WantedReason) -> Sequence[str]: ...
     async def fill_metadata(
@@ -541,7 +545,12 @@ class ApiKeyRepositoryPort(Protocol):
 
 class TelemetryRepositoryPort(Protocol):
     async def start_refresh_run(
-        self, feed_id: str, *, trigger: JobTrigger, job_id: uuid.UUID | None = None
+        self,
+        feed_id: str,
+        *,
+        trigger: JobTrigger,
+        job_id: uuid.UUID | None = None,
+        light: bool = False,
     ) -> RefreshRunRow: ...
     async def finish_refresh_run(
         self,
@@ -662,6 +671,25 @@ class SourceSnapshot:
         return self.candidate.source_kind
 
 
+@dataclass(frozen=True, slots=True)
+class RssFetch:
+    """One conditional GET of an RSS Source (a light Refresh's listing).
+
+    ``not_modified`` marks a 304: ``listing``, ``body`` and ``channel_xml`` are
+    then None and ``etag``/``last_modified`` carry what the Source answered or
+    what was sent. Otherwise ``listing`` is the document's complete listing
+    (first page only), ``body`` the verbatim bytes for ``source/feed.xml`` and
+    ``channel_xml`` the ``<rss>`` root minus items.
+    """
+
+    not_modified: bool
+    listing: SourceListing | None
+    body: bytes | None = None
+    etag: str | None = None
+    last_modified: str | None = None
+    channel_xml: str | None = None
+
+
 class SourceGateway(Protocol):
     """Probing, searching and Source snapshots; every method is synchronous and blocking."""
 
@@ -676,6 +704,17 @@ class SourceGateway(Protocol):
         self, url: str, *, options: Mapping[str, Any], language: str | None
     ) -> SourceListingItem | None: ...
     def save_snapshot(self, feed_id: str, snapshot: SourceSnapshot) -> None: ...
+    def fetch_rss(self, url: str, *, etag: str | None, last_modified: str | None) -> RssFetch: ...
+    def list_shallow(
+        self,
+        url: str,
+        *,
+        options: Mapping[str, Any],
+        language: str | None,
+        cancel: CancelToken,
+        limit: int,
+    ) -> SourceListing: ...
+    def save_rss_snapshot(self, feed_id: str, body: bytes) -> None: ...
 
 
 class PublicUrls(Protocol):
@@ -741,6 +780,7 @@ __all__ = [
     "RequestRepositoryPort",
     "RequestRow",
     "RowFactory",
+    "RssFetch",
     "ServiceContext",
     "SourceGateway",
     "SourceSnapshot",

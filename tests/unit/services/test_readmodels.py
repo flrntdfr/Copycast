@@ -74,6 +74,7 @@ def mirror_row(**overrides: Any) -> Any:
         "last_autoprune_at": None,
         "last_refresh_attempt_at": NOW,
         "last_refresh_success_at": NOW,
+        "last_light_refresh_at": None,
         "last_error": None,
     }
     fields.update(overrides)

@@ -2,8 +2,9 @@
 
 ``GET|HEAD /feeds/{id}.xml`` serves the rendered feed from a cache keyed by
 ``(feed_id, revision)`` with a weak ETag, ``Last-Modified`` and RFC 9110
-conditionals; a GET of a Mirror queues a ``feed_fetch`` Refresh in a
-background task (the service applies the follow / Paused / cooldown rules).
+conditionals; a GET of a Mirror first runs a light Refresh inline
+(``services.light_refresh``: the Source's newest items within a short deadline
+and a cooldown, never a wait on the worker) so new items are in the answer.
 ``/feeds/{id}/media/{item_id}.{ext}`` is a ``FileResponse`` (Range 206/416,
 strong ETag) counted as a download only on a GET without Range or with a
 Range starting at byte 0. ``/feeds/{id}/assets/{basename}`` is matched
@@ -33,7 +34,8 @@ from copycast.adapters.api.deps import ContainerDep, FeedCacheDep, ServicesDep
 from copycast.adapters.api.problems import problem_response
 from copycast.application.models import ItemRead
 from copycast.application.services import Services
-from copycast.domain.enums import ArchiveState, FeedKind, JobStatus, JobTrigger
+from copycast.application.services.light_refresh import LIGHT_REFRESH_DEADLINE_SECONDS
+from copycast.domain.enums import ArchiveState, FeedKind, JobTrigger
 from copycast.domain.exceptions import Conflict, Unsupported
 from copycast.domain.urls import COPYCAST_ARTWORK_PATH
 from copycast.logging import get_logger
@@ -48,10 +50,9 @@ PLACEHOLDER_EXT = "mp3"
 ON_DEMAND_WAIT_SECONDS = 120.0
 ON_DEMAND_POLL_SECONDS = 2.0
 ON_DEMAND_RETRY_AFTER = 30
-FEED_FETCH_WAIT_SECONDS = 20.0
-FEED_FETCH_POLL_SECONDS = 0.5
-ACTIVE_JOB_STATUSES = frozenset({JobStatus.queued, JobStatus.running})
 ASSET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+# LIGHT_REFRESH_DEADLINE_SECONDS (8 s, imported from the service) is a module global here so
+# tests can patch how long a fetch waits on the Source; feed_xml passes it on every call.
 
 
 def http_date(value: datetime) -> str:
@@ -99,24 +100,6 @@ async def _is_file(path: Path) -> bool:
     return await asyncio.to_thread(path.is_file)
 
 
-async def _refresh_and_wait(services: Services, feed_id: str) -> bool:
-    """Queue a feed-fetch Refresh and wait for it (up to the cap); True when one ran."""
-    try:
-        job = await services.request_refresh(feed_id, JobTrigger.feed_fetch)
-    except Exception as exc:  # a fetch must never fail because of the Refresh
-        log.warning("feed.fetch_refresh_failed", feed_id=feed_id, error=str(exc))
-        return False
-    if job is None:
-        return False
-    deadline = asyncio.get_running_loop().time() + FEED_FETCH_WAIT_SECONDS
-    while asyncio.get_running_loop().time() < deadline:
-        current = await services.get_job(job.id)
-        if current.status not in ACTIVE_JOB_STATUSES:
-            return True
-        await asyncio.sleep(FEED_FETCH_POLL_SECONDS)
-    return True
-
-
 async def _safe_count(services: Services, feed_id: str, item_id: str) -> None:
     try:
         await services.record_download(feed_id, item_id)
@@ -152,10 +135,12 @@ async def feed_xml(
     head = await container.renderer.head(feed_id)
     if head is None:
         return problem_response(request, status=404, slug="not-found", detail="feed not found")
-    # Pull to refresh: a client's fetch runs a Refresh and, within reason, waits for it
-    # so new Episodes are in the answer; the cooldown keeps crawlers from hammering it.
-    pull = request.method == "GET" and head.kind is FeedKind.mirror and not head.paused
-    if pull and await _refresh_and_wait(services, feed_id):
+    # A light Refresh: a client's fetch checks the Source's newest items inline (RSS: one
+    # conditional GET; a channel: its first page; a playlist: the full Refresh is queued
+    # instead) so new items are in the answer; the cooldown keeps crawlers from hammering
+    # the Source, the deadline keeps the feed served whatever the Source does.
+    if request.method == "GET" and head.kind is FeedKind.mirror and not head.paused:
+        await services.light_refresh(feed_id, deadline_seconds=LIGHT_REFRESH_DEADLINE_SECONDS)
         head = await container.renderer.head(feed_id) or head
     entry = await _cached_feed(container, cache, feed_id, head.revision)
     if entry is None:

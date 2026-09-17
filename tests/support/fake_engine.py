@@ -54,6 +54,7 @@ class FetchRecord:
 class ListingRecord:
     url: str
     options: dict[str, Any]
+    limit: int | None = None
 
 
 @dataclass
@@ -131,10 +132,12 @@ class FakeEngine:
         options: Mapping[str, Any],
         cancel: CancelToken,
         log: EngineLog,
+        *,
+        limit: int | None = None,
     ) -> SourceListing:
         opts = dict(options)
         with self._lock:
-            self.records.listings.append(ListingRecord(url=url, options=opts))
+            self.records.listings.append(ListingRecord(url=url, options=opts, limit=limit))
             self.records.options_seen.append(opts)
             failure = self._failures.pop(0) if self._failures else None
             listing = self._listings.get(url) or self._listings.get(url.rstrip("/"))
@@ -147,6 +150,9 @@ class FakeEngine:
             listing = self._default_listing
         if listing is None:
             raise EngineError(f"FakeEngine has no scripted listing for {url}")
+        if limit is not None and len(listing.items) > limit:
+            # A shallow listing: the first ``limit`` entries as served.
+            listing = listing.model_copy(update={"items": listing.items[:limit]})
         log.info(f"listed {url}: {len(listing.items)} items")
         return listing
 

@@ -25,7 +25,7 @@ from copycast.application.models import (
     YouTubePlaylist,
 )
 from copycast.application.ports import CancelToken, Engine
-from copycast.application.services.context import ServiceContext, SourceSnapshot
+from copycast.application.services.context import RssFetch, ServiceContext, SourceSnapshot
 from copycast.application.services.sources import WATCH_LATER_URL
 from copycast.domain.enums import (
     ArchiveState,
@@ -38,7 +38,7 @@ from copycast.domain.enums import (
     SourceKind,
 )
 from copycast.domain.exceptions import EngineUnavailable
-from copycast.domain.listing import SourceListingItem
+from copycast.domain.listing import SourceListing, SourceListingItem
 from copycast.domain.urls import youtube_playlist_id
 from copycast.logging import get_logger
 from copycast.settings import Settings, SettingsError, get_settings
@@ -59,10 +59,10 @@ PLAYLISTS_URL = "https://www.youtube.com/feed/playlists"
 
 
 class _SearchLog:
-    """The ``EngineLog`` a search listing writes to: structlog, one line per level."""
+    """The ``EngineLog`` an api-side listing (a search, a light Refresh) writes to: structlog."""
 
-    def __init__(self) -> None:
-        self._log = get_logger("copycast.search")
+    def __init__(self, name: str = "copycast.search") -> None:
+        self._log = get_logger(name)
 
     def debug(self, message: str) -> None:
         self._log.debug(message)
@@ -188,6 +188,51 @@ class SourceGatewayAdapter:
             write_atomic(self._layout.source_xml_path(feed_id), snapshot.body)
         elif snapshot.listing.raw is not None:
             write_json_atomic(self._layout.source_listing_path(feed_id), snapshot.listing.raw)
+
+    # ------------------------------------------------------------------ light Refresh
+
+    def fetch_rss(self, url: str, *, etag: str | None, last_modified: str | None) -> RssFetch:
+        """One conditional GET of an RSS Source, first page only; a 304 is ``not_modified``."""
+        fetch_feed = _load("copycast.adapters.sources.rss", "fetch_feed")
+        to_xml = _load("copycast.adapters.sources.rss", "channel_xml")
+        fetched = fetch_feed(url, etag=etag, last_modified=last_modified, follow_next=False)
+        if fetched.not_modified or fetched.parsed is None:
+            return RssFetch(
+                True,
+                None,
+                etag=fetched.etag or etag,
+                last_modified=fetched.last_modified or last_modified,
+            )
+        return RssFetch(
+            False,
+            fetched.parsed.listing,
+            body=fetched.body,
+            etag=fetched.etag,
+            last_modified=fetched.last_modified,
+            channel_xml=to_xml(fetched.parsed),
+        )
+
+    def list_shallow(
+        self,
+        url: str,
+        *,
+        options: Mapping[str, Any],
+        language: str | None,
+        cancel: CancelToken,
+        limit: int,
+    ) -> SourceListing:
+        """The first ``limit`` entries of a yt-dlp Source; options merged like the worker's."""
+        engine_options_for = _load("copycast.adapters.engine.options", "engine_options_for")
+        merged = engine_options_for(self._settings, options, language=language)
+        return self._engine.list_source(
+            url, merged, cancel, _SearchLog("copycast.light_refresh"), limit=limit
+        )
+
+    def save_rss_snapshot(self, feed_id: str, body: bytes) -> None:
+        """``source/feed.xml`` verbatim (the archive job re-parses it for an item's element)."""
+        write_atomic = _load("copycast.adapters.storage.atomic", "write_atomic")
+        self._layout.ensure_feed_dirs(feed_id)
+        write_atomic(self._layout.source_xml_path(feed_id), body)
 
     @staticmethod
     def _snapshot(entry: ProbeEntry) -> SourceSnapshot:

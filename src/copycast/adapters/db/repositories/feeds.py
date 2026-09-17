@@ -248,6 +248,13 @@ class FeedRepository:
         )
         await self._refresh_if_loaded(feed_id)
 
+    async def set_light_refresh_at(self, feed_id: str, at: datetime | None = None) -> None:
+        """Stamp the light Refresh a feed fetch just ran (its own cooldown, not the schedule's)."""
+        await self._session.execute(
+            update(Feed).where(Feed.id == feed_id).values(last_light_refresh_at=at or utcnow())
+        )
+        await self._refresh_if_loaded(feed_id)
+
     async def set_refresh_outcome(
         self, feed_id: str, *, success_at: datetime | None, error: str | None
     ) -> None:
