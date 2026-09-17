@@ -57,7 +57,7 @@ database_url = "postgresql+psycopg://copycast:copycast@localhost:5432/copycast" 
 
 [refresh]
 # interval_hours: ignored since 1.2; the Refresh interval is a Settings-page default
-fetch_cooldown_minutes = 5      # minimum gap between feed-fetch-triggered Refreshes
+fetch_cooldown_minutes = 5      # a feed fetch skips its Light Refresh this soon after any Refresh
 concurrency            = 2      # parallel engine jobs in the worker
 
 [engine]
@@ -196,10 +196,19 @@ actions are the `archive_available` and `retry_failed` tools and routes. Over MC
 `update_mirror` refuse Rolling and expiring Automatic modes without a `full` key. Latest N
 stays on Mirrors that already use it but is no longer offered ([ADR 0012](adr/0012-mirror-modes-rolling-and-automatic.md)).
 
-An Automatic Mirror's feed lists every item the Source lists; the ones not archived yet carry
-a placeholder `.mp3` enclosure whose length is estimated from the duration at 128 kbit/s
-(apps refuse 0-byte enclosures), and the media route serves the real file (any container)
-under that URL once archived.
+An Automatic Mirror's feed lists every item the Source lists, archived or not, and an item
+keeps one media URL for its whole life: `/feeds/{id}/media/{item}.{public_ext}`, where
+`public_ext` is fixed when the item is first listed (`m4a` for an Engine Source; for an RSS
+Source the enclosure's MIME type, else its URL's extension, else `mp3`) and never rewritten,
+whatever container the archive produces. Podcast apps treat a changed enclosure URL as a new
+file and download it again on every device, which is what 1.2 caused by advertising `.mp3`
+before the archive and `.m4a` after it. Until the item is archived the enclosure's `type`
+follows `public_ext` and its `length` is estimated from the duration at 128 kbit/s (apps
+refuse 0-byte enclosures); once archived it carries the real MIME type and size. The media
+route serves the file under that URL, under the archived file's own extension and, for an
+Automatic feed only, under the `.mp3` placeholder URL 1.2 advertised, so apps that still hold
+it keep working. `public_ext` is written to `feed.json` and survives a rebuild; migration
+0010 sets it for rows that existed before.
 
 ## YouTube dates and descriptions
 
@@ -213,12 +222,24 @@ exact one does, and archiving fills in the download's own date. While a date is 
 Catalog shows it as "≈ 3 weeks ago" and the feed's show notes open with "Published about 3
 weeks ago (approximate date from YouTube; exact once downloaded)".
 
-## Pull to refresh, directory links and playlists
+## Light Refresh on fetch, directory links and playlists
 
-- **Pull to refresh.** A podcast app fetching a Mirror Feed queues a Refresh and waits for it
-  (up to 20 s) before answering, so the new Episodes are in that very answer; within the
-  cooldown (`refresh.fetch_cooldown_minutes`, 5 by default) the feed answers at once. Paused
-  Mirrors never refresh on a fetch.
+- **Light Refresh on fetch.** A `GET` of a Mirror Feed first checks the Source's newest items
+  inline, in the api, so they are in that very answer; nothing is queued for the worker and
+  nothing waits on it. What is checked depends on the Source: an RSS Source gets one
+  conditional GET (`ETag`/`Last-Modified`; a 304 changes nothing, a 200 is a complete listing
+  that may Delist), a YouTube channel or any other Engine Source a shallow listing of its first
+  fifteen entries that adds and re-dates items but never Delists or renumbers, and a YouTube
+  playlist (listed oldest first, so a first page is not its newest items) queues the normal
+  full Refresh instead and answers at once. After a listing the policy runs as in a Refresh and
+  archive jobs are queued for what it wants; the feed's ETag moves only when something changed.
+  The check is skipped while the Mirror is Paused and within the cooldown
+  (`refresh.fetch_cooldown_minutes`, 5 by default) after any Refresh, full or light; it is
+  capped at 8 s, after which the feed is served as it is and the run is recorded as failed. A
+  Source error never degrades the feed either. `HEAD` requests and Inbox feeds never check.
+  The Mirror header shows *Checked on fetch*; the runs are `refresh_runs` rows flagged `light`
+  and never touch the Mirror's health, `last_error` or its last-Refresh stamps. Only a full
+  Refresh (scheduled or *Refresh now*) Delists a channel's items.
 - **Apple Podcasts and Spotify links.** Pasting a `podcasts.apple.com` link resolves the feed
   through Apple's lookup API; an `open.spotify.com/show/…` link is resolved by the show's name
   through Apple's directory (an exact match is used, otherwise every hit is a candidate to pick
@@ -393,13 +414,13 @@ the engine tests, and pushes the lock change to `main`; `image.yml` then builds 
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
-| `1.2.1` | yes, on every engine bump | "the current 1.2.1" |
-| `1.2.1-yt2026.8.19` | never | exactly this app + engine combination |
+| `1.3.0` | yes, on every engine bump | "the current 1.3.0" |
+| `1.3.0-yt2026.8.19` | never | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
 Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. To roll back an engine
 that broke a site, pin the previous immutable tag in `.env`
-(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:1.2.1-yt<previous>`) or in the kustomize overlay
+(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:1.3.0-yt<previous>`) or in the kustomize overlay
 (`images[].newTag`), and `docker compose up -d` / `kubectl apply -k`. The About page and
 `copycast --version` show which engine is running; `jobs.engine_version` records which engine
 archived each item.
@@ -425,7 +446,17 @@ To bump something by hand: `uv add "name==x.y.z"` (never edit the `==` pin witho
 ## Logs and events
 
 Both processes log structured lines (JSON in the image) with `process`, `request_id`
-(echoed as `X-Request-ID`), `job_id`, `mirror_id` and `inbox_id` bound where applicable;
-health-check access lines are suppressed. Job progress and state changes are also streamed
-to the UI over `GET /api/events` (SSE) and stored per job in `job_log_lines` for the Jobs
-page.
+(echoed as `X-Request-ID`), `job_id`, `mirror_id` and `inbox_id` bound where applicable.
+Job progress and state changes are also streamed to the UI over `GET /api/events` (SSE) and
+stored per job in `job_log_lines` for the Jobs page.
+
+The api writes its own request log (uvicorn's access log is off): one `http.request` line
+per request, emitted once the last body byte went out, with `method`, `path`, `query` (null
+when empty), `status`, `duration_ms`, `bytes` (body bytes sent, after compression),
+`content_length` (the response header, when set), `client_ip` (the first hop of
+`X-Forwarded-For`, else the socket peer), `forwarded_for` (the raw header), `user_agent`,
+`range`, `request_id` and `completed` (false when the response never finished: an unhandled
+exception is logged as `status=500`, a client that went away with the status it got).
+Requests under `/healthz/` are never logged; `Authorization` and usernames never appear. A
+fetch that ran a Light Refresh also logs one `light_refresh.done` line (`feed_id`, `status`,
+`kind`, `new`, `wanted`, `enqueued`, `duration_ms`).

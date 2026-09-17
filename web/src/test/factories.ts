@@ -55,6 +55,7 @@ export function mirror(overrides: Partial<MirrorRead> = {}): MirrorRead {
     engine_options: {},
     last_refresh_attempt_at: "2024-01-15T09:00:00Z",
     last_refresh_success_at: "2024-01-15T09:00:00Z",
+    last_light_refresh_at: null,
     last_error: null,
     health: { status: "ok", reason: null },
     counts: { listed: 3, available: 2, delisted: 0, wanted: 0, archived: 3, failed: 0 },

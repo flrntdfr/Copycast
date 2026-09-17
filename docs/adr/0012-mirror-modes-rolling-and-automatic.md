@@ -1,6 +1,6 @@
 # 0012 Mirror modes: Rolling windows and Automatic archives narrow ADR 0009
 
-Status: accepted
+Status: accepted; amended by ADR 0013 (the enclosure URL is fixed at listing time)
 
 ## Context
 
@@ -38,4 +38,6 @@ Inbox's Retention.
 - An Automatic Mirror's feed advertises a placeholder `.mp3` enclosure for items not
   archived yet, with a length estimated at 128 kbit/s from the duration (podcast apps refuse
   0-byte enclosures); the media route accepts that extension and serves whatever container
-  the archive produced.
+  the archive produced. *Amended by [ADR 0013](0013-light-refresh-on-fetch-and-stable-media-urls.md):
+  the URL is now fixed at listing time (`public_ext`) and never changes once archived; the
+  `.mp3` placeholder URL is still served for Automatic feeds.*

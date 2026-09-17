@@ -73,11 +73,12 @@ TLS in front first: HTTP Basic without it is not a gate. With a password set:
 4. Copy the feed URL into your podcast app. It answers immediately; episodes appear as they
    are archived, with live progress in the UI.
 
-Mirrors refresh on a schedule (daily by default) and whenever your podcast app polls the feed
-while Following (throttled by a cooldown). Episodes the Source drops stay in your feed —
-that is the point. **Pause** stops downloads without touching the archive; **Delete** removes
-a Mirror and its files for good, and is the only thing that ever deletes from a Mirror
-([ADR 0009](docs/adr/0009-never-delete-tombstones.md)).
+Mirrors refresh on a schedule (daily by default), and whenever your podcast app fetches the
+feed Copycast checks the Source's newest items right there (a Light Refresh: a few seconds
+at most, throttled by a cooldown), so they are in that very answer. Episodes the Source drops
+stay in your feed — that is the point. **Pause** stops downloads without touching the
+archive; **Delete** removes a Mirror and its files for good, and is the only thing that ever
+deletes from a Mirror ([ADR 0009](docs/adr/0009-never-delete-tombstones.md)).
 
 ### Inboxes
 

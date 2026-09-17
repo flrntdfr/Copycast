@@ -23,6 +23,7 @@ import { Artwork } from "@/components/common/Artwork";
 import { FeedCredentials } from "@/components/common/FeedCredentials";
 import { FeedUrlField } from "@/components/common/FeedUrlField";
 import { HealthDot } from "@/components/common/HealthDot";
+import { RelativeTime } from "@/components/common/RelativeTime";
 import { ServiceBadge } from "@/components/common/ServiceBadge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -148,7 +149,7 @@ function EditableTitle({ mirror }: { mirror: MirrorRead }) {
   );
 }
 
-/** Artwork, title, Service, Source link, health, counts and the feed URL; Refresh / Pause / menu. */
+/** Artwork, title, Service, Source link, health, the last Light Refresh, counts and the feed URL; Refresh / Pause / menu. */
 export function MirrorHeader({ mirror, refreshing }: { mirror: MirrorRead; refreshing: boolean }) {
   const refresh = useRequestRefresh();
   const { setPaused, isPending: pausing } = useSetPaused();
@@ -179,6 +180,19 @@ export function MirrorHeader({ mirror, refreshing }: { mirror: MirrorRead; refre
           </a>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
             <HealthDot mirror={mirror} refreshing={refreshing} withText />
+            {mirror.last_light_refresh_at ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-muted-foreground">
+                    Checked on fetch <RelativeTime value={mirror.last_light_refresh_at} />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  A podcast app fetched the feed and Copycast checked the Source's newest items
+                  right there (a Light Refresh)
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
             <span className="text-muted-foreground tabular-nums">
               {count(mirror.episode_count ?? 0, "Episode")}
               {counts ? ` · ${formatNumber(counts.available ?? 0)} Available` : ""}

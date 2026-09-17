@@ -81,7 +81,7 @@ The Backfill mode that keeps exactly the newest N items by publication archived:
 _Avoid_: Sliding window, keep-last, FIFO
 
 **Automatic**:
-The Backfill mode that archives nothing ahead of time: the Mirror Feed lists every item the Source lists, an Episode is archived when a podcast app first asks for its media (the request waits up to two minutes, then says retry), and it expires after the Mirror's Retention.
+The Backfill mode that archives nothing ahead of time: the Mirror Feed lists every item the Source lists, an Episode is archived when a podcast app first asks for its media (the request waits up to two minutes, then says retry), and it expires after the Mirror's Retention. An item's media URL is fixed when it is first listed (`public_ext`) and never changes once archived, whatever container the archive got, so no app downloads an Episode twice.
 _Avoid_: Lazy, on-demand mode (say "archived on demand" for the act), streaming
 
 **Follow**:
@@ -89,8 +89,12 @@ The part of a Mirror's policy that says whether items the Source lists after cre
 _Avoid_: Auto-download, subscribe, track (that is what a Mirror does with a Source)
 
 **Refresh**:
-The recurring act of checking a Source for new items and archiving what the policy wants. Triggered by schedule, by a manual action, or by a fetch of the Mirror Feed (only when Following, not Paused, and outside a cooldown; asynchronously — serving the feed is never delayed). A failed Refresh never degrades the Mirror Feed; the Mirror keeps serving what it has.
+The recurring act of listing a Source in full, adding, re-dating and Delisting Catalog items, and archiving what the policy wants. Run by the worker on a schedule or on a manual action; a fetch of the Mirror Feed runs a Light Refresh instead (a playlist Source queues a full Refresh from it) and serving the feed never waits on the worker. A failed Refresh never degrades the Mirror Feed; the Mirror keeps serving what it has.
 _Avoid_: Sync, update, poll
+
+**Light Refresh**:
+A fetch-triggered check of a Source's newest items, run inline by the api while it answers a `GET` of a Mirror Feed: an RSS Source gets one conditional GET (a complete listing when it changed), a channel a shallow first-page listing that adds and re-dates items but never Delists or renumbers, a playlist a queued full Refresh. Skipped while Paused or within the cooldown of any Refresh, capped at 8 s, never a wait on the worker; it archives what the policy wants like a Refresh, stamps `last_light_refresh_at` and leaves the Mirror's health and last-Refresh stamps alone.
+_Avoid_: Quick refresh, pull to refresh, poll, sync
 
 **Paused**:
 The state of a Mirror that no longer Refreshes but keeps serving its Mirror Feed and archived Episodes. The only way to stop a Mirror without destroying its archive.
@@ -236,3 +240,4 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0010](docs/adr/0010-download-counting-rule.md) | What counts as a download |
 | [0011](docs/adr/0011-optional-authentication-for-direct-deployments.md) | Optional authentication: operator password, feed credentials, MCP API keys |
 | [0012](docs/adr/0012-mirror-modes-rolling-and-automatic.md) | Mirror modes: Rolling windows and Automatic archives narrow ADR 0009 |
+| [0013](docs/adr/0013-light-refresh-on-fetch-and-stable-media-urls.md) | A feed fetch runs a Light Refresh inline; media URLs are fixed at listing time; the api logs its own requests |

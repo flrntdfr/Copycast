@@ -16,6 +16,7 @@ const feed = mirror({
   episode_count: 3,
   counts: { listed: 3, available: 2, delisted: 1, wanted: 0, archived: 3, failed: 0 },
   engine_options: { format: "bestaudio" },
+  last_light_refresh_at: "2024-01-15T09:30:00Z",
 });
 
 function handlers(calls: { method: string; path: string; body?: unknown }[] = []) {
@@ -124,6 +125,7 @@ describe("Mirror page", () => {
     expect(await screen.findByRole("heading", { name: "Example Podcast" })).toBeInTheDocument();
     expect(screen.getByText("Podcast RSS")).toBeInTheDocument();
     expect(screen.getByText(/Refreshed .* ago/)).toBeInTheDocument();
+    expect(screen.getByText(/Checked on fetch/)).toHaveTextContent(/Checked on fetch .* ago/);
     expect(screen.getByText(/3 Episodes · 2 Available · 1 Delisted · 12.3 MB/)).toBeInTheDocument();
     expect(screen.getByLabelText("Mirror Feed URL")).toHaveValue(feed.feed_url);
     expect(await screen.findByText("First")).toBeInTheDocument();
