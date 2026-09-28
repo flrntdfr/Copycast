@@ -14,7 +14,7 @@ ARG APP_VERSION=1.2.1
 ARG ENGINE_VERSION=unknown
 
 # ---- web -------------------------------------------------------------------------------
-FROM node:22.23.2-alpine3.24@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS web
+FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS web
 WORKDIR /web
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml web/openapi.json ./
 RUN corepack enable && corepack prepare pnpm@11.25.0 --activate \
