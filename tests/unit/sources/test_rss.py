@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 import pytest
 from lxml import etree
 
@@ -253,6 +254,27 @@ def test_fetch_feed_conditional_and_paging(origin: Origin) -> None:
     assert [i.position for i in paged.parsed.listing.items] == [0, 1, 2, 3]
     assert paged.parsed.items["urn:paged:episode:3"].findtext("title") == "Page one, episode 3"
     assert paged.body == first.body  # the stored body is page one
+
+
+def test_fetch_feed_caps_the_first_page_with_the_callers_timeout() -> None:
+    document = (
+        b'<rss version="2.0"><channel><title>t</title><item><guid>urn:t:1</guid>'
+        b'<enclosure url="https://x/1.mp3" type="audio/mpeg"/></item></channel></rss>'
+    )
+    seen: list[dict[str, float | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(dict(request.extensions["timeout"]))
+        return httpx.Response(
+            200,
+            content=document,
+            headers={"Content-Type": "application/rss+xml"},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        fetched = fetch_feed("https://x/feed.xml", client=client, timeout=1.5)
+    assert fetched.parsed is not None and len(fetched.parsed.listing.items) == 1
+    assert seen == [{"connect": 1.5, "read": 1.5, "write": 1.5, "pool": 1.5}]
 
 
 def test_fetch_feed_stops_after_max_pages_and_on_bad_pages(origin: Origin) -> None:

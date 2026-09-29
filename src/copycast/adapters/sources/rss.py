@@ -296,12 +296,14 @@ def fetch_feed(
     last_modified: str | None = None,
     follow_next: bool = False,
     max_pages: int = MAX_PAGES,
+    timeout: float | None = None,
 ) -> FeedFetch:
     """GET and parse an RSS Source, optionally walking ``atom:link rel="next"`` pages.
 
     A 304 yields ``not_modified=True`` with no body. Later pages extend the
     first page's items (deduplicated, positions continuing); the stored body
-    and channel come from the first page only.
+    and channel come from the first page only. ``timeout`` caps the first
+    page's request (see :func:`fetch`).
     """
     first = fetch(
         url,
@@ -310,6 +312,7 @@ def fetch_feed(
         etag=etag,
         last_modified=last_modified,
         accept=FEED_ACCEPT,
+        timeout=timeout,
     )
     if first.not_modified:
         return FeedFetch(url, first.url, True, None, first.etag, first.last_modified, None)

@@ -12,7 +12,10 @@ jobs are queued for what it wants.
 
 It never delays the feed for long (:data:`LIGHT_REFRESH_DEADLINE_SECONDS`)
 and never raises to the route: every failure is logged and returned as
-``status="failed"``. ``last_refresh_attempt_at``, ``last_refresh_success_at``
+``status="failed"``. Listings run on their own bounded thread pool
+(:data:`LIGHT_LISTING_THREADS`), never on the loop's default executor that
+serves media and exports descriptors, so a Source that hangs stalls light
+Refreshes only. ``last_refresh_attempt_at``, ``last_refresh_success_at``
 and ``last_error`` belong to the full Refresh and are never touched here; the
 light Refresh has its own stamp, ``last_light_refresh_at``, and its runs are
 ``refresh_runs`` rows flagged ``light``.
@@ -22,8 +25,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import time
 from collections.abc import AsyncGenerator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -37,7 +42,6 @@ from copycast.application.services.context import (
     UnitOfWorkPort,
 )
 from copycast.application.services.defaults import effective, load_defaults
-from copycast.application.services.feeds import require_mirror
 from copycast.application.services.items import (
     PRIORITY_BACKFILL,
     PRIORITY_FOLLOW,
@@ -51,12 +55,14 @@ from copycast.application.services.retry import retry_concurrent
 from copycast.domain.enums import (
     ArchiveState,
     DeleteReason,
+    FeedKind,
     JobTrigger,
     ListingOrder,
     RefreshRunStatus,
     SourceKind,
     WantedReason,
 )
+from copycast.domain.exceptions import NotFound
 from copycast.domain.listing import SourceListing
 from copycast.domain.urls import youtube_playlist_id
 from copycast.logging import get_logger
@@ -67,6 +73,8 @@ LIGHT_REFRESH_DEADLINE_SECONDS = 8.0
 """How long a fetch waits for the Source before the feed is served as it is."""
 LIGHT_LISTING_LIMIT = 15
 """Entries of a yt-dlp Source's first page a light Refresh asks for."""
+LIGHT_LISTING_THREADS = 4
+"""Light listings in flight per process; the rest wait for a slot within their deadline."""
 
 Status = Literal["skipped", "unchanged", "succeeded", "queued", "failed"]
 Kind = Literal["unchanged", "complete", "partial", "queued"]
@@ -130,6 +138,30 @@ def locked_feed_ids() -> list[str]:
     return sorted(_locks)
 
 
+# --------------------------------------------------------------------------- listing pool
+
+_executor: ThreadPoolExecutor | None = None
+
+
+def listing_executor() -> ThreadPoolExecutor:
+    """The bounded pool light listings run on, created on first use.
+
+    Not the loop's default executor: a timed-out listing keeps its thread until
+    the Source answers (the RSS fetch is capped by the deadline, yt-dlp checks
+    the cancel token only before and after ``extract_info``), and that default
+    pool also serves media, descriptor exports and probes. Here a pile-up of
+    slow Sources (an OPML import against a stalled origin) makes further light
+    Refreshes wait for a slot inside their own deadline and fail at it, feeds
+    still served, while everything else keeps its threads.
+    """
+    global _executor
+    if _executor is None:
+        _executor = ThreadPoolExecutor(
+            max_workers=LIGHT_LISTING_THREADS, thread_name_prefix="light-refresh"
+        )
+    return _executor
+
+
 # --------------------------------------------------------------------------- plan and listing
 
 
@@ -151,6 +183,8 @@ class _Listed:
     kind: Kind
     listing: SourceListing | None = None
     rss: RssFetch | None = None
+    changed: bool = True
+    """A complete RSS listing: whether the document differs from the snapshot it replaced."""
 
 
 def _plan(ctx: ServiceContext, feed: FeedRow) -> _Plan:
@@ -179,15 +213,25 @@ def _plan(ctx: ServiceContext, feed: FeedRow) -> _Plan:
     )
 
 
-def _list(ctx: ServiceContext, plan: _Plan, cancel: CancelToken) -> _Listed:
-    """The blocking part: one conditional GET or one shallow engine listing."""
+def _list(ctx: ServiceContext, plan: _Plan, cancel: CancelToken, timeout: float) -> _Listed:
+    """The blocking part: one conditional GET or one shallow engine listing.
+
+    A complete RSS document is written to ``source/feed.xml`` here, before anything
+    is committed: the archive jobs the apply queues wake the worker at commit
+    (``NOTIFY``) and ``prepare`` re-parses that file for the new item's element, so
+    it must already be there, as it is after the worker's own Refresh. The file is
+    verbatim Source content, harmless if the apply then fails.
+    """
     if plan.mode == "rss":
         fetched = ctx.sources.fetch_rss(
-            plan.source_url, etag=plan.etag, last_modified=plan.last_modified
+            plan.source_url, etag=plan.etag, last_modified=plan.last_modified, timeout=timeout
         )
         if fetched.not_modified or fetched.listing is None:
             return _Listed("unchanged", rss=fetched)
-        return _Listed("complete", listing=fetched.listing, rss=fetched)
+        changed = True
+        if fetched.body is not None:
+            changed = ctx.sources.save_rss_snapshot(plan.feed_id, fetched.body)
+        return _Listed("complete", listing=fetched.listing, rss=fetched, changed=changed)
     listing = ctx.sources.list_shallow(
         plan.source_url,
         options=plan.options,
@@ -262,11 +306,13 @@ async def _apply(
             language=listing.language,
             service=listing.service,
         )
+        synced = 0
         if not partial and feed.sync_deletions:
             dropped = await uow.catalog.delisted_archived(feed_id)
             if dropped:
                 await delete_rows(uow, feed, list(dropped), DeleteReason.synced)
                 await uow.feeds.recount_storage(feed_id)
+                synced = len(dropped)
         wanted = await apply_policy(uow, feed, min_duration_seconds=shortest_for(feed, defaults))
         enqueued = await _enqueue_wanted(uow, feed_id)
         await uow.telemetry.finish_refresh_run(
@@ -277,19 +323,17 @@ async def _apply(
             delisted_count=upsert.delisted_count,
             wanted_count=len(wanted),
         )
-        if not partial or upsert.new_count > 0 or wanted:
+        # The revision (feed ETag, cache entry, descriptor) moves only when something a
+        # podcast client could see did: a Source without validators answers 200 to every
+        # conditional GET, and the same document again must leave its 304s alone.
+        observable = upsert.new_count > 0 or bool(wanted)
+        if not partial:
+            observable = observable or listed.changed or upsert.delisted_count > 0 or synced > 0
+        if observable:
             _, revision = await uow.update_intent(feed_id)
             await uow.publish(FeedEvent(feed_id=feed_id, revision=revision, reason="light-refresh"))
         if enqueued:
             await uow.notify_jobs()
-        if rss is not None and rss.body is not None:
-            body = rss.body
-            sources = ctx.sources
-
-            def _save_snapshot() -> None:
-                sources.save_rss_snapshot(feed_id, body)
-
-            uow.after_commit(_save_snapshot)
         return (
             LightRefreshResult(
                 status="succeeded", new_count=upsert.new_count, wanted_count=len(wanted)
@@ -352,7 +396,14 @@ async def _run(
     now = datetime.now(UTC)
     cooldown = ctx.settings.refresh.fetch_cooldown_minutes
     async with ctx.uow_factory() as uow:
-        feed = await require_mirror(uow, feed_id)
+        # The row is taken for this short transaction (check, stamp, commit) so two api
+        # processes cannot both read a stale stamp and both list the Source; a row
+        # another transaction holds is a Refresh of either kind already at work: skip.
+        feed = await uow.feeds.try_get_for_update(feed_id)
+        if feed is None:
+            return LightRefreshResult(status="skipped"), None, 0
+        if feed.kind != FeedKind.mirror:
+            raise NotFound("mirror", feed_id)
         if not light_refresh_allowed(feed, now=now, cooldown_minutes=cooldown):
             return LightRefreshResult(status="skipped"), None, 0
         await uow.feeds.set_light_refresh_at(feed_id, now)
@@ -367,9 +418,16 @@ async def _run(
         )
         run_id = run.id
     cancel = CancelToken()
+    context = contextvars.copy_context()  # the request id stays on the listing's log lines
+
+    def run_listing() -> _Listed:
+        return context.run(_list, ctx, plan, cancel, deadline_seconds)
+
     try:
         async with asyncio.timeout(deadline_seconds):
-            listed = await asyncio.to_thread(_list, ctx, plan, cancel)
+            listed = await asyncio.get_running_loop().run_in_executor(
+                listing_executor(), run_listing
+            )
     except TimeoutError:
         cancel.cancel()
         error = f"listing {plan.source_url} took longer than {deadline_seconds:g} seconds"
@@ -396,18 +454,32 @@ async def _run(
         await request_refresh(ctx, feed_id, JobTrigger.feed_fetch)
         return LightRefreshResult(status="queued"), "queued", 0
 
-    result, enqueued = await retry_concurrent(
-        lambda: _apply(ctx, plan, listed, run_id), what=f"light_refresh:{feed_id}"
-    )
+    try:
+        result, enqueued = await retry_concurrent(
+            lambda: _apply(ctx, plan, listed, run_id), what=f"light_refresh:{feed_id}"
+        )
+    except asyncio.CancelledError:
+        with contextlib.suppress(Exception):
+            await _finish_run(ctx, run_id, RefreshRunStatus.cancelled, error="fetch cancelled")
+        raise
+    except Exception as exc:
+        # The apply's own transaction rolled back; the run row was committed on its own
+        # and would otherwise stay ``running`` until purged, its failure text lost.
+        error = str(exc) or type(exc).__name__
+        with contextlib.suppress(Exception):
+            await _finish_run(ctx, run_id, RefreshRunStatus.failed, error=error)
+        raise
     return result, listed.kind, enqueued
 
 
 __all__ = [
     "LIGHT_LISTING_LIMIT",
+    "LIGHT_LISTING_THREADS",
     "LIGHT_REFRESH_DEADLINE_SECONDS",
     "LightRefreshResult",
     "feed_lock",
     "light_refresh",
     "light_refresh_allowed",
+    "listing_executor",
     "locked_feed_ids",
 ]

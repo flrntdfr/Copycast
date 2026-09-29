@@ -129,13 +129,17 @@ def fetch(
     last_modified: str | None = None,
     accept: str | None = None,
     method: str = "GET",
+    timeout: float | None = None,
 ) -> Fetched:
     """GET ``url`` (streamed) with an optional conditional request.
 
     ``etag``/``last_modified`` become ``If-None-Match``/``If-Modified-Since``;
     a 304 returns ``Fetched(not_modified=True)``. Bodies longer than
     ``max_bytes`` raise :class:`BodyTooLarge`; 4xx raise :class:`SourceRejected`;
-    5xx and transport errors raise :class:`SourceUnreachable`.
+    5xx and transport errors raise :class:`SourceUnreachable`. ``timeout`` caps
+    every phase of this one request (connect, read, write, pool) in seconds
+    instead of the client's defaults: a caller that cannot wait long (the light
+    Refresh) gets its thread back soon after its own deadline.
     """
     request_headers: dict[str, str] = dict(headers or {})
     if accept:
@@ -145,8 +149,9 @@ def fetch(
     if last_modified:
         request_headers["If-Modified-Since"] = last_modified
     http = client or get_client()
+    per_request = httpx.Timeout(timeout) if timeout is not None else httpx.USE_CLIENT_DEFAULT
     try:
-        with http.stream(method, url, headers=request_headers) as response:
+        with http.stream(method, url, headers=request_headers, timeout=per_request) as response:
             final_url = str(response.url)
             response_headers = {k.lower(): v for k, v in response.headers.items()}
             status = response.status_code

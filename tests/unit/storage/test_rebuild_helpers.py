@@ -9,8 +9,9 @@ from pathlib import Path
 import pytest
 
 from copycast.adapters.storage import rebuild as rb
+from copycast.adapters.storage.descriptor import DescriptorItem
 from copycast.adapters.storage.layout import Layout
-from copycast.domain.enums import AssetKind
+from copycast.domain.enums import AssetKind, SourceKind
 
 FEED = "0123456789abcdef"
 ITEM = "fedcba9876543210"
@@ -173,6 +174,36 @@ def test_draft_from_sidecars_prefers_item_xml(data_dir: Path) -> None:
     assert (draft["media_mime"], draft["media_bytes"]) == ("audio/mpeg", 4407)
     assert draft["source_item_xml"].startswith("<item>")
     assert isinstance(draft["archived_at"], datetime)
+
+
+def test_restored_public_ext_mirrors_migration_0010(data_dir: Path) -> None:
+    """As written; else the media file's (the URL apps hold); else by Source kind alone,
+    the rule migration 0010 applied to pre-1.3 rows in Postgres: mp3 for RSS (the 1.2
+    placeholder), m4a for an Engine Source and for an Inbox."""
+    layout = Layout(data_dir)
+    layout.ensure_feed_dirs(FEED)
+    stamp = datetime(2024, 1, 1, tzinfo=UTC)
+    other = "0000000000000001"
+
+    def item(item_id: str = other, **overrides: object) -> DescriptorItem:
+        fields: dict[str, object] = {
+            "id": item_id,
+            "source_key": f"urn:x:{item_id}",
+            "ordinal": 1,
+            "title": "One",
+            "first_seen_at": stamp,
+            "last_listed_at": stamp,
+        }
+        fields.update(overrides)
+        return DescriptorItem.model_validate(fields)
+
+    layout.media_path(FEED, ITEM, "M4A").write_bytes(b"\0")
+    restored = rb._restored_public_ext(layout, FEED, SourceKind.rss, item(ITEM, public_ext="ogg"))
+    assert restored == "ogg"
+    assert rb._restored_public_ext(layout, FEED, SourceKind.rss, item(ITEM)) == "m4a"
+    assert rb._restored_public_ext(layout, FEED, SourceKind.rss, item()) == "mp3"
+    assert rb._restored_public_ext(layout, FEED, SourceKind.ytdlp, item()) == "m4a"
+    assert rb._restored_public_ext(layout, FEED, None, item()) == "m4a"
 
 
 def test_draft_from_sidecars_without_sidecars_or_with_broken_info(data_dir: Path) -> None:

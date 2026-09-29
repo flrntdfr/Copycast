@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from copycast.adapters.sources.http import (
@@ -10,6 +11,7 @@ from copycast.adapters.sources.http import (
     close_client,
     content_type_of,
     create_client,
+    default_timeout,
     fetch,
     get_client,
 )
@@ -42,6 +44,23 @@ def test_fetch_reads_body_headers_and_sends_the_user_agent(origin: Origin) -> No
     assert fetched.body.startswith(b"\xff\xd8")
     assert not fetched.not_modified
     assert origin.requests[-1].headers["user-agent"] == USER_AGENT
+
+
+def test_fetch_passes_a_per_request_timeout_to_the_transport() -> None:
+    """The light Refresh caps its one request at its deadline; everyone else keeps the defaults."""
+    seen: list[dict[str, float | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(dict(request.extensions["timeout"]))
+        return httpx.Response(200, content=b"ok", headers={"Content-Type": "text/plain"})
+
+    with httpx.Client(transport=httpx.MockTransport(handler), timeout=default_timeout()) as client:
+        assert fetch("https://origin.example/x", max_bytes=10, client=client).body == b"ok"
+        fetch("https://origin.example/x", max_bytes=10, client=client, timeout=2.5)
+    assert seen == [
+        {"connect": 20.0, "read": 120.0, "write": 30.0, "pool": 30.0},
+        {"connect": 2.5, "read": 2.5, "write": 2.5, "pool": 2.5},
+    ]
 
 
 def test_conditional_requests(origin: Origin) -> None:

@@ -21,6 +21,15 @@ ENGINE_EXT: Final = "m4a"
 """The container the Engine prefers (``bestaudio[ext=m4a]``): what a ytdlp Source archives to."""
 FALLBACK_MIME: Final = "application/octet-stream"
 
+PODCAST_EXTS: Final = frozenset({"mp3", "m4a"})
+"""Containers every podcast app plays that carry chapters and cover art: archived as they are."""
+AAC_CONTAINERS: Final = frozenset({"mp4", "m4v", "mov", "mkv", "webm", "mka"})
+"""AAC inside a video container is remuxed to m4a without touching the audio."""
+MPEG4_CONTAINERS: Final = frozenset({"mp4", "m4v", "mov"})
+"""The video containers that carry AAC in practice (Matroska and WebM carry Opus or Vorbis)."""
+TRANSCODE_EXT: Final = "mp3"
+"""What the Engine transcodes every other container to (Opus, Vorbis, FLAC, WAV, raw AAC...)."""
+
 MIME_EXT: Final[dict[str, str]] = {
     "audio/mpeg": "mp3",
     "audio/mp3": "mp3",
@@ -108,6 +117,22 @@ def mime_for_ext(ext: str) -> str:
     return EXT_MIME.get(ext.lower().lstrip("."), FALLBACK_MIME)
 
 
+def archived_ext_for(ext: str) -> str:
+    """The container the Engine leaves for a file listed with ``ext``.
+
+    mp3 and m4a are kept; AAC in an MPEG-4 container (mp4, m4v, mov) is remuxed to m4a;
+    everything else (Opus, Vorbis, FLAC, WAV, raw AAC, WebM...) is transcoded to
+    :data:`TRANSCODE_EXT`. The rule the engine's ``audio_target`` applies, minus the
+    codec probe it can run on the downloaded file.
+    """
+    ext = ext.lower().lstrip(".")
+    if ext in PODCAST_EXTS:
+        return ext
+    if ext in MPEG4_CONTAINERS:
+        return ENGINE_EXT
+    return TRANSCODE_EXT
+
+
 def predicted_ext(
     source_kind: SourceKind | str | None,
     enclosure_type: str | None = None,
@@ -116,26 +141,32 @@ def predicted_ext(
     """The extension of the URL a feed will advertise for a new Catalog item, for good.
 
     A ytdlp Source archives to the Engine's container (``m4a``) whatever the listing
-    says. An RSS enclosure follows its MIME type, else its URL's known extension, else
-    ``mp3``. An Inbox (no Source) is filled by the Engine too, unless the Request named
-    a media file whose type or URL says otherwise.
+    says. An RSS enclosure is archived in the container :func:`archived_ext_for` gives
+    for its MIME type, else for its URL's known extension, else ``mp3``. An Inbox (no
+    Source) is filled by the Engine too, unless the Request named a media file whose
+    type or URL says otherwise.
     """
     kind = SourceKind(source_kind) if source_kind else None
     if kind is SourceKind.ytdlp:
         return ENGINE_EXT
     ext = ext_for_mime(enclosure_type) or url_ext(enclosure_url)
     if ext is not None:
-        return ext
+        return archived_ext_for(ext)
     return DEFAULT_EXT if kind is SourceKind.rss else ENGINE_EXT
 
 
 __all__ = [
+    "AAC_CONTAINERS",
     "DEFAULT_EXT",
     "ENGINE_EXT",
     "EXT_MIME",
     "FALLBACK_MIME",
     "KNOWN_EXTS",
     "MIME_EXT",
+    "MPEG4_CONTAINERS",
+    "PODCAST_EXTS",
+    "TRANSCODE_EXT",
+    "archived_ext_for",
     "clean_mime",
     "ext_for_mime",
     "mime_for_ext",

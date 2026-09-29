@@ -18,9 +18,11 @@ from starlette.types import Message, Receive, Scope, Send
 
 from copycast.adapters.api.middleware import (
     ACCESS_LOG_EVENT,
+    REQUEST_ID_MAX_LEN,
     AccessLogMiddleware,
     RequestContextMiddleware,
     client_ip_of,
+    ensure_request_id,
 )
 
 EventDict = dict[str, Any]
@@ -209,6 +211,35 @@ async def test_unhandled_exception_logs_500_not_completed(
     assert event["bytes"] == 0
     assert event["content_length"] is None
     assert event["completed"] is False
+    # No response start came through this layer, yet the line names the id minted for
+    # the request: the one line an operator matches with the traceback.
+    assert isinstance(event["request_id"], str) and len(event["request_id"]) == 16
+
+
+async def test_unhandled_exception_keeps_the_clients_request_id(
+    client: httpx.AsyncClient, captured: list[EventDict]
+) -> None:
+    response = await client.get("/boom", headers={"X-Request-ID": "req-boom"})
+    assert response.status_code == 500
+    (event,) = requests_in(captured)
+    assert event["status"] == 500 and event["request_id"] == "req-boom"
+
+
+async def test_a_minted_request_id_is_the_one_the_client_receives(
+    client: httpx.AsyncClient, captured: list[EventDict]
+) -> None:
+    response = await client.get("/api/x")
+    (event,) = requests_in(captured)
+    assert response.headers["x-request-id"] == event["request_id"]
+    assert len(event["request_id"]) == 16
+
+
+def test_ensure_request_id_mints_once_and_cuts_long_ids() -> None:
+    scope: Scope = {"type": "http", "headers": []}
+    minted = ensure_request_id(scope)
+    assert len(minted) == 16 and ensure_request_id(scope) == minted
+    long_id = {"type": "http", "headers": [(b"x-request-id", b" " + b"a" * 100)]}
+    assert ensure_request_id(long_id) == "a" * REQUEST_ID_MAX_LEN
 
 
 async def test_response_that_never_finishes_logs_once_not_completed(

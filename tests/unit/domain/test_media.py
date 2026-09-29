@@ -6,12 +6,17 @@ import pytest
 
 from copycast.domain.enums import SourceKind
 from copycast.domain.media import (
+    AAC_CONTAINERS,
     DEFAULT_EXT,
     ENGINE_EXT,
     EXT_MIME,
     FALLBACK_MIME,
     KNOWN_EXTS,
     MIME_EXT,
+    MPEG4_CONTAINERS,
+    PODCAST_EXTS,
+    TRANSCODE_EXT,
+    archived_ext_for,
     clean_mime,
     ext_for_mime,
     mime_for_ext,
@@ -27,22 +32,31 @@ from copycast.domain.media import (
         (SourceKind.ytdlp, None, None, "m4a"),
         (SourceKind.ytdlp, "audio/mpeg", "https://x/y.mp3", "m4a"),
         ("ytdlp", None, None, "m4a"),
-        # RSS: the enclosure's MIME type first (it wins over the URL)...
+        # RSS: the enclosure's MIME type first (it wins over the URL), as the container
+        # the Engine archives it in: mp3 and m4a stay, AAC in an MPEG-4 container is
+        # remuxed to m4a...
         (SourceKind.rss, "audio/mpeg", "https://x/y.m4a", "mp3"),
         (SourceKind.rss, "audio/mp4", None, "m4a"),
         (SourceKind.rss, "audio/x-m4a", None, "m4a"),
-        (SourceKind.rss, "audio/aac", None, "aac"),
-        (SourceKind.rss, "audio/ogg; codecs=opus", None, "ogg"),
-        (SourceKind.rss, "AUDIO/OPUS", None, "opus"),
-        (SourceKind.rss, "audio/flac", None, "flac"),
-        (SourceKind.rss, "audio/wav", None, "wav"),
-        (SourceKind.rss, "audio/x-wav", None, "wav"),
-        (SourceKind.rss, "video/mp4", None, "mp4"),
-        (SourceKind.rss, "video/webm", None, "webm"),
-        # ...then the URL's known extension...
-        (SourceKind.rss, "application/octet-stream", "https://x/y.FLAC?dl=1", "flac"),
-        ("rss", None, "https://x/dir/y.ogg", "ogg"),
-        (SourceKind.rss, "", "https://x/y.opus#t", "opus"),
+        (SourceKind.rss, "video/mp4", None, "m4a"),
+        (SourceKind.rss, "video/x-m4v", None, "m4a"),
+        (SourceKind.rss, "video/quicktime", None, "m4a"),
+        # ...and everything else is advertised as the mp3 it is transcoded to (an
+        # `{id}.ogg` URL would serve an mp3 under audio/mpeg for its whole life)...
+        (SourceKind.rss, "audio/aac", None, "mp3"),
+        (SourceKind.rss, "audio/ogg; codecs=opus", None, "mp3"),
+        (SourceKind.rss, "AUDIO/OPUS", None, "mp3"),
+        (SourceKind.rss, "audio/flac", None, "mp3"),
+        (SourceKind.rss, "audio/wav", None, "mp3"),
+        (SourceKind.rss, "audio/x-wav", None, "mp3"),
+        (SourceKind.rss, "audio/webm", None, "mp3"),
+        (SourceKind.rss, "video/webm", None, "mp3"),
+        # ...then the URL's known extension, the same way...
+        (SourceKind.rss, "application/octet-stream", "https://x/y.M4A?dl=1", "m4a"),
+        (SourceKind.rss, "application/octet-stream", "https://x/y.mp4?dl=1", "m4a"),
+        (SourceKind.rss, "application/octet-stream", "https://x/y.FLAC?dl=1", "mp3"),
+        ("rss", None, "https://x/dir/y.ogg", "mp3"),
+        (SourceKind.rss, "", "https://x/y.opus#t", "mp3"),
         # ...else mp3.
         (SourceKind.rss, None, "https://x/y", "mp3"),
         (SourceKind.rss, "text/html", "https://x/y.pdf", "mp3"),
@@ -52,6 +66,7 @@ from copycast.domain.media import (
         (None, None, None, "m4a"),
         (None, "audio/mpeg", None, "mp3"),
         (None, None, "https://x/talk.mp3", "mp3"),
+        (None, "audio/ogg", "https://x/talk.ogg", "mp3"),
         (None, None, "https://www.youtube.com/watch?v=abc", "m4a"),
     ],
 )
@@ -68,6 +83,42 @@ def test_predicted_ext_defaults() -> None:
     assert predicted_ext(SourceKind.rss) == DEFAULT_EXT == "mp3"
     assert predicted_ext(SourceKind.ytdlp) == ENGINE_EXT == "m4a"
     assert predicted_ext(None) == ENGINE_EXT
+
+
+@pytest.mark.parametrize(
+    ("ext", "expected"),
+    [
+        ("mp3", "mp3"),
+        ("M4A", "m4a"),
+        (".m4a", "m4a"),
+        ("mp4", "m4a"),
+        ("m4v", "m4a"),
+        ("mov", "m4a"),
+        ("m4b", "mp3"),  # not a container the normalizer keeps or remuxes
+        ("aac", "mp3"),
+        ("ogg", "mp3"),
+        ("opus", "mp3"),
+        ("webm", "mp3"),
+        ("mkv", "mp3"),
+        ("flac", "mp3"),
+        ("wav", "mp3"),
+        ("aiff", "mp3"),
+        ("bin", "mp3"),
+    ],
+)
+def test_archived_ext_for(ext: str, expected: str) -> None:
+    """The container the Engine leaves: kept, remuxed to m4a, or transcoded to mp3."""
+    assert archived_ext_for(ext) == expected
+
+
+def test_container_tables_agree() -> None:
+    assert (
+        PODCAST_EXTS <= KNOWN_EXTS and TRANSCODE_EXT in PODCAST_EXTS and ENGINE_EXT in PODCAST_EXTS
+    )
+    assert MPEG4_CONTAINERS < AAC_CONTAINERS
+    # Every prediction is a container the Engine actually produces.
+    for mime in MIME_EXT:
+        assert predicted_ext(SourceKind.rss, mime) in PODCAST_EXTS
 
 
 @pytest.mark.parametrize(

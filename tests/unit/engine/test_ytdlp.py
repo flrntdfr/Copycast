@@ -289,3 +289,19 @@ def test_audio_target(ext: str, codec: str | None, expected: str) -> None:
     from copycast.adapters.engine.ytdlp import audio_target
 
     assert audio_target(ext, codec) == expected
+
+
+def test_audio_target_agrees_with_the_domain_prediction() -> None:
+    """A stable media URL promises the container ``audio_target`` leaves for that file.
+
+    ``archived_ext_for`` decides from the listing alone; ``audio_target`` also probes
+    the codec, so the comparison assumes the codec each container carries in practice.
+    """
+    from copycast.adapters.engine.synth import EXT_CODEC
+    from copycast.adapters.engine.ytdlp import audio_target
+    from copycast.domain.media import ENGINE_EXT, KNOWN_EXTS, PODCAST_EXTS, archived_ext_for
+
+    for ext in sorted(KNOWN_EXTS):
+        target = audio_target(ext, EXT_CODEC.get(ext))
+        left = (ext if ext in PODCAST_EXTS else ENGINE_EXT) if target == "best" else target
+        assert archived_ext_for(ext) == left, ext

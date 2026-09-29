@@ -191,11 +191,24 @@ class SourceGatewayAdapter:
 
     # ------------------------------------------------------------------ light Refresh
 
-    def fetch_rss(self, url: str, *, etag: str | None, last_modified: str | None) -> RssFetch:
-        """One conditional GET of an RSS Source, first page only; a 304 is ``not_modified``."""
+    def fetch_rss(
+        self,
+        url: str,
+        *,
+        etag: str | None,
+        last_modified: str | None,
+        timeout: float | None = None,
+    ) -> RssFetch:
+        """One conditional GET of an RSS Source, first page only; a 304 is ``not_modified``.
+
+        ``timeout`` caps the request itself (every phase, in seconds) so a fetch that
+        gave up at its deadline gets its thread back soon after.
+        """
         fetch_feed = _load("copycast.adapters.sources.rss", "fetch_feed")
         to_xml = _load("copycast.adapters.sources.rss", "channel_xml")
-        fetched = fetch_feed(url, etag=etag, last_modified=last_modified, follow_next=False)
+        fetched = fetch_feed(
+            url, etag=etag, last_modified=last_modified, follow_next=False, timeout=timeout
+        )
         if fetched.not_modified or fetched.parsed is None:
             return RssFetch(
                 True,
@@ -228,11 +241,22 @@ class SourceGatewayAdapter:
             url, merged, cancel, _SearchLog("copycast.light_refresh"), limit=limit
         )
 
-    def save_rss_snapshot(self, feed_id: str, body: bytes) -> None:
-        """``source/feed.xml`` verbatim (the archive job re-parses it for an item's element)."""
+    def save_rss_snapshot(self, feed_id: str, body: bytes) -> bool:
+        """``source/feed.xml`` verbatim (the archive job re-parses it for an item's element).
+
+        Returns whether the document differs from the snapshot it replaced (or there
+        was none): a Source that answers 200 to every conditional GET but serves the
+        same bytes changed nothing.
+        """
         write_atomic = _load("copycast.adapters.storage.atomic", "write_atomic")
         self._layout.ensure_feed_dirs(feed_id)
-        write_atomic(self._layout.source_xml_path(feed_id), body)
+        path = self._layout.source_xml_path(feed_id)
+        try:
+            changed = not path.is_file() or path.read_bytes() != body
+        except OSError:
+            changed = True
+        write_atomic(path, body)
+        return changed
 
     @staticmethod
     def _snapshot(entry: ProbeEntry) -> SourceSnapshot:

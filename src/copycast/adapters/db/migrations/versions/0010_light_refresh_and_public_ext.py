@@ -5,7 +5,10 @@ cooldown never pushes back the scheduled full Refresh; ``refresh_runs.light`` te
 runs apart from full ones; ``catalog_items.public_ext`` is the extension of the media URL
 the feed advertises, fixed at listing time so it never changes when an Episode is archived
 or expires (podcast apps re-download on a URL change). Existing archived rows keep the
-extension of their file, unarchived rows get the prediction for their Source.
+extension of their file; unarchived rows get the prediction for their Source: ``mp3`` for
+an RSS Source (the placeholder 1.2 advertised, so the URL apps hold), ``m4a`` for an
+Engine Source and for an Inbox (filled by the Engine), as ``domain.media.predicted_ext``
+answers without an enclosure.
 
 Revision ID: 0010
 Revises: 0009
@@ -38,23 +41,25 @@ def upgrade() -> None:
         sa.Column("public_ext", sa.Text(), nullable=False, server_default=sa.text("'mp3'")),
     )
     # Archived rows keep the extension podcast apps already hold; the rest get the
-    # prediction for their Source (YouTube and other engine Sources archive to m4a).
+    # prediction for their Source (an RSS Source's placeholder was mp3; the Engine fills
+    # ytdlp Sources and Inboxes with m4a). The guard is the extractor's own pattern, so a
+    # media_path whose only dot is in a directory, or whose suffix the pattern does not
+    # match, falls through to the Source rule instead of a NULL in a NOT NULL column.
     op.execute(
         sa.text(
             """
             UPDATE catalog_items AS c
             SET public_ext = CASE
-                WHEN c.media_path IS NOT NULL AND c.media_path LIKE '%.%'
+                WHEN c.media_path ~ '\\.[A-Za-z0-9]{1,8}$'
                     THEN lower(substring(c.media_path from '\\.([A-Za-z0-9]{1,8})$'))
-                WHEN f.source_kind = 'ytdlp' THEN 'm4a'
-                ELSE 'mp3'
+                WHEN f.source_kind = 'rss' THEN 'mp3'
+                ELSE 'm4a'
             END
             FROM feeds AS f
             WHERE f.id = c.feed_id
             """
         )
     )
-    op.execute(sa.text("UPDATE catalog_items SET public_ext = 'mp3' WHERE public_ext = ''"))
 
 
 def downgrade() -> None:

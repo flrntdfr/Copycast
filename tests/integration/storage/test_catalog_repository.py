@@ -213,12 +213,13 @@ async def test_upsert_sets_public_ext_per_source_kind_and_never_rewrites_it(
         await uow.catalog.upsert_listing(rss_id, enclosures)
         await uow.catalog.upsert_listing(tube_id, enclosures)
         await uow.catalog.upsert_listing(inbox_id, enclosures)
-        # RSS: the enclosure's MIME type, else its URL's extension, else mp3.
-        assert await exts(uow, rss_id) == {1: "mp3", 2: "m4a", 3: "ogg", 4: "mp3"}
+        # RSS: the enclosure's MIME type, else its URL's extension, else mp3, as the
+        # container the Engine archives it in (an .ogg enclosure is transcoded to mp3).
+        assert await exts(uow, rss_id) == {1: "mp3", 2: "m4a", 3: "mp3", 4: "mp3"}
         # A ytdlp Source archives to m4a whatever the listing says.
         assert await exts(uow, tube_id) == {1: "m4a", 2: "m4a", 3: "m4a", 4: "m4a"}
         # An Inbox is filled by the Engine, unless the Request named a media file.
-        assert await exts(uow, inbox_id) == {1: "mp3", 2: "m4a", 3: "ogg", 4: "m4a"}
+        assert await exts(uow, inbox_id) == {1: "mp3", 2: "m4a", 3: "mp3", 4: "m4a"}
 
     # The Source changes its enclosures and an item gets archived in another container:
     # known rows keep the URL podcast apps already hold.
@@ -245,7 +246,7 @@ async def test_upsert_sets_public_ext_per_source_kind_and_never_rewrites_it(
             media_bytes=5,
         )
         await uow.catalog.upsert_listing(rss_id, changed)
-        assert await exts(uow, rss_id) == {1: "mp3", 2: "m4a", 3: "ogg", 4: "mp3"}
+        assert await exts(uow, rss_id) == {1: "mp3", 2: "m4a", 3: "mp3", 4: "mp3"}
         archived = await uow.catalog.require(rows[0].id)
         assert archived.media_ext == "m4a" and archived.public_ext == "mp3"
 

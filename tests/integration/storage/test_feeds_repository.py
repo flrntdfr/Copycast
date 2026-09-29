@@ -26,6 +26,23 @@ from tests.integration.storage.conftest import (
 pytestmark = pytest.mark.integration
 
 
+async def test_try_get_for_update_skips_a_row_another_transaction_holds(
+    uow_factory: UnitOfWorkFactory, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """The light Refresh's cooldown gate: a row a Refresh holds means skip, not wait."""
+    async with uow_factory() as uow:
+        feed_id = (await uow.feeds.add(mirror_row())).id
+    async with sessionmaker() as holder, sessionmaker() as other:
+        await FeedRepository(holder).get_for_update(feed_id)
+        assert await FeedRepository(other).try_get_for_update(feed_id) is None
+        with pytest.raises(NotFound):
+            await FeedRepository(other).try_get_for_update("no-such-feed")
+        await holder.commit()
+        taken = await FeedRepository(other).try_get_for_update(feed_id)
+        assert taken is not None and taken.id == feed_id
+        await other.rollback()
+
+
 async def test_ensure_default_inbox_is_idempotent(uow_factory: UnitOfWorkFactory) -> None:
     async with uow_factory() as uow:
         first = await uow.feeds.ensure_default_inbox()

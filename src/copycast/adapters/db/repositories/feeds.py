@@ -52,6 +52,21 @@ class FeedRepository:
             raise NotFound("feed", feed_id)
         return feed
 
+    async def try_get_for_update(self, feed_id: str) -> Feed | None:
+        """Lock the feed row unless another transaction holds it (``FOR UPDATE SKIP LOCKED``).
+
+        ``None`` means a Refresh of either kind is stamping or applying to this feed
+        right now, in this process or another; a feed that does not exist is
+        :class:`NotFound` as with :meth:`get_for_update`.
+        """
+        result = await self._session.execute(
+            select(Feed).where(Feed.id == feed_id).with_for_update(skip_locked=True)
+        )
+        feed = result.scalar_one_or_none()
+        if feed is None and await self.get(feed_id) is None:
+            raise NotFound("feed", feed_id)
+        return feed
+
     async def by_dedup_key(self, dedup_key: str) -> Feed | None:
         result = await self._session.execute(select(Feed).where(Feed.source_dedup_key == dedup_key))
         return result.scalar_one_or_none()

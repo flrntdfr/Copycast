@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -11,10 +12,12 @@ import pytest
 
 from copycast.application.services.light_refresh import (
     LIGHT_LISTING_LIMIT,
+    LIGHT_LISTING_THREADS,
     LIGHT_REFRESH_DEADLINE_SECONDS,
     LightRefreshResult,
     feed_lock,
     light_refresh_allowed,
+    listing_executor,
     locked_feed_ids,
 )
 
@@ -87,6 +90,15 @@ def test_result_defaults_and_constants() -> None:
     assert (failed.new_count, failed.wanted_count, failed.error) == (0, 0, "boom")
     assert LightRefreshResult(status="skipped").error is None
     assert LIGHT_LISTING_LIMIT == 15 and LIGHT_REFRESH_DEADLINE_SECONDS == 8.0
+
+
+def test_listing_pool_is_bounded_named_and_shared() -> None:
+    """Light listings never take the loop's default executor (media, exports) hostage."""
+    pool = listing_executor()
+    assert pool is listing_executor()
+    assert pool._max_workers == LIGHT_LISTING_THREADS == 4
+    name = pool.submit(lambda: threading.current_thread().name).result(timeout=5)
+    assert name.startswith("light-refresh")
 
 
 async def test_feed_lock_serializes_one_feed_and_drops_its_entry() -> None:

@@ -423,6 +423,9 @@ def _restored_public_ext(
 
     Descriptors written before 1.3 carry no ``public_ext``; the media file (when there
     is one) is what apps have been downloading, so its extension is the URL they hold.
+    The rest get ``predicted_ext`` by Source kind alone (``mp3`` for RSS, the 1.2
+    placeholder; ``m4a`` for an Engine Source and an Inbox), the rule migration 0010
+    applied to the same rows in Postgres, so a rebuild advertises the same URLs.
     """
     if item.public_ext:
         return item.public_ext

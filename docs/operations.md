@@ -199,7 +199,9 @@ stays on Mirrors that already use it but is no longer offered ([ADR 0012](adr/00
 An Automatic Mirror's feed lists every item the Source lists, archived or not, and an item
 keeps one media URL for its whole life: `/feeds/{id}/media/{item}.{public_ext}`, where
 `public_ext` is fixed when the item is first listed (`m4a` for an Engine Source; for an RSS
-Source the enclosure's MIME type, else its URL's extension, else `mp3`) and never rewritten,
+Source the container the Engine will leave for the enclosure's MIME type or URL extension:
+`mp3` and `m4a` as they are, MPEG-4 video as `m4a`, everything else as `mp3`; `mp3` when
+nothing is known) and never rewritten,
 whatever container the archive produces. Podcast apps treat a changed enclosure URL as a new
 file and download it again on every device, which is what 1.2 caused by advertising `.mp3`
 before the archive and `.m4a` after it. Until the item is archived the enclosure's `type`

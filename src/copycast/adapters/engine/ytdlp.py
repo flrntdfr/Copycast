@@ -49,6 +49,7 @@ from copycast.application.ports import (
 )
 from copycast.domain.enums import EnginePhase, FetchKind
 from copycast.domain.listing import SourceListing
+from copycast.domain.media import AAC_CONTAINERS, PODCAST_EXTS, TRANSCODE_EXT
 from copycast.settings import Settings
 
 ENGINE_NAME: Final = "yt-dlp"
@@ -351,11 +352,8 @@ def has_embedded_artwork(path: Path) -> bool:
 
 # --------------------------------------------------------------------------- audio
 
-PODCAST_EXTS: Final = frozenset({"mp3", "m4a"})
-"""Containers every podcast app plays and that carry chapters and cover art: kept as they are."""
-AAC_CONTAINERS: Final = frozenset({"mp4", "m4v", "mov", "mkv", "webm", "mka"})
-"""AAC inside a video container is remuxed to m4a without touching the audio."""
-TRANSCODE_CODEC: Final = "mp3"
+TRANSCODE_CODEC: Final = TRANSCODE_EXT
+"""yt-dlp's codec name for the transcode target: the same word as its extension."""
 TRANSCODE_QUALITY: Final = "192"
 
 

@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from copycast.app import Container
+from copycast.application.services import light_refresh as light
 from copycast.domain.enums import JobKind, JobStatus, JobTrigger, ListingOrder
 from copycast.worker.runner import Runner
 from tests.integration.api.conftest import Source, archived_items, create_mirror, items_of
@@ -209,6 +210,159 @@ async def test_light_refresh_applies_the_policy_and_queues_archives(
     assert len(queued) == 1 and queued[0].trigger == JobTrigger.policy
     assert len(await archived_items(client, runner, mirror["id"])) == 2
     assert len(feed_items(await client.get(FEED_URL(mirror["id"])))) == 2
+
+
+async def test_the_snapshot_is_on_disk_before_the_apply_commits_its_archive_jobs(
+    client: httpx.AsyncClient,
+    source: Source,
+    runner: Runner,
+    container: Container,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The commit that queues the archive job also wakes the worker (NOTIFY), and the job
+    re-parses source/feed.xml for the new item's element: the document must be there
+    before the transaction, not in an after-commit hook that a slow descriptor export
+    or volume lets the worker overtake (the Episode then fails for good)."""
+    url = source.write_rss("snapshot", items=[1], artwork=False)
+    mirror = await create_mirror(client, url)
+    assert len(await archived_items(client, runner, mirror["id"])) == 1
+    await outside_cooldown(container, mirror["id"])
+    source.write_rss("snapshot", items=[2, 1], artwork=False)
+    path = container.layout.source_xml_path(mirror["id"])
+    seen_in_transaction: list[bytes] = []
+    real_apply_policy = light.apply_policy
+
+    async def spying_apply_policy(uow: Any, feed: Any, **kwargs: Any) -> Any:
+        seen_in_transaction.append(path.read_bytes())
+        return await real_apply_policy(uow, feed, **kwargs)
+
+    monkeypatch.setattr(light, "apply_policy", spying_apply_policy)
+    assert (await client.get(FEED_URL(mirror["id"]))).status_code == 200
+    (snapshot,) = seen_in_transaction
+    assert b"urn:worker:episode:2" in snapshot, "written before the apply transaction"
+    archive_jobs = await jobs_of(container, mirror["id"], kind=JobKind.archive_item)
+    assert len([j for j in archive_jobs if j.status == JobStatus.queued]) == 1
+    assert len(await archived_items(client, runner, mirror["id"])) == 2
+
+
+async def test_an_apply_that_raises_ends_the_light_run_failed_and_serves_the_feed(
+    client: httpx.AsyncClient,
+    source: Source,
+    runner: Runner,
+    container: Container,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run row is committed on its own before the apply: an apply that raises must
+    finish it, or it stays `running` until purged with its failure text lost."""
+    url = source.write_rss("boom", items=[1], artwork=False)
+    mirror = await create_mirror(client, url, mode="automatic")
+    await runner.run_until_idle()
+    await outside_cooldown(container, mirror["id"])
+    source.write_rss("boom", items=[2, 1], artwork=False)
+
+    async def exploding_apply_policy(uow: Any, feed: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("policy exploded")
+
+    monkeypatch.setattr(light, "apply_policy", exploding_apply_policy)
+    response = await client.get(FEED_URL(mirror["id"]))
+    assert response.status_code == 200 and len(feed_items(response)) == 1, "rolled back"
+    runs = await light_runs(container, mirror["id"])
+    assert len(runs) == 1 and runs[0].status == "failed" and runs[0].error == "policy exploded"
+    assert runs[0].finished_at is not None
+    feed = (await client.get(api(f"/feeds/{mirror['id']}"))).json()
+    assert feed["last_error"] is None and feed["health"]["status"] == "ok"
+
+
+async def test_a_source_without_validators_bumps_nothing_for_the_same_document(
+    client: httpx.AsyncClient, source: Source, runner: Runner, container: Container
+) -> None:
+    """A Source that answers 200 to every conditional GET (no ETag, no Last-Modified) with
+    the same bytes changes nothing observable: the revision stays, so podcast clients'
+    own conditional GETs keep their 304s; a changed document still moves it."""
+    url = source.write_rss("plain", items=[2, 1], artwork=False)
+    mirror = await create_mirror(client, url, mode="automatic")
+    await runner.run_until_idle()
+    document = (source.root / "rss" / "plain.xml").read_bytes()
+    source.origin.script(
+        "/rss/plain.xml", body=document, content_type="application/rss+xml", times=2
+    )
+
+    await outside_cooldown(container, mirror["id"])
+    first = await client.get(FEED_URL(mirror["id"]))
+    assert first.status_code == 200 and len(feed_items(first)) == 2
+    etag = first.headers["etag"]
+    runs = await light_runs(container, mirror["id"])
+    assert [r.status for r in runs] == ["succeeded"] and runs[0].new_count == 0
+
+    await outside_cooldown(container, mirror["id"])
+    hits = source.origin.hits("/rss/plain.xml")
+    same = await client.get(FEED_URL(mirror["id"]), headers={"If-None-Match": etag})
+    assert same.status_code == 304
+    assert source.origin.hits("/rss/plain.xml") == hits + 1, "asked: nothing to send as a validator"
+    assert source.origin.requests_for("/rss/plain.xml")[-1].if_none_match is None
+    assert [r.status for r in await light_runs(container, mirror["id"])] == ["succeeded"] * 2
+
+    await outside_cooldown(container, mirror["id"])
+    source.write_rss("plain", items=[3, 2, 1], artwork=False)
+    changed = await client.get(FEED_URL(mirror["id"]), headers={"If-None-Match": etag})
+    assert changed.status_code == 200 and len(feed_items(changed)) == 3
+    assert changed.headers["etag"] != etag
+
+
+async def test_light_listings_run_on_their_own_pool_with_the_deadline_as_request_timeout(
+    client: httpx.AsyncClient,
+    source: Source,
+    runner: Runner,
+    container: Container,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Never the loop's default executor (media, exports), and the RSS request itself is
+    capped at the deadline so a timed-out listing gives its thread back soon after."""
+    from copycast.adapters.api.routes import public
+    from copycast.adapters.sources import rss
+
+    url = source.write_rss("pool", items=[1], artwork=False)
+    mirror = await create_mirror(client, url, mode="automatic")
+    await runner.run_until_idle()
+    await outside_cooldown(container, mirror["id"])
+    seen: list[tuple[str, float | None]] = []
+    real_fetch_feed = rss.fetch_feed
+
+    def spying_fetch_feed(url: str, **kwargs: Any) -> Any:
+        seen.append((threading.current_thread().name, kwargs.get("timeout")))
+        return real_fetch_feed(url, **kwargs)
+
+    monkeypatch.setattr(rss, "fetch_feed", spying_fetch_feed)
+    monkeypatch.setattr(public, "LIGHT_REFRESH_DEADLINE_SECONDS", 3.5)
+    assert (await client.get(FEED_URL(mirror["id"]))).status_code == 200
+    ((thread_name, timeout),) = seen
+    assert thread_name.startswith("light-refresh") and timeout == 3.5
+    assert [r.status for r in await light_runs(container, mirror["id"])] == ["unchanged"]
+
+
+async def test_a_feed_row_held_by_another_transaction_is_served_without_a_check(
+    client: httpx.AsyncClient, source: Source, runner: Runner, container: Container
+) -> None:
+    """The cooldown gate takes the row (SKIP LOCKED): one held by a Refresh of either
+    kind, or by another api process's gate, is a skip, never a second listing or a wait."""
+    url = source.write_rss("held", items=[1], artwork=False)
+    mirror = await create_mirror(client, url, mode="automatic")
+    await runner.run_until_idle()
+    await outside_cooldown(container, mirror["id"])
+    source.write_rss("held", items=[2, 1], artwork=False)
+    hits = source.origin.hits("/rss/held.xml")
+    async with container.uow_factory() as holder:
+        await holder.feeds.get_for_update(mirror["id"])
+        started = time.perf_counter()
+        response = await client.get(FEED_URL(mirror["id"]))
+        assert response.status_code == 200 and len(feed_items(response)) == 1
+        assert time.perf_counter() - started < 2.0, "served at once, no wait for the lock"
+    assert source.origin.hits("/rss/held.xml") == hits
+    assert await light_runs(container, mirror["id"]) == []
+    # The stamp was not written either: the next fetch outside the cooldown checks.
+    released = await client.get(FEED_URL(mirror["id"]))
+    assert released.status_code == 200 and len(feed_items(released)) == 2
+    assert source.origin.hits("/rss/held.xml") == hits + 1
 
 
 async def test_fetch_never_refreshes_on_head_paused_or_inbox(

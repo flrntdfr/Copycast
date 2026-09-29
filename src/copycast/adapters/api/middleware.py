@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from typing import Any
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -15,9 +16,27 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from copycast.logging import bind_context, get_logger, unbind_context
 
 REQUEST_ID_HEADER = "x-request-id"
+REQUEST_ID_MAX_LEN = 64
 NO_STORE_TYPES = ("application/json", "application/problem+json")
 
 log = get_logger(__name__)
+
+
+def ensure_request_id(scope: Scope) -> str:
+    """The request's id: the client's ``X-Request-ID`` (cut to 64 chars), else one minted here.
+
+    Kept on ``scope["state"]`` so every layer that asks gets the same id, whichever
+    asked first: the request log (outermost) can then name it even when the request
+    never produced a response through the stack (an unhandled exception).
+    """
+    state: dict[str, Any] = scope.setdefault("state", {})
+    found = state.get("request_id")
+    if isinstance(found, str) and found:
+        return found
+    incoming = Headers(scope=scope).get(REQUEST_ID_HEADER, "").strip()
+    request_id = incoming[:REQUEST_ID_MAX_LEN] if incoming else uuid.uuid4().hex[:16]
+    state["request_id"] = request_id
+    return request_id
 
 
 class RequestContextMiddleware:
@@ -30,8 +49,7 @@ class RequestContextMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        incoming = Headers(scope=scope).get(REQUEST_ID_HEADER, "").strip()
-        request_id = incoming[:64] if incoming else uuid.uuid4().hex[:16]
+        request_id = ensure_request_id(scope)
         bind_context(request_id=request_id)
 
         async def send_with_id(message: Message) -> None:
@@ -126,8 +144,10 @@ class AccessLogMiddleware:
     client received after every other layer (gzip included). Never logs ``Authorization``
     or a username. An unhandled exception never produces a response through this layer
     (``ServerErrorMiddleware`` answers 500 on the raw socket and re-raises), so it is
-    logged as ``status=500, bytes=0, completed=False``; a request that ends without its
-    final body (client gone, task cancelled) is logged with ``completed=False`` too.
+    logged as ``status=500, bytes=0, completed=False`` with the request id minted for it
+    (the one line an operator most wants to match with the traceback); a request that
+    ends without its final body (client gone, task cancelled) is logged with
+    ``completed=False`` too.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -141,7 +161,7 @@ class AccessLogMiddleware:
         request_headers = Headers(scope=scope)
         status: int | None = None
         content_length: int | None = None
-        request_id: str | None = None
+        request_id: str | None = ensure_request_id(scope)
         body_bytes = 0
         logged = False
 
@@ -173,7 +193,7 @@ class AccessLogMiddleware:
             if message_type == "http.response.start":
                 status = int(message["status"])
                 response_headers = Headers(raw=message.get("headers", []))
-                request_id = response_headers.get(REQUEST_ID_HEADER)
+                request_id = response_headers.get(REQUEST_ID_HEADER) or request_id
                 content_length = _int_or_none(response_headers.get("content-length"))
             await send(message)
             if message_type == "http.response.body":
@@ -192,10 +212,12 @@ __all__ = [
     "ACCESS_LOG_SKIP_PREFIX",
     "NO_STORE_TYPES",
     "REQUEST_ID_HEADER",
+    "REQUEST_ID_MAX_LEN",
     "ROBOTS_TAG",
     "AccessLogMiddleware",
     "NoRobotsMiddleware",
     "NoStoreJsonMiddleware",
     "RequestContextMiddleware",
     "client_ip_of",
+    "ensure_request_id",
 ]

@@ -55,9 +55,11 @@ tool.
 
 **Stable media URL.** The URL a feed advertises for an item is
 `{base}/feeds/{feed}/media/{item_id}.{public_ext}` and `public_ext` is set once, when the
-row is created: `m4a` for an Engine Source; for an RSS enclosure its MIME type, else its
-URL's known extension, else `mp3`. It never changes afterwards, whatever container the
-archive produces. The enclosure's `type` is the archived file's MIME type once archived and
+row is created: `m4a` for an Engine Source; for an RSS enclosure the container the Engine
+will leave for its MIME type (else its URL's known extension): `mp3` and `m4a` as they are,
+an MPEG-4 video container as `m4a`, anything else (Opus, Vorbis, FLAC, WAV) as the `mp3` it
+is transcoded to; `mp3` when nothing is known. It never changes afterwards, whatever
+container the archive produces. The enclosure's `type` is the archived file's MIME type once archived and
 the one `public_ext` implies before; its `length` is the real size once archived and the
 128 kbit/s estimate before. The media route serves an item under its public extension,
 under the archived file's own extension and, for an Automatic feed only, under the `.mp3`
@@ -80,9 +82,10 @@ The numbers above came from such lines.
   channel's items or moves their numbering: only the scheduled or manual full Refresh does.
 - An RSS Source is listed in full on every fetch that finds it changed; the conditional GET
   makes the common case one 304.
-- After the deadline the listing thread keeps running until yt-dlp honours the cancel token
-  (an RSS fetch has no token and ends on httpx's own timeouts); the api serves the feed
-  meanwhile and the run is recorded as failed.
+- Listings run on a small pool of their own (four threads), never on the loop's default
+  executor that serves media and writes descriptors, and an RSS fetch is capped at the
+  deadline; after the deadline a yt-dlp listing thread keeps running until yt-dlp honours
+  the cancel token. The api serves the feed meanwhile and the run is recorded as failed.
 - The cooldown now gates the Light Refresh; `request_refresh(feed_fetch)` keeps its own
   cooldown rule for the playlist path.
 - The enclosure URL an app holds never changes, so an Episode is downloaded once per device.
