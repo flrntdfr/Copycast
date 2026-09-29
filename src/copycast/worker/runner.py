@@ -9,8 +9,10 @@ enforces the soft timeouts. Outcomes: transient errors back off
 (``60s * 2^attempt`` capped at 6 h, +-20 %), permanent ones fail, ``StorageFull``
 re-queues in ten minutes without counting the attempt and pauses archive
 claims, ``NotReady`` (a stream with no recording yet) re-queues in
-``LIVE_RETRY`` without counting the attempt until the job has waited
-``LIVE_WAIT_MAX``, then fails for good; a cancel finishes the job
+``LIVE_RETRY`` (or at the stream's start, never past the job's ceiling)
+without counting the attempt: the job that raises it has decided the wait
+goes on, and the archive job turns an expired wait into a permanent error
+itself, so the runner never measures the ceiling; a cancel finishes the job
 ``cancelled``. SIGTERM stops claiming, sets every token, drains for up to
 ``DRAIN_SECONDS`` and re-queues what is still running (``.part`` files stay
 in ``tmp/``).
@@ -65,8 +67,6 @@ from copycast.worker.constants import (
     STORAGE_FULL_RETRY,
     UNRESPONSIVE_GRACE_SECONDS,
     default_worker_id,
-    live_wait_exceeded,
-    live_wait_exhausted_message,
 )
 from copycast.worker.health import WorkerState
 from copycast.worker.joblog import JobLog
@@ -87,12 +87,17 @@ def backoff_seconds(attempt: int, *, rng: random.Random | None = None) -> float:
     return base * (1.0 + jitter)
 
 
-def live_retry_delay(retry_after: timedelta | None) -> timedelta:
+def live_retry_delay(
+    retry_after: timedelta | None, *, created_at: datetime, now: datetime
+) -> timedelta:
     """How long a ``NotReady`` job waits: ``LIVE_RETRY``, or the Engine's own estimate when
-    it is longer (an upcoming stream's scheduled start), never beyond ``LIVE_WAIT_MAX``."""
-    if retry_after is None:
-        return LIVE_RETRY
-    return min(max(retry_after, LIVE_RETRY), LIVE_WAIT_MAX)
+    it is longer (an upcoming stream's scheduled start), but never past the job's ceiling
+    (``created_at + LIVE_WAIT_MAX``): a long estimate is cut to the budget left so the last
+    try runs at the ceiling, where the archive job fails it for good when the recording is
+    still not published (zero when the ceiling has already passed)."""
+    wanted = LIVE_RETRY if retry_after is None else max(retry_after, LIVE_RETRY)
+    remaining = created_at + LIVE_WAIT_MAX - now
+    return max(min(wanted, remaining), timedelta(0))
 
 
 def psycopg_conninfo(database_url: str) -> str:
@@ -385,37 +390,27 @@ class Runner:
                 self.stats.requeued += 1
                 log.error("job.storage_full", job_id=str(job.id), until=until.isoformat())
             elif isinstance(failure, NotReady):
+                # The job decided the wait goes on (an expired wait reaches here as a
+                # PermanentError), so the runner only schedules the next try.
                 now = datetime.now(UTC)
-                if live_wait_exceeded(job.created_at, now=now):
-                    error = live_wait_exhausted_message(str(failure))
-                    final = await uow.jobs.finish(
-                        job.id, JobStatus.failed, error=error, error_kind=ErrorKind.permanent
-                    )
-                    self.stats.failed += 1
-                    log.warning(
-                        "job.not_ready_expired",
-                        job_id=str(job.id),
-                        kind=job.kind,
-                        live_status=failure.live_status.value,
-                        error=error,
-                    )
-                else:
-                    until = now + live_retry_delay(failure.retry_after)
-                    final = await uow.jobs.requeue(
-                        job.id,
-                        run_after=until,
-                        count_attempt=False,
-                        error=str(failure),
-                        error_kind=ErrorKind.transient,
-                    )
-                    self.stats.requeued += 1
-                    log.info(
-                        "job.not_ready",
-                        job_id=str(job.id),
-                        kind=job.kind,
-                        live_status=failure.live_status.value,
-                        until=until.isoformat(),
-                    )
+                until = now + live_retry_delay(
+                    failure.retry_after, created_at=job.created_at, now=now
+                )
+                final = await uow.jobs.requeue(
+                    job.id,
+                    run_after=until,
+                    count_attempt=False,
+                    error=str(failure),
+                    error_kind=ErrorKind.transient,
+                )
+                self.stats.requeued += 1
+                log.info(
+                    "job.not_ready",
+                    job_id=str(job.id),
+                    kind=job.kind,
+                    live_status=failure.live_status.value,
+                    until=until.isoformat(),
+                )
             elif isinstance(failure, PermanentError):
                 final = await uow.jobs.finish(
                     job.id, JobStatus.failed, error=str(failure), error_kind=ErrorKind.permanent

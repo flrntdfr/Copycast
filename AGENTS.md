@@ -120,7 +120,7 @@ A Mirror option (*Stay in sync with the Source*): an Episode is deleted, leaving
 _Avoid_: Mirror deletions, prune (that is an Inbox's Retention)
 
 **Live stream**:
-A Catalog item the Engine reports as a stream (`live_status`: upcoming, live, recording being processed, recorded). While upcoming or live it is listed in the Catalog with a badge but is not archivable: no policy or selection wants it and an Automatic feed does not list it; any Refresh, full or light, that sees it recorded makes it archivable. An archive that meets a stream with no recording yet waits 30 minutes between tries, without counting attempts, for up to 48 h after the job was created, then fails (ADR 0014).
+A Catalog item the Engine reports as a stream (`live_status`: upcoming, live, recording being processed, recorded). While upcoming or live it is listed in the Catalog with a badge but is not archivable: no policy or selection wants it and an Automatic feed does not list it; any Refresh, full or light, that sees it recorded makes it archivable. A Request is the exception: an Inbox never Refreshes, so a pushed stream is wanted at once and its archive job waits instead. An archive that meets a stream with no recording yet waits 30 minutes between tries, without counting attempts, for up to 48 h after the job was created, then fails; the archive job alone measures that ceiling (ADR 0014).
 _Avoid_: Broadcast, premiere (a scheduled upload is an upcoming stream to Copycast), recording (that is what it becomes)
 
 **Attachment**:

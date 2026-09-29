@@ -591,7 +591,9 @@ async def _record_failure(
     the job has waited ``LIVE_WAIT_MAX``: then failed, as the permanent error returned.
 
     Returns the error the job should raise: ``exc`` itself, or the permanent error a
-    ``NotReady`` turned into so the runner and the Catalog agree on the outcome.
+    ``NotReady`` turned into. This is the only place the ceiling is measured: the runner
+    trusts the error it gets (``NotReady`` re-queues, ``PermanentError`` fails), so the
+    Catalog and the job cannot disagree on the outcome.
     """
     live_status: LiveStatus | None = None
     if isinstance(exc, NotReady):

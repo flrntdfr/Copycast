@@ -47,7 +47,10 @@ class NotReady(EngineError):
 
     Retry later without counting the attempt; ``live_status`` says why and
     ``retry_after`` how long the Engine thinks it is worth waiting (an upcoming
-    stream's scheduled start), else the worker's own interval.
+    stream's scheduled start), else the worker's own interval. A job that lets
+    it escape has decided the wait may go on: the runner re-queues it without
+    a ceiling of its own, so a job that has waited long enough raises a
+    ``PermanentError`` instead (the archive job does).
     """
 
     def __init__(

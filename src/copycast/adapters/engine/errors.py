@@ -42,6 +42,12 @@ _TRANSIENT_TEXT = re.compile(
     r"unable to download|unable to extract|unable to open|unable to write",
     re.IGNORECASE,
 )
+_UPCOMING_TEXT = re.compile(
+    r"live event will begin|premieres? in\b|premiere will begin|premiere will start",
+    re.IGNORECASE,
+)
+"""YouTube's playability reasons for a stream or premiere that has not started: the
+extractor refuses such a video (it has no formats yet) before a ``match_filter`` runs."""
 
 
 def _mro_names(exc: BaseException) -> frozenset[str]:
@@ -148,6 +154,24 @@ def classify(exc: BaseException) -> EngineError:
     return _wrap(TransientError, exc, exc)
 
 
+def upcoming_refusal(exc: BaseException) -> str | None:
+    """The extractor's reason when ``exc`` says a stream or premiere has not started yet.
+
+    yt-dlp raises an expected ``ExtractorError`` carrying YouTube's own words
+    ("This live event will begin in 2 hours", "Premieres in 3 days") instead of
+    an info dict, so the live ``match_filter`` never sees the ``is_upcoming``
+    status; the reason is returned for the engine to report ``NotReady``.
+    ``None`` for anything else.
+    """
+    for item in _chain(exc):
+        if "ExtractorError" not in _mro_names(item):
+            continue
+        message = _message(item)
+        if _UPCOMING_TEXT.search(message):
+            return message
+    return None
+
+
 def _wrap(kind: type[EngineError], reason: BaseException, original: BaseException) -> EngineError:
     message = _message(reason)
     if reason is not original:
@@ -168,4 +192,5 @@ __all__ = [
     "StorageFull",
     "TransientError",
     "classify",
+    "upcoming_refusal",
 ]

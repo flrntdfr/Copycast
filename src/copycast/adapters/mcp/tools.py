@@ -264,7 +264,12 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         return await container.services.update_inbox(inbox_id, patch)
 
     async def add_to_inbox(request: RequestCreate, inbox: str = DEFAULT_INBOX) -> RequestRead:
-        """Push any URL (video, playlist, page) into an Inbox by id or name (default "Copycast")."""
+        """Push any URL (video, playlist, page) into an Inbox by id or name (default "Copycast").
+
+        A stream that is live is archived once YouTube publishes its recording (the item
+        waits, Queued, up to 48 h); one that has not started yet cannot be listed and the
+        Request fails with YouTube's reason: push it again once it is live or recorded.
+        """
         return await container.services.add_request(inbox, request, via=RequestedVia.mcp)
 
     async def prune_inbox(inbox: str, prune: PruneRequest) -> PruneResult:

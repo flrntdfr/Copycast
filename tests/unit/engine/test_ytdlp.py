@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 import yt_dlp
-from yt_dlp.utils import DownloadCancelled
+from yt_dlp.utils import DownloadCancelled, DownloadError, ExtractorError
 
 from copycast.adapters.engine import build_engine, engine_info
 from copycast.adapters.engine.ytdlp import (
@@ -297,6 +297,115 @@ def test_fetch_item_maps_a_refused_stream_to_not_ready(
     assert str(caught.value) == NOT_READY_MESSAGES[LiveStatus.is_live]
     assert isinstance(caught.value.__cause__, NotYetAvailable)
     assert not list(spec.temp_dir.iterdir()), "temp leftovers are discarded like any failure"
+
+
+UPCOMING_REASON = "This live event will begin in 2 hours."
+
+
+def _extractor_refusal(reason: str) -> DownloadError:
+    """What ``extract_info`` raises when the extractor refuses a format-less video: the
+    expected ``ExtractorError`` wrapped by ``YoutubeDL.trouble`` with ``exc_info``."""
+    try:
+        raise ExtractorError(reason, expected=True, video_id="x", ie="youtube")
+    except ExtractorError:
+        import sys
+
+        return DownloadError(f"ERROR: [youtube] x: {reason}", sys.exc_info())
+
+
+class _RefusingYoutubeDL(_StubYoutubeDL):
+    """The extractor refuses the video before ``process_video_result`` runs the filter."""
+
+    reason = UPCOMING_REASON
+
+    def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+        (self.params["paths"]["temp"] / Path("x.jpg")).write_bytes(b"thumb")
+        raise _extractor_refusal(self.reason)
+
+    def process_ie_result(self, ie_result: dict[str, Any], download: bool = True) -> dict[str, Any]:
+        raise _extractor_refusal(self.reason)
+
+
+def test_fetch_item_maps_the_extractors_not_started_refusal_to_not_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stream that has not started has no formats: the extractor refuses it before the
+    match filter can see ``is_upcoming``, so the refusal itself is reported as NotReady."""
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _RefusingYoutubeDL)
+    engine = YtDlpEngine()
+    spec = _spec(tmp_path, item_id="x")
+    with pytest.raises(NotReady) as caught:
+        engine.fetch_item(spec, {}, CancelToken(), lambda _: None, _Log())
+    assert caught.value.live_status is LiveStatus.is_upcoming
+    assert caught.value.retry_after is None, "the reason gives no usable start time"
+    assert str(caught.value).startswith(NOT_READY_MESSAGES[LiveStatus.is_upcoming])
+    assert UPCOMING_REASON in str(caught.value)
+    assert isinstance(caught.value.__cause__, DownloadError)
+    assert not list(spec.temp_dir.iterdir()), "temp leftovers are discarded like any failure"
+
+
+def test_fetch_item_keeps_other_extractor_refusals_permanent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _RefusingYoutubeDL)
+    monkeypatch.setattr(_RefusingYoutubeDL, "reason", "Private video")
+    engine = YtDlpEngine()
+    with pytest.raises(PermanentError, match="Private video"):
+        engine.fetch_item(_spec(tmp_path, item_id="x"), {}, CancelToken(), lambda _: None, _Log())
+
+
+def test_direct_fetch_never_reads_a_refusal_as_a_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An RSS enclosure has no live status; a refusal wording is a permanent error there."""
+    from copycast.application.ports import SynthItem
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _RefusingYoutubeDL)
+    home, temp = tmp_path / "m", tmp_path / "t"
+    direct = FetchSpec(
+        FetchKind.direct,
+        "https://x.example/a.mp3",
+        "x",
+        home,
+        temp,
+        SynthItem(id="x", title="A", url="https://x.example/a.mp3"),
+    )
+    with pytest.raises(PermanentError):
+        YtDlpEngine().fetch_item(direct, {}, CancelToken(), lambda _: None, _Log())
+
+
+class _SilentYoutubeDL(_StubYoutubeDL):
+    """A listing run with ``ignoreerrors``: the refusal is logged and nothing is returned."""
+
+    reason = UPCOMING_REASON
+
+    def extract_info(self, url: str, download: bool = True) -> None:
+        self.params["logger"].error(f"ERROR: [youtube] x: {self.reason}")
+        return None
+
+    def sanitize_info(self, info: object) -> object:
+        return info
+
+
+def test_list_source_reports_the_logged_reason_when_yt_dlp_extracts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _SilentYoutubeDL)
+    seen: list[str] = []
+
+    class _Recording(_Log):
+        def error(self, message: str) -> None:
+            seen.append(message)
+
+    with pytest.raises(PermanentError) as caught:
+        YtDlpEngine().list_source(
+            "https://www.youtube.com/watch?v=x", {}, CancelToken(), _Recording()
+        )
+    assert str(caught.value) == (
+        "yt-dlp extracted nothing from https://www.youtube.com/watch?v=x: "
+        f"[youtube] x: {UPCOMING_REASON}"
+    )
+    assert seen == [f"ERROR: [youtube] x: {UPCOMING_REASON}"], "the job log still gets the line"
 
 
 def test_fetch_item_keeps_a_plain_cancellation_a_cancellation(

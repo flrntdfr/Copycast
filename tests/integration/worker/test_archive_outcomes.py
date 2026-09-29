@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from sqlalchemy import update
@@ -23,6 +24,7 @@ from copycast.domain.enums import (
 )
 from copycast.domain.exceptions import Conflict
 from copycast.worker.constants import LIVE_RETRY, LIVE_WAIT_MAX
+from copycast.worker.jobs import archive_item
 from copycast.worker.runner import STORAGE_FULL_ERROR, Runner
 from tests.integration.worker.conftest import Source, create_mirror, jobs_of, uow
 from tests.support.factories import listing
@@ -242,6 +244,75 @@ async def test_a_stream_without_a_recording_waits_without_counting_then_gives_up
         assert item.archive_state == ArchiveState.failed and item.attempt_count == 1
         assert item.last_error == row.error and item.live_status == LiveStatus.post_live
     assert runner.stats.failed == 1
+
+
+async def _one_stream_job(
+    container: Container, engine: FakeEngine, name: str
+) -> tuple[str, str, Any]:
+    url = f"https://www.youtube.com/@{name}/streams"
+    engine.script_listing(url, listing(1, service="YouTube", raw={"_type": "playlist"}))
+    mirror = await create_mirror(container, url, mode=BackfillMode.selection)
+    async with uow(container) as unit:
+        item_id = (await unit.catalog.for_feed(mirror.id))[0].id
+    job = await container.services.archive_item(mirror.id, item_id)
+    return mirror.id, item_id, job
+
+
+async def _age_job(container: Container, job_id: object, age: timedelta) -> datetime:
+    created_at = datetime.now(UTC) - age
+    async with uow(container) as unit:
+        await unit.session.execute(
+            update(Job).where(Job.id == job_id).values(created_at=created_at)
+        )
+    return created_at
+
+
+async def test_the_runner_follows_the_archive_jobs_verdict_on_the_ceiling(
+    container: Container, runner: Runner, engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ceiling is measured once, by the archive job: when it lets a NotReady through
+    (the item stays wanted), the runner re-queues even though its own clock says the 48 h
+    are over, so the Catalog and the job never disagree (review finding). Nothing is left
+    of the budget, so the next try is immediate; there the job decides again, and with the
+    recording published it archives the item."""
+    _feed_id, item_id, job = await _one_stream_job(container, engine, "verdict")
+    await _age_job(container, job.id, LIVE_WAIT_MAX + timedelta(hours=1))
+    monkeypatch.setattr(archive_item, "live_wait_exceeded", lambda *a, **k: False)
+    engine.fail_next(NotReady("still live", live_status=LiveStatus.is_live))
+    await runner.run_until_idle()
+    assert (runner.stats.requeued, runner.stats.failed) == (1, 0), (
+        "the runner followed the job's NotReady instead of failing on its own clock"
+    )
+    assert engine.records.fetched_item_ids == [item_id, item_id], "the last try ran at once"
+    async with uow(container) as unit:
+        row = await unit.jobs.require(job.id)
+        item = await unit.catalog.require(item_id)
+        assert (row.status, row.attempt) == (JobStatus.succeeded.value, 1)
+        assert (item.archive_state, item.attempt_count) == (ArchiveState.archived, 0)
+        assert item.live_status == LiveStatus.is_live, "a listing, not an archive, updates it"
+        lines = await unit.jobs.log_lines(job.id)
+        assert any("still live" in line.message for line in lines)
+
+
+async def test_a_streams_wait_is_never_scheduled_past_the_jobs_ceiling(
+    container: Container, runner: Runner, engine: FakeEngine
+) -> None:
+    """A start estimate beyond the budget left is cut to it: the job gets its last try at
+    the ceiling instead of being parked past it and failing without one (review finding)."""
+    _feed_id, item_id, job = await _one_stream_job(container, engine, "ceiling")
+    created_at = await _age_job(container, job.id, timedelta(hours=10))
+    engine.fail_next(
+        NotReady(
+            "not started yet", live_status=LiveStatus.is_upcoming, retry_after=timedelta(hours=40)
+        )
+    )
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        row = await unit.jobs.require(job.id)
+        assert row.status == JobStatus.queued.value and row.attempt == 0
+        ceiling = created_at + LIVE_WAIT_MAX
+        assert ceiling - timedelta(seconds=5) <= row.run_after <= ceiling
+        assert (await unit.catalog.require(item_id)).archive_state == ArchiveState.wanted
 
 
 async def test_pause_cancels_a_running_download_and_keeps_the_part_file(

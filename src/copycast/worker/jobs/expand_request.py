@@ -4,7 +4,9 @@ A podcast feed URL is refused ("use create_mirror"); a URL serving
 ``audio/*`` or ``video/*`` becomes one item; anything else is listed by the
 Engine (leaves capped at 1000). Every leaf is upserted ``wanted`` with
 ``wanted_reason=request`` (a deleted row flips back), linked to the Request
-and queued for archiving.
+and queued for archiving: a stream that is upcoming or live included, since
+an Inbox has no Refresh to notice its recording later, so its archive job
+waits for the recording (``NotReady``) instead.
 """
 
 from __future__ import annotations
@@ -99,6 +101,27 @@ def _is_feed(url: str, content_type: str | None) -> bool:
     return True
 
 
+def want_streams(listing: SourceListing) -> SourceListing:
+    """The listing with every stream archivable, whatever its ``live_status``.
+
+    A listing marks an upcoming or live stream not archivable so no policy
+    wants it before its recording exists; a Mirror's next Refresh flips it.
+    A Request is an explicit push into an Inbox, which never Refreshes, so
+    the item is wanted at once and its archive job waits for the recording
+    (``NotReady``: 30 minutes between tries, for up to 48 h) like any archive
+    that meets a stream. The status itself is kept so the UI says why.
+    """
+    if all(item.archivable for item in listing.items):
+        return listing
+    items = [
+        item.model_copy(update={"archivable": True})
+        if not item.archivable and item.live_status is not None
+        else item
+        for item in listing.items
+    ]
+    return listing.model_copy(update={"items": items})
+
+
 def expand(
     engine: Engine, url: str, options: Mapping[str, Any], cancel: CancelToken, log_: EngineLog
 ) -> SourceListing:
@@ -114,7 +137,7 @@ def expand(
     if len(listing.items) > LEAF_CAP:
         log_.warning(f"request lists {len(listing.items)} items; keeping the first {LEAF_CAP}")
         listing = listing.model_copy(update={"items": list(listing.items[:LEAF_CAP])})
-    return listing
+    return want_streams(listing)
 
 
 async def relist_hidden(uow: UnitOfWork, feed_id: str) -> int:
@@ -227,4 +250,4 @@ async def _record_failure(ctx: JobContext, feed_id: str, request_id: Any, exc: E
     log.warning("request.failed", request_id=str(request_id), error=str(exc))
 
 
-__all__ = ["USE_CREATE_MIRROR", "direct_listing", "expand", "relist_hidden", "run"]
+__all__ = ["USE_CREATE_MIRROR", "direct_listing", "expand", "relist_hidden", "run", "want_streams"]

@@ -16,7 +16,7 @@ from yt_dlp.utils import (
     UnavailableVideoError,
 )
 
-from copycast.adapters.engine.errors import classify
+from copycast.adapters.engine.errors import classify, upcoming_refusal
 from copycast.application.ports import (
     Cancelled,
     PermanentError,
@@ -118,6 +118,39 @@ def test_postprocessing_errors() -> None:
     assert isinstance(classify(PostProcessingError("Only mp3 is supported")), PermanentError)
     no_audio = _download_error(PostProcessingError("no audio stream"), "Postprocessing: no audio")
     assert isinstance(classify(no_audio), PermanentError)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "This live event will begin in 2 hours.",
+        "This live event will begin in a few moments.",
+        "Premieres in 3 days",
+        "Premiere will begin shortly",
+    ],
+)
+def test_upcoming_refusal_reads_youtubes_not_started_reasons(reason: str) -> None:
+    """The extractor refuses a stream or premiere that has not started before any
+    ``match_filter`` runs; the reason is recognised through the whole chain."""
+    inner = ExtractorError(reason, expected=True, video_id="abc", ie="youtube")
+    outer = _download_error(inner, f"ERROR: [youtube] abc: {reason}")
+    found = upcoming_refusal(outer)
+    assert found is not None and reason in found
+    assert isinstance(classify(outer), PermanentError), "classify itself is unchanged"
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ExtractorError("Private video", expected=True),
+        ExtractorError("Video unavailable", expected=True),
+        ExtractorError("This live stream recording is not available.", expected=True),
+        RuntimeError("This live event will begin in 2 hours."),
+        DownloadCancelled("stop"),
+    ],
+)
+def test_upcoming_refusal_ignores_everything_else(exc: BaseException) -> None:
+    assert upcoming_refusal(exc) is None
 
 
 def test_unknown_exceptions_are_transient_and_keep_the_cause() -> None:

@@ -80,6 +80,7 @@ class FakeEngine:
         self._listings: dict[str, SourceListing] = {}
         self._default_listing = default_listing
         self._failures: list[Exception] = []
+        self._fetch_failures: list[tuple[str | None, Exception]] = []
         self._block: threading.Event | None = None
         self.records = EngineRecords()
         self.info_extra: dict[str, Any] = {}
@@ -100,6 +101,17 @@ class FakeEngine:
         with self._lock:
             self._failures.append(exc)
 
+    def fail_next_fetch(self, exc: Exception, *, url: str | None = None) -> None:
+        """Raise ``exc`` from the next fetch only (of the item at ``url`` when given).
+
+        A Request's expand job lists before its archive job fetches, so a
+        failure meant for the fetch cannot go through :meth:`fail_next`; and
+        with several archive jobs running at once, ``url`` (the item's
+        ``source_url``) says which fetch it is for.
+        """
+        with self._lock:
+            self._fetch_failures.append((url, exc))
+
     def block_fetches(self, event: threading.Event) -> None:
         """Until ``event`` is set, fetches write a ``.part`` file and poll the cancel token.
 
@@ -118,6 +130,7 @@ class FakeEngine:
         with self._lock:
             self._listings.clear()
             self._failures.clear()
+            self._fetch_failures.clear()
             self._block = None
             self.records = EngineRecords()
 
@@ -169,6 +182,12 @@ class FakeEngine:
             self.records.fetches.append(FetchRecord(spec=spec, options=opts))
             self.records.options_seen.append(opts)
             failure = self._failures.pop(0) if self._failures else None
+            if failure is None:
+                for index, (url, scripted) in enumerate(self._fetch_failures):
+                    if url is None or url == spec.url:
+                        failure = scripted
+                        del self._fetch_failures[index]
+                        break
             block = self._block
         if failure is not None:
             log.error(f"fake engine failure: {failure}")

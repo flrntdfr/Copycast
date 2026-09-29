@@ -223,12 +223,19 @@ recorded, makes it archivable, lists it in an Automatic feed and archives it whe
 the Backfill wants it. An archive job that nevertheless meets a stream with no recording yet
 (still live, not started, or ended but still being processed by YouTube) downloads nothing:
 the job is queued again 30 minutes later (at the scheduled start for an upcoming stream, when
-that is later) without counting an attempt, the item goes back to *Queued* with the reason as
-its last error and the badge explaining why, and this repeats for up to 48 h after the job
-was created; then the job and the item fail for good ("still not published after 48 h") and
-*Retry N failed* starts the wait over. RSS Sources are untouched. Nothing is repaired: an
-Episode archived from a stream while it was live (before 1.3.1) keeps the partial recording;
-delete it and archive it again once the recording is published
+that is later, but never past the job's 48 h ceiling) without counting an attempt, the item
+goes back to *Queued* with the reason as its last error and the badge explaining why, and this
+repeats for up to 48 h after the job was created; then the job and the item fail for good
+("still not published after 48 h") and *Retry N failed* starts the wait over. A stream pushed
+into an Inbox as a Request is wanted at once whatever its status, because an Inbox has no
+Refresh that would notice the recording later: the row shows *Queued* with the *Live* or
+*Upcoming* badge and its archive job waits as above (`add_to_inbox` of a stream on air archives
+the recording once YouTube publishes it). YouTube lists nothing for a stream or premiere that
+has not started, so a Request for one alone fails at expansion with YouTube's own reason ("This
+live event will begin in 2 hours"): push it again once it is live or recorded; a playlist
+Request that contains one gets a waiting item like any other. RSS Sources are untouched.
+Nothing is repaired: an Episode archived from a stream while it was live (before 1.3.1) keeps
+the partial recording; delete it and archive it again once the recording is published
 ([ADR 0014](adr/0014-live-streams-archived-once-recorded.md)).
 
 ## YouTube dates and descriptions

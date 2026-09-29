@@ -32,13 +32,30 @@ feed lists it.
 a byte is downloaded and surfaces the refusal as `NotReady(EngineError)`, carrying the
 status and, for an upcoming stream with a known start, how long to wait; yt-dlp re-raises a
 filter's `DownloadCancelled` as a fresh instance, so the reason travels in the engine's
-per-fetch hook state rather than on the exception. The worker treats `NotReady` as neither
-transient nor permanent: the job is queued again `LIVE_RETRY` (30 minutes) later, or at the
-stream's scheduled start when that is later, without counting the attempt; the item goes
-back to `wanted` with the reason as `last_error` and its `live_status` stored so the UI
-says why. Once the job has waited `LIVE_WAIT_MAX` (48 h since it was created) the job and
-the item fail for good ("still not published after 48 h"); the archive job decides that
-ceiling as well as the runner, so the Catalog and the job never disagree.
+per-fetch hook state rather than on the exception. A stream that has not started has no
+formats at all, so the YouTube extractor refuses it before the filter runs, with YouTube's
+own words ("This live event will begin in 2 hours", "Premieres in 3 days"); the engine
+recognises that refusal (`errors.upcoming_refusal`) and reports `NotReady(is_upcoming)` for
+it too. The worker treats `NotReady` as neither transient nor permanent: the job is queued
+again `LIVE_RETRY` (30 minutes) later, or at the stream's scheduled start when that is
+later, never past the job's ceiling, without counting the attempt; the item goes back to
+`wanted` with the reason as `last_error` and its `live_status` stored so the UI says why.
+Once the job has waited `LIVE_WAIT_MAX` (48 h since it was created) the job and the item
+fail for good ("still not published after 48 h"). That ceiling is measured in one place,
+the archive job: it turns an expired `NotReady` into the `PermanentError` it raises, and
+the runner trusts the error it gets (`NotReady` re-queues, `PermanentError` fails) without
+a clock of its own, so the Catalog and the job never disagree. The re-queue delay is cut to
+the budget left (`created_at + LIVE_WAIT_MAX - now`), so a start estimate beyond the
+ceiling still gets the job its last try at the ceiling instead of past it.
+
+**Requests.** An Inbox has no Refresh, so nothing would ever flip a pushed stream's
+`archivable` once it is recorded. A Request therefore wants every stream it lists whatever
+its status (`expand_request.want_streams` sets `archivable` while keeping `live_status`):
+the item is Queued with its badge and its archive job waits as above. A Request for a
+stream that has not started fails at expansion, since YouTube lists nothing for it: the
+Request's error carries the reason yt-dlp logged ("yt-dlp extracted nothing from …: This
+live event will begin in 2 hours") and the URL is pushed again once the stream is live or
+recorded.
 
 **UI.** `ItemRead.live_status`; the Catalog shows *Live*, *Upcoming* or *Recording being
 processed* next to the state with the tooltip "Archived once the recording is published".
@@ -63,9 +80,15 @@ and archive it again once the recording is published.
   (*Archive all Available…*, a selection, or `archive_item`). A Rolling Mirror wants it at
   the next Refresh when it falls inside the window; an Automatic Mirror lists it as soon as
   it is recorded and archives it when a podcast app asks.
-- An upcoming stream is never wanted, so no archive job is queued for it and the `is_upcoming`
-  branch of the filter is a guard, not a path: the YouTube extractor may refuse such a video
-  (no formats yet) before the filter sees it, which `classify` would report as a permanent
-  error rather than `NotReady`.
+- No policy wants an upcoming stream, so a Mirror never queues an archive job for one; a
+  Request does (a playlist that contains one, or an Available item archived on demand once
+  a listing said `is_upcoming`). The YouTube extractor refuses such a video (no formats yet)
+  before the filter sees it; the engine reads that refusal as `NotReady(is_upcoming)` with
+  no start estimate, so the job tries again every 30 minutes until the stream starts, then
+  waits like any live one.
+- A stream pushed into an Inbox while live is archived once its recording is published; one
+  pushed before it starts is refused at expansion with YouTube's reason and must be pushed
+  again later. Before 1.3.1 the first case archived a fragment and the second failed with a
+  bare "extracted nothing".
 - `feed.json` carries `live_status` and a rebuild restores it; a descriptor written before
   1.3.1 has none, so the rebuilt row starts with no status and the next listing fills it.

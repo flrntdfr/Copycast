@@ -6,7 +6,10 @@ the :class:`CancelToken` is set) and maps every yt-dlp exception through
 :func:`errors.classify`. A fetch of an Engine item also installs a
 ``match_filter`` that refuses a stream with no recording yet (upcoming,
 live, or ended but still being processed) before a byte is downloaded; the
-refusal surfaces as :class:`NotReady`, never as a cancellation.
+refusal surfaces as :class:`NotReady`, never as a cancellation. A stream
+that has not started has no formats at all, so the extractor refuses it
+before the filter runs; that refusal (:func:`errors.upcoming_refusal`) is
+reported as ``NotReady`` too.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ from yt_dlp.postprocessor import (
 from yt_dlp.utils import DownloadCancelled, PostProcessingError, replace_extension
 from yt_dlp.version import CHANNEL, RELEASE_GIT_HEAD, __version__
 
-from copycast.adapters.engine.errors import classify
+from copycast.adapters.engine.errors import classify, upcoming_refusal
 from copycast.adapters.engine.options import fetch_params, listing_params, with_cookiefile
 from copycast.adapters.engine.synth import build, mime_for_ext
 from copycast.adapters.sources.listing import live_status_of, normalize
@@ -79,6 +82,35 @@ class NotYetAvailable(DownloadCancelled):
     (``YoutubeDL._match_entry``), so the reason travels in :class:`_HookState`,
     not on the exception.
     """
+
+
+class _LastErrorLog:
+    """An :class:`EngineLog` that forwards everything and remembers the last error line.
+
+    A listing run with ``ignoreerrors`` reports an extraction error to the
+    logger and returns nothing; the remembered line is the only trace of why.
+    """
+
+    ERROR_PREFIX: Final = "ERROR: "
+
+    def __init__(self, inner: EngineLog) -> None:
+        self._inner = inner
+        self.last_error: str | None = None
+
+    def debug(self, message: str) -> None:
+        self._inner.debug(message)
+
+    def info(self, message: str) -> None:
+        self._inner.info(message)
+
+    def warning(self, message: str) -> None:
+        self._inner.warning(message)
+
+    def error(self, message: str) -> None:
+        self._inner.error(message)
+        text = message.strip()
+        if text:
+            self.last_error = text.removeprefix(self.ERROR_PREFIX).strip() or text
 
 
 @functools.cache
@@ -152,16 +184,21 @@ class YtDlpEngine:
         limit: int | None = None,
     ) -> SourceListing:
         _check_cancel(cancel, f"listing of {url}")
+        errors = _LastErrorLog(log)
         try:
             with cookie_scope(self._cookies_path, options) as with_cookies:
-                params = listing_params(with_cookies, log=log, limit=limit)
+                params = listing_params(with_cookies, log=errors, limit=limit)
                 with yt_dlp.YoutubeDL(params) as ydl:
                     info = ydl.extract_info(url, download=False)
                     info = ydl.sanitize_info(info)
         except Exception as exc:
             raise classify(exc) from exc
         if info is None:
-            raise PermanentError(f"yt-dlp extracted nothing from {url}")
+            # ``ignoreerrors="only_download"`` turns an extraction error into a logged
+            # line and no result; the line says why (a stream that has not started,
+            # a private video), so the error carries it.
+            reason = f": {errors.last_error}" if errors.last_error else ""
+            raise PermanentError(f"yt-dlp extracted nothing from {url}{reason}")
         _check_cancel(cancel, f"listing of {url}")
         listing = normalize(info, url)
         # The channel feed dates and describes the newest videos exactly, in one request.
@@ -214,7 +251,15 @@ class YtDlpEngine:
                     live_status=state.not_ready,
                     retry_after=state.starts_in,
                 ) from exc
-            raise classify(exc) from exc
+            classified = classify(exc)
+            if spec.kind is FetchKind.ytdlp and isinstance(classified, PermanentError):
+                reason = upcoming_refusal(exc)
+                if reason is not None:
+                    raise NotReady(
+                        f"{NOT_READY_MESSAGES[LiveStatus.is_upcoming]} ({reason})",
+                        live_status=LiveStatus.is_upcoming,
+                    ) from exc
+            raise classified from exc
         if info is None:
             raise PermanentError(f"yt-dlp produced nothing for {spec.url}")
         if info.get("_type") == "playlist":

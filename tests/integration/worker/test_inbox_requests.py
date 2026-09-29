@@ -5,18 +5,24 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import update
 
+from copycast.adapters.db.models import Job
 from copycast.app import Container
 from copycast.application.models import InboxCreate, InboxUpdate, PruneRequest, RequestCreate
+from copycast.application.ports import NotReady
 from copycast.domain.enums import (
     ArchiveState,
+    ErrorKind,
     JobKind,
     JobStatus,
+    LiveStatus,
     RequestedVia,
     RequestStatus,
     WantedReason,
 )
 from copycast.domain.exceptions import Conflict, NotFound
+from copycast.worker.constants import LIVE_RETRY
 from copycast.worker.runner import Runner
 from tests.integration.worker.conftest import Source, jobs_of, uow
 from tests.support.factories import listing, listing_item
@@ -82,6 +88,110 @@ async def test_request_expands_into_wanted_items_and_archives(
     inbox = await container.services.resolve_inbox(default_inbox)
     assert inbox.request_count == 2 and inbox.episode_count == 4
     assert (await container.services.get_request(default_inbox, second.id)).item_count == 1
+
+
+async def test_a_live_stream_request_waits_for_the_recording_then_archives_it(
+    container: Container, default_inbox: str, runner: Runner, engine: FakeEngine
+) -> None:
+    """A stream on air pushed into an Inbox is wanted at once (an Inbox never Refreshes,
+    so nothing would flip ``archivable`` later); its archive job meets ``NotReady`` and
+    waits without counting the attempt, then archives the recording once published."""
+    url = "https://www.youtube.com/watch?v=onair"
+    on_air = listing(0, service="YouTube", title="On air").model_copy(
+        update={
+            "items": [
+                listing_item(
+                    1,
+                    key="youtube:onair",
+                    live_status=LiveStatus.is_live,
+                    archivable=False,
+                    enclosure_url=None,
+                    enclosure_type=None,
+                )
+            ]
+        }
+    )
+    engine.script_listing(url, on_air)
+    engine.fail_next_fetch(NotReady("still live", live_status=LiveStatus.is_live))
+    request = await container.services.add_request(
+        default_inbox, RequestCreate(url=url), via=RequestedVia.mcp
+    )
+    before = datetime.now(UTC)
+    await runner.run_until_idle()
+
+    detail = await container.services.get_request(default_inbox, request.id)
+    assert detail.status is RequestStatus.expanded and detail.item_count == 1
+    (item,) = detail.items
+    assert item.state is ArchiveState.wanted and item.live_status is LiveStatus.is_live
+    async with uow(container) as unit:
+        row = await unit.catalog.require(item.id)
+        assert row.archivable is True, "a Request wants a stream whatever its status"
+        assert row.wanted_reason == WantedReason.request and row.attempt_count == 0
+        assert row.last_error == "still live"
+    (archive,) = await jobs_of(container, default_inbox, kind=JobKind.archive_item)
+    assert archive.request_id == request.id and archive.status == JobStatus.queued.value
+    assert (archive.attempt, archive.error_kind) == (0, ErrorKind.transient.value)
+    assert before + LIVE_RETRY <= archive.run_after <= datetime.now(UTC) + LIVE_RETRY
+    assert engine.records.fetched_item_ids == [item.id]
+
+    # The recording is published: the same job archives it on what counts as its first try.
+    async with uow(container) as unit:
+        await unit.session.execute(
+            update(Job).where(Job.id == archive.id).values(run_after=datetime.now(UTC))
+        )
+    await runner.run_until_idle()
+    detail = await container.services.get_request(default_inbox, request.id)
+    assert detail.items[0].state is ArchiveState.archived
+    async with uow(container) as unit:
+        row = await unit.jobs.require(archive.id)
+        assert row.status == JobStatus.succeeded.value and row.attempt == 1
+    page = await container.services.list_items(default_inbox, listed=True)
+    assert page.total == 1
+
+
+async def test_a_playlist_request_wants_its_upcoming_stream_too(
+    container: Container, default_inbox: str, runner: Runner, engine: FakeEngine
+) -> None:
+    """A flat listing flags an upcoming stream; a Request wants it like the rest and the
+    archive job waits (the FakeEngine stands in for the extractor's refusal)."""
+    url = "https://www.youtube.com/playlist?list=PLsoon"
+    scripted = listing(0, service="YouTube", title="Soon").model_copy(
+        update={
+            "items": [
+                listing_item(1, key="youtube:old", live_status=LiveStatus.was_live, position=0),
+                listing_item(
+                    2,
+                    key="youtube:soon",
+                    live_status=LiveStatus.is_upcoming,
+                    archivable=False,
+                    position=1,
+                ),
+            ]
+        }
+    )
+    engine.script_listing(url, scripted)
+    engine.fail_next_fetch(
+        NotReady("not started yet", live_status=LiveStatus.is_upcoming),
+        url=scripted.items[1].source_url,
+    )
+    request = await container.services.add_request(default_inbox, RequestCreate(url=url))
+    await runner.run_until_idle()
+    detail = await container.services.get_request(default_inbox, request.id)
+    assert detail.status is RequestStatus.expanded and detail.item_count == 2
+    by_title = {item.title: item for item in detail.items}
+    assert by_title["Episode 1"].state is ArchiveState.archived
+    soon = by_title["Episode 2"]
+    assert soon.state is ArchiveState.wanted and soon.live_status is LiveStatus.is_upcoming
+    assert soon.last_error == "not started yet" and soon.attempt_count == 0
+    archives = {
+        job.item_id: job
+        for job in await jobs_of(container, default_inbox, kind=JobKind.archive_item)
+    }
+    assert archives[by_title["Episode 1"].id].status == JobStatus.succeeded.value
+    waiting = archives[soon.id]
+    assert (waiting.status, waiting.attempt) == (JobStatus.queued.value, 0)
+    assert waiting.run_after > datetime.now(UTC) + LIVE_RETRY - timedelta(minutes=1)
+    assert engine.records.fetched_item_ids.count(soon.id) == 1
 
 
 async def test_feed_url_request_fails_with_create_mirror_hint(
