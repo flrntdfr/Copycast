@@ -11,7 +11,7 @@ import pytest
 
 from copycast.application.models import CatalogCounts, InboxRead, MirrorRead
 from copycast.application.services import readmodels
-from copycast.domain.enums import ArchiveState, HealthStatus
+from copycast.domain.enums import ArchiveState, HealthStatus, LiveStatus
 
 NOW = datetime(2025, 6, 1, tzinfo=UTC)
 
@@ -144,6 +144,7 @@ def item_row(**overrides: Any) -> Any:
         "duration_seconds": 60,
         "source_url": "https://x.example/1",
         "archivable": True,
+        "live_status": None,
         "listed": True,
         "first_seen_at": NOW,
         "archive_state": "archived",
@@ -198,6 +199,15 @@ def test_item_read_media_and_assets() -> None:
         read.assets[0].url
         == "http://t/feeds/abc/assets/0123456789abcdef.transcript.en.mirrored.vtt"
     )
+    assert read.live_status is None
+
+
+def test_item_read_carries_the_live_status() -> None:
+    live = readmodels.item_read(
+        item_row(archive_state="available", archivable=False, live_status="is_live"), Urls()
+    )
+    assert live.live_status is LiveStatus.is_live and live.media is None
+    assert live.model_dump(mode="json")["live_status"] == "is_live"
     # The feed's URL keeps the row's public_ext whatever the archive got; media names the file.
     moved = readmodels.item_read(item_row(public_ext="mp3"), Urls())
     assert moved.media is not None and moved.media.url.endswith(".m4a")

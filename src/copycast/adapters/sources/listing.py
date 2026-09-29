@@ -13,7 +13,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Final, cast
 
-from copycast.domain.enums import ListingOrder
+from copycast.domain.enums import ListingOrder, LiveStatus
 from copycast.domain.listing import SourceListing, SourceListingItem
 from copycast.domain.urls import youtube_tab
 
@@ -163,6 +163,17 @@ def author_of(entry: Mapping[str, Any]) -> str | None:
     return None
 
 
+def live_status_of(entry: Mapping[str, Any]) -> LiveStatus | None:
+    """The entry's ``live_status`` as the domain enum; ``None`` when absent or unknown."""
+    value = entry.get("live_status")
+    if not isinstance(value, str):
+        return None
+    try:
+        return LiveStatus(value)
+    except ValueError:
+        return None
+
+
 def normalize(info: Mapping[str, Any], url: str) -> SourceListing:
     """Turn a sanitized yt-dlp info dict (flat playlist or single video) into a listing."""
     extractor = _text(info.get("extractor"))
@@ -179,6 +190,7 @@ def normalize(info: Mapping[str, Any], url: str) -> SourceListing:
         seen.add(key)
         duration = _int(entry.get("duration"))
         published_at = entry_date(entry)
+        live_status = live_status_of(entry)
         items.append(
             SourceListingItem(
                 source_key=key,
@@ -200,7 +212,9 @@ def normalize(info: Mapping[str, Any], url: str) -> SourceListing:
                 tab=tab,
                 enclosure_url=None,
                 enclosure_type=None,
-                archivable=True,
+                # An upcoming or live stream is listed but has no recording to archive yet.
+                archivable=live_status is None or live_status.archivable,
+                live_status=live_status,
             )
         )
     return SourceListing(
@@ -228,6 +242,7 @@ __all__ = [
     "is_approximate_date",
     "is_playlist_like",
     "listing_order_of",
+    "live_status_of",
     "normalize",
     "service_name",
     "source_key_of",

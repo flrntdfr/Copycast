@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import socket
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Final
 
 from copycast.domain.enums import JobKind
@@ -35,6 +35,11 @@ REFRESH_RUN_RETENTION: Final = timedelta(days=90)
 AUTOPRUNE_INTERVAL: Final = timedelta(hours=24)
 STORAGE_FULL_RETRY: Final = timedelta(minutes=10)
 QUARANTINE_RETRY: Final = timedelta(minutes=10)
+LIVE_RETRY: Final = timedelta(minutes=30)
+"""An archive that met a stream with no recording yet (live, upcoming, being processed)
+tries again this much later, without counting the attempt."""
+LIVE_WAIT_MAX: Final = timedelta(hours=48)
+"""...and gives up, permanently, once the job has waited this long since it was created."""
 
 BACKOFF_BASE_SECONDS: Final = 60.0
 BACKOFF_MAX_SECONDS: Final = 6 * 3600.0
@@ -55,6 +60,17 @@ def default_worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
+def live_wait_exceeded(created_at: datetime, *, now: datetime | None = None) -> bool:
+    """Whether a job created at ``created_at`` has waited for a recording longer than allowed."""
+    return (now or datetime.now(UTC)) - created_at > LIVE_WAIT_MAX
+
+
+def live_wait_exhausted_message(reason: str) -> str:
+    """The permanent error of a job that waited ``LIVE_WAIT_MAX`` for a recording in vain."""
+    hours = int(LIVE_WAIT_MAX.total_seconds() // 3600)
+    return f"{reason}; still not published after {hours} h"
+
+
 __all__ = [
     "AUTOPRUNE_INTERVAL",
     "BACKOFF_BASE_SECONDS",
@@ -70,6 +86,8 @@ __all__ = [
     "HEARTBEAT_SECONDS",
     "JOB_RETENTION",
     "LEAF_CAP",
+    "LIVE_RETRY",
+    "LIVE_WAIT_MAX",
     "LOG_FLUSH_SECONDS",
     "LOG_LINE_CAP",
     "MONITOR_TICK_SECONDS",
@@ -82,4 +100,6 @@ __all__ = [
     "STORAGE_FULL_RETRY",
     "UNRESPONSIVE_GRACE_SECONDS",
     "default_worker_id",
+    "live_wait_exceeded",
+    "live_wait_exhausted_message",
 ]

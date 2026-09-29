@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from copycast.domain.enums import ListingOrder
+from copycast.domain.enums import ListingOrder, LiveStatus
 
 
 def _ensure_utc(value: datetime | None) -> datetime | None:
@@ -39,6 +39,11 @@ class SourceListingItem(BaseModel):
     enclosure_url: str | None = None
     enclosure_type: str | None = None
     archivable: bool = True
+    live_status: LiveStatus | None = Field(
+        default=None,
+        description="The Engine's live_status when it gave one; an upcoming or live stream "
+        "is listed but not archivable until its recording is published",
+    )
 
     @field_validator("published_at")
     @classmethod

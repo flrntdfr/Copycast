@@ -5,13 +5,14 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 from pydantic import ValidationError
 
-from copycast.domain.enums import ListingOrder
+from copycast.domain.enums import ListingOrder, LiveStatus
 from copycast.domain.listing import SourceListing, SourceListingItem
 
 
 def test_item_defaults_and_frozen() -> None:
     item = SourceListingItem(source_key="k", title="t")
     assert item.archivable is True
+    assert item.live_status is None
     assert item.position == 0
     assert item.published_at is None
     with pytest.raises(ValidationError):
@@ -36,6 +37,15 @@ def test_source_key_must_not_be_empty_and_extra_keys_are_rejected() -> None:
         SourceListingItem(source_key="k", title="t", bogus=1)  # type: ignore[call-arg]
     with pytest.raises(ValidationError):
         SourceListingItem(source_key="k", title="t", duration_seconds=-1)
+
+
+def test_live_status_is_the_enum_or_nothing() -> None:
+    live = SourceListingItem(source_key="k", title="t", live_status="is_live", archivable=False)
+    assert live.live_status is LiveStatus.is_live and live.archivable is False
+    again = SourceListingItem.model_validate_json(live.model_dump_json())
+    assert again == live
+    with pytest.raises(ValidationError):
+        SourceListingItem(source_key="k", title="t", live_status="streaming")  # type: ignore[arg-type]
 
 
 def test_listing_defaults() -> None:

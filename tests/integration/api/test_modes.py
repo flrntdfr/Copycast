@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -9,11 +10,14 @@ import pytest
 from lxml import etree
 
 from copycast.adapters.api.routes import public
+from copycast.app import Container
+from copycast.domain.enums import LiveStatus
 from copycast.worker.runner import Runner
 from tests.integration.api.conftest import Source, create_mirror, items_of
-from tests.support.factories import listing
+from tests.integration.api.test_feeds_public import CHANNEL_RAW, outside_cooldown
+from tests.support.factories import EPOCH, listing, listing_item
 from tests.support.fake_engine import FakeEngine
-from tests.support.paths import MEDIA_URL, api
+from tests.support.paths import FEED_URL, MEDIA_URL, api
 
 pytestmark = pytest.mark.integration
 
@@ -112,6 +116,60 @@ async def test_automatic_feed_lists_everything_under_stable_urls_and_archives_on
     assert retry.status_code == 503
     await runner.run_until_idle()
     assert (await client.get(stable)).status_code == 200
+
+
+async def test_automatic_feed_lists_a_live_stream_only_once_its_recording_is_published(
+    client: httpx.AsyncClient,
+    engine: FakeEngine,
+    runner: Runner,
+    container: Container,
+) -> None:
+    """The Catalog shows the stream (with its status), the feed does not; an on-demand
+    archive is refused; the light Refresh a fetch runs is enough to list it afterwards."""
+    url = "https://www.youtube.com/@live/streams"
+    plain = listing_item(1, published_at=EPOCH + timedelta(days=1), position=1, source_number=1)
+    live = listing_item(
+        2,
+        published_at=EPOCH + timedelta(days=2),
+        position=0,
+        source_number=2,
+        live_status=LiveStatus.is_live,
+        archivable=False,
+    )
+    engine.script_listing(
+        url, listing(2, service="YouTube", title="Live", raw=CHANNEL_RAW, items=[live, plain])
+    )
+    mirror = await create_mirror(client, url, mode="automatic")
+    await runner.run_until_idle()
+    items = {i["source_number"]: i for i in await items_of(client, mirror["id"])}
+    assert items[2]["live_status"] == "is_live" and items[1]["live_status"] is None
+    assert items[2]["state"] == "available" and items[2]["media"] is None
+    enclosures = enclosures_of(await client.get(f"/feeds/{mirror['id']}.xml"))
+    assert [e.get("url") for e in enclosures] == [items[1]["public_media_url"]]
+
+    refused = await client.post(api(f"/feeds/{mirror['id']}/items/{items[2]['id']}/archive"))
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["type"] == "urn:copycast:problem:source-unsupported"
+
+    # The stream ended: the first page a fetch checks says so, and the feed lists it.
+    await outside_cooldown(container, mirror["id"])
+    recorded = live.model_copy(update={"live_status": LiveStatus.was_live, "archivable": True})
+    engine.script_listing(
+        url,
+        listing(2, service="YouTube", title="Live", raw=CHANNEL_RAW, items=[recorded]),
+    )
+    response = await client.get(FEED_URL(mirror["id"]))
+    assert response.status_code == 200
+    assert engine.records.listings[-1].limit is not None, "a shallow (partial) listing"
+    enclosures = enclosures_of(response)
+    assert {e.get("url") for e in enclosures} == {
+        items[1]["public_media_url"],
+        items[2]["public_media_url"],
+    }
+    items = {i["source_number"]: i for i in await items_of(client, mirror["id"])}
+    assert items[2]["live_status"] == "was_live" and items[2]["listed"] is True
+    queued = await client.post(api(f"/feeds/{mirror['id']}/items/{items[2]['id']}/archive"))
+    assert queued.status_code == 202, queued.text
 
 
 async def test_automatic_ytdlp_feed_advertises_m4a_and_still_serves_the_legacy_mp3_url(

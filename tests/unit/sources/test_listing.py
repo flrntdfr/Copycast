@@ -12,11 +12,12 @@ from copycast.adapters.sources.listing import (
     entry_date,
     flatten,
     is_playlist_like,
+    live_status_of,
     normalize,
     service_name,
     source_key_of,
 )
-from copycast.domain.enums import ListingOrder
+from copycast.domain.enums import ListingOrder, LiveStatus
 
 
 def _load(fixtures_dir: Path, name: str) -> dict[str, Any]:
@@ -55,6 +56,58 @@ def test_channel_tabs_are_newest_first_without_source_numbers(fixtures_dir: Path
     assert four.author == "Fixture Channel"
     assert three.description is None
     assert four.enclosure_url is None and four.archivable is True
+    # The fixture's third video was streamed: recorded, so archivable; the rest say nothing.
+    assert three.live_status is LiveStatus.was_live and three.archivable is True
+    assert four.live_status is None and one.live_status is None
+
+
+def _stream(ident: str, live_status: object) -> dict[str, Any]:
+    return {
+        "_type": "url",
+        "ie_key": "Youtube",
+        "id": ident,
+        "url": f"https://www.youtube.com/watch?v={ident}",
+        "title": f"Stream {ident}",
+        "live_status": live_status,
+    }
+
+
+def test_upcoming_and_live_streams_are_listed_but_not_archivable() -> None:
+    """A flat tab listing flags streams; Copycast lists them and waits for the recording."""
+    info = {
+        "_type": "playlist",
+        "extractor": "youtube:tab",
+        "extractor_key": "YoutubeTab",
+        "id": "UCstreams",
+        "title": "Streams",
+        "entries": [
+            _stream("up", "is_upcoming"),
+            _stream("live", "is_live"),
+            _stream("ended", "post_live"),
+            _stream("done", "was_live"),
+            _stream("plain", "not_live"),
+            _stream("none", None),
+            _stream("odd", "premiering"),  # a value this build does not know
+        ],
+    }
+    listing = normalize(info, "https://www.youtube.com/@streams/streams")
+    by_id = {item.source_key.split(":", 1)[1]: item for item in listing.items}
+    assert by_id["up"].live_status is LiveStatus.is_upcoming and not by_id["up"].archivable
+    assert by_id["live"].live_status is LiveStatus.is_live and not by_id["live"].archivable
+    assert by_id["ended"].live_status is LiveStatus.post_live and by_id["ended"].archivable
+    assert by_id["done"].live_status is LiveStatus.was_live and by_id["done"].archivable
+    assert by_id["plain"].live_status is LiveStatus.not_live and by_id["plain"].archivable
+    assert by_id["none"].live_status is None and by_id["none"].archivable
+    assert by_id["odd"].live_status is None and by_id["odd"].archivable
+    assert all(item.tab == "streams" for item in listing.items)
+
+
+def test_live_status_of_reads_only_known_strings() -> None:
+    assert live_status_of({"live_status": "was_live"}) is LiveStatus.was_live
+    assert live_status_of({"live_status": None}) is None
+    assert live_status_of({}) is None
+    assert live_status_of({"live_status": 1}) is None
+    assert live_status_of({"live_status": "later"}) is None
 
 
 def test_playlist_is_oldest_first_with_playlist_index_as_source_number(fixtures_dir: Path) -> None:

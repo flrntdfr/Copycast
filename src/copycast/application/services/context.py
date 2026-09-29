@@ -42,6 +42,7 @@ from copycast.domain.enums import (
     JobStatus,
     JobTrigger,
     KeyScope,
+    LiveStatus,
     LogLevel,
     Numbering,
     RefreshRunStatus,
@@ -148,6 +149,8 @@ class ItemRow(Protocol):
     def source_url(self) -> str | None: ...
     @property
     def archivable(self) -> bool: ...
+    @property
+    def live_status(self) -> str | None: ...
     @property
     def listed(self) -> bool: ...
     @property
@@ -315,6 +318,8 @@ class ListingUpsertResult(Protocol):
     def seen_item_ids(self) -> list[str]: ...
     @property
     def wanted_item_ids(self) -> list[str]: ...
+    @property
+    def archivable_changed_count(self) -> int: ...
 
 
 # --------------------------------------------------------------------------- repositories
@@ -441,6 +446,7 @@ class CatalogRepositoryPort(Protocol):
         self, item_id: str, *, listed: bool, at: datetime | None = None
     ) -> bool: ...
     async def record_download(self, item_id: str, at: datetime | None = None) -> bool: ...
+    async def set_live_status(self, item_id: str, status: LiveStatus | None) -> None: ...
 
 
 class AssetRepositoryPort(Protocol):

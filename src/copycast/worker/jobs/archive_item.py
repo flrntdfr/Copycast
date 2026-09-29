@@ -6,7 +6,9 @@ RSS items are fetched through a synthesized info dict built from the item's
 Engine outputs (Artwork, subtitles, chapters) become assets under ``assets/``;
 for RSS items the Source's own chapters, transcripts and image are mirrored
 when the Engine produced none. Asset failures mark the asset ``failed``; the
-job still succeeds.
+job still succeeds. A stream with no recording yet (``NotReady``) puts the
+item back to ``wanted`` without counting the attempt and records its live
+status; once the job has waited ``LIVE_WAIT_MAX`` the item fails for good.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ from copycast.application.ports import (
     EngineError,
     FetchResult,
     FetchSpec,
+    NotReady,
     PermanentError,
     StorageFull,
     TransientError,
@@ -52,11 +55,13 @@ from copycast.domain.enums import (
     AssetState,
     FeedKind,
     FetchKind,
+    LiveStatus,
     ProgressPhase,
     SourceKind,
 )
 from copycast.domain.listing import SourceListingItem
 from copycast.logging import get_logger
+from copycast.worker.constants import live_wait_exceeded, live_wait_exhausted_message
 from copycast.worker.jobs import JobContext, JobOutcome
 from copycast.worker.jobs.common import engine_options_for
 
@@ -407,8 +412,10 @@ async def run(ctx: JobContext) -> JobOutcome:
             ctx.log,
         )
     except EngineError as exc:
-        await _record_failure(ctx, target.feed_id, item_id, exc)
-        raise
+        failure = await _record_failure(ctx, target.feed_id, item_id, exc)
+        if failure is exc:
+            raise
+        raise failure from exc
     except Exception as exc:
         wrapped = TransientError(f"{type(exc).__name__}: {exc}")
         await _record_failure(ctx, target.feed_id, item_id, wrapped)
@@ -575,10 +582,26 @@ def _discard_outputs(layout: Layout, feed_id: str, item_id: str, result: FetchRe
     layout.remove_tmp_leftovers(feed_id, item_id)
 
 
-async def _record_failure(ctx: JobContext, feed_id: str, item_id: str, exc: EngineError) -> None:
+async def _record_failure(
+    ctx: JobContext, feed_id: str, item_id: str, exc: EngineError
+) -> EngineError:
     """Transient -> wanted (attempt counted; failed once exhausted); permanent -> failed;
-    cancelled and storage full -> wanted without counting the attempt."""
-    if isinstance(exc, Cancelled | StorageFull):
+    cancelled and storage full -> wanted without counting the attempt; not ready (no
+    recording yet) -> wanted without counting the attempt, the live status stored, until
+    the job has waited ``LIVE_WAIT_MAX``: then failed, as the permanent error returned.
+
+    Returns the error the job should raise: ``exc`` itself, or the permanent error a
+    ``NotReady`` turned into so the runner and the Catalog agree on the outcome.
+    """
+    live_status: LiveStatus | None = None
+    if isinstance(exc, NotReady):
+        live_status = exc.live_status
+        if live_wait_exceeded(ctx.job.created_at):
+            exc = PermanentError(live_wait_exhausted_message(str(exc)))
+            state, count, error = ArchiveState.failed, True, str(exc)
+        else:
+            state, count, error = ArchiveState.wanted, False, str(exc)
+    elif isinstance(exc, Cancelled | StorageFull):
         state, count, error = (
             ArchiveState.wanted,
             False,
@@ -593,10 +616,18 @@ async def _record_failure(ctx: JobContext, feed_id: str, item_id: str, exc: Engi
         changed = await uow.catalog.mark_state(
             item_id, state, only_from=ArchiveState.archiving, error=error, count_attempt=count
         )
+        if live_status is not None:
+            await uow.catalog.set_live_status(item_id, live_status)
         if changed:
             await uow.publish(ItemEvent(feed_id=feed_id, item_id=item_id, state=state))
             await uow.update_intent(feed_id, debounce=True)
-    log.warning("archive.failed", item_id=item_id, state=state.value, error=str(exc))
+    if live_status is not None and state is ArchiveState.wanted:
+        log.info(
+            "archive.not_ready", item_id=item_id, live_status=live_status.value, error=str(exc)
+        )
+    else:
+        log.warning("archive.failed", item_id=item_id, state=state.value, error=str(exc))
+    return exc
 
 
 __all__ = [

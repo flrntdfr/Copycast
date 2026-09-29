@@ -325,8 +325,9 @@ async def _apply(
         )
         # The revision (feed ETag, cache entry, descriptor) moves only when something a
         # podcast client could see did: a Source without validators answers 200 to every
-        # conditional GET, and the same document again must leave its 304s alone.
-        observable = upsert.new_count > 0 or bool(wanted)
+        # conditional GET, and the same document again must leave its 304s alone. A row
+        # that became (or stopped being) archivable counts: an Automatic feed lists it.
+        observable = upsert.new_count > 0 or bool(wanted) or upsert.archivable_changed_count > 0
         if not partial:
             observable = observable or listed.changed or upsert.delisted_count > 0 or synced > 0
         if observable:

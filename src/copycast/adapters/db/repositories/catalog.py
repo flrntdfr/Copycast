@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from copycast.adapters.db.base import TZDateTime, refresh_loaded, rows_affected, utcnow
 from copycast.adapters.db.models import CatalogItem, Feed
 from copycast.application.models import CatalogCounts
-from copycast.domain.enums import ArchiveState, Numbering, WantedReason
+from copycast.domain.enums import ArchiveState, LiveStatus, Numbering, WantedReason
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import item_id as make_item_id
 from copycast.domain.listing import SourceListing, SourceListingItem
@@ -63,6 +63,9 @@ class ListingUpsert:
     new_item_ids: list[str] = field(default_factory=list[str])
     seen_item_ids: list[str] = field(default_factory=list[str])
     wanted_item_ids: list[str] = field(default_factory=list[str])
+    archivable_changed_count: int = 0
+    """Known rows whose ``archivable`` flag the listing flipped (a stream that ended, or
+    went live): an Automatic feed lists a different set of items afterwards."""
 
 
 class CatalogRepository:
@@ -403,17 +406,19 @@ class CatalogRepository:
         Unseen keys get ordinals from the oldest onwards and the ``public_ext``
         their media URL keeps for good (predicted from the Source kind and the
         enclosure), known keys get their metadata,
-        ``source_number``/``source_position``/``tab`` and ``listed`` refreshed
-        (never ``public_ext``), rows absent from a non-empty listing are
-        delisted. With ``wanted_reason`` every archivable item of the listing
-        that is Available, deleted or failed becomes wanted (Requests use this).
+        ``source_number``/``source_position``/``tab``, ``archivable``,
+        ``live_status`` and ``listed`` refreshed (never ``public_ext``), rows
+        absent from a non-empty listing are delisted. With ``wanted_reason``
+        every archivable item of the listing that is Available, deleted or
+        failed becomes wanted (Requests use this).
 
         ``partial`` applies a shallow listing (a light Refresh's first page):
         nothing is delisted, and known rows keep their ``source_number``,
-        ``source_season``, ``source_position``, ``tab`` and ``archivable``;
-        only the coalesced text and duration fields, the published-at rule,
-        ``listed`` and ``last_listed_at`` are refreshed. New rows insert as
-        usual, ``public_ext`` included.
+        ``source_season``, ``source_position`` and ``tab``; the coalesced text
+        and duration fields, the published-at rule, ``archivable`` and
+        ``live_status`` (a stream that ended flips back at the next light
+        Refresh), ``listed`` and ``last_listed_at`` are refreshed. New rows
+        insert as usual, ``public_ext`` included.
         """
         now = now or utcnow()
         feed = (
@@ -429,11 +434,16 @@ class CatalogRepository:
                 items[key] = entry
 
         existing_rows = await self._session.execute(
-            select(CatalogItem.id, CatalogItem.source_key, CatalogItem.archive_state).where(
-                CatalogItem.feed_id == feed_id
-            )
+            select(
+                CatalogItem.id,
+                CatalogItem.source_key,
+                CatalogItem.archive_state,
+                CatalogItem.archivable,
+            ).where(CatalogItem.feed_id == feed_id)
         )
-        existing: dict[str, tuple[str, str]] = {row[1]: (row[0], row[2]) for row in existing_rows}
+        existing: dict[str, tuple[str, str, bool]] = {
+            row[1]: (row[0], row[2], row[3]) for row in existing_rows
+        }
         max_ordinal = await self.max_ordinal(feed_id)
 
         new_items = [entry for key, entry in items.items() if key not in existing]
@@ -460,6 +470,7 @@ class CatalogRepository:
                         feed.source_kind, entry.enclosure_type, entry.enclosure_url
                     ),
                     "archivable": entry.archivable,
+                    "live_status": entry.live_status.value if entry.live_status else None,
                     "listed": True,
                     "first_seen_at": now,
                     "last_listed_at": now,
@@ -474,13 +485,16 @@ class CatalogRepository:
 
         updates: list[dict[str, Any]] = []
         seen_ids: list[str] = []
+        archivable_changed = 0
         for key, entry in items.items():
             found = existing.get(key)
             if found is None:
                 seen_ids.append(make_item_id(feed_id, key))
                 continue
-            iid, _state = found
+            iid, _state, was_archivable = found
             seen_ids.append(iid)
+            if was_archivable != entry.archivable:
+                archivable_changed += 1
             updates.append(_refresh_params(iid, entry, now))
         if updates:
             connection = await self._session.connection()
@@ -530,6 +544,7 @@ class CatalogRepository:
             new_item_ids=new_ids,
             seen_item_ids=seen_ids,
             wanted_item_ids=wanted_ids,
+            archivable_changed_count=archivable_changed,
         )
 
     async def set_wanted(self, item_ids: Iterable[str], reason: WantedReason) -> list[str]:
@@ -692,6 +707,15 @@ class CatalogRepository:
         )
         await self._refresh_if_loaded(item_id)
 
+    async def set_live_status(self, item_id: str, status: LiveStatus | None) -> None:
+        """What an archive attempt learnt about the stream (``post_live`` is only known here)."""
+        await self._session.execute(
+            update(CatalogItem)
+            .where(CatalogItem.id == item_id)
+            .values(live_status=status.value if status else None)
+        )
+        await self._refresh_if_loaded(item_id)
+
     async def _refresh_if_loaded(self, item_id: str) -> None:
         instance = self._session.identity_map.get((CatalogItem, (item_id,), None))
         if instance is not None:
@@ -737,6 +761,7 @@ def _refresh_params(item_id: str, entry: SourceListingItem, now: datetime) -> di
         "b_source_position": entry.position,
         "b_tab": entry.tab,
         "b_archivable": entry.archivable,
+        "b_live_status": entry.live_status.value if entry.live_status else None,
         "b_now": now,
     }
 
@@ -782,6 +807,11 @@ def _refresh_values() -> dict[str, Any]:
             bindparam("b_duration_seconds", type_=Integer), _T.c.duration_seconds
         ),
         "source_url": func.coalesce(bindparam("b_source_url", type_=Text), _T.c.source_url),
+        # Archivability and the live status follow every listing, shallow ones included:
+        # a stream that ended must become archivable at the next light Refresh, not only
+        # at the next full one.
+        "archivable": bindparam("b_archivable", type_=Boolean),
+        "live_status": bindparam("b_live_status", type_=Text),
         "listed": True,
         "last_listed_at": bindparam("b_now", type_=TZDateTime),
     }
@@ -797,15 +827,14 @@ _REFRESH_STMT: Update = (
         source_season=bindparam("b_source_season", type_=Integer),
         source_position=bindparam("b_source_position", type_=Integer),
         tab=bindparam("b_tab", type_=Text),
-        archivable=bindparam("b_archivable", type_=Boolean),
     )
 )
-"""A complete listing: numbering, position, tab and archivability follow the Source."""
+"""A complete listing: numbering, position and tab follow the Source as well."""
 
 _REFRESH_PARTIAL_STMT: Update = (
     _T.update().where(_T.c.id == bindparam("b_id", type_=String)).values(**_refresh_values())
 )
-"""A shallow (light Refresh) listing: a first page never renumbers, re-tabs or re-flags a row."""
+"""A shallow (light Refresh) listing: a first page never renumbers or re-tabs a row."""
 
 
 __all__ = ["CatalogRepository", "ItemSort", "ListingUpsert"]

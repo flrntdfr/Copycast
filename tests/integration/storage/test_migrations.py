@@ -36,7 +36,7 @@ EXPECTED_TABLES = {
     "engine_versions",
     "api_keys",
 }
-HEAD = "0010"
+HEAD = "0011"
 
 
 def _table_names(conn: Connection) -> set[str]:
@@ -130,6 +130,48 @@ async def test_0002_mints_a_pair_for_every_existing_feed(db_engine: AsyncEngine)
             )
         ).one()
     assert len(row[0]) == 8 and len(row[1]) == 24
+    assert await schema_is_current(db_engine)
+
+
+async def test_0011_adds_a_nullable_checked_live_status(db_engine: AsyncEngine) -> None:
+    """Existing rows start unknown (NULL); the column only takes yt-dlp's five values."""
+    await downgrade_schema(db_engine, "0010")
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO feeds (id, kind, title, auth_username, auth_password, source_url, "
+                "source_dedup_key, source_kind, backfill_mode) VALUES "
+                "('tube-live', 'mirror', 'Tube', 'u', 'p', 'https://www.youtube.com/@x/videos', "
+                "'youtube.com/@x', 'ytdlp', 'all')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO catalog_items (id, feed_id, source_key, ordinal, title, "
+                "last_listed_at) VALUES ('7777777777777777', 'tube-live', 'Youtube:v7', 1, 'T', "
+                "now())"
+            )
+        )
+    await ensure_schema(db_engine)
+    async with db_engine.connect() as conn:
+        found = (
+            await conn.execute(
+                text("SELECT live_status FROM catalog_items WHERE id = '7777777777777777'")
+            )
+        ).scalar_one()
+    assert found is None
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE catalog_items SET live_status = 'was_live' WHERE id = '7777777777777777'")
+        )
+    async with db_engine.begin() as conn:
+        with pytest.raises(Exception, match="ck_catalog_items_live_status"):
+            await conn.execute(
+                text(
+                    "UPDATE catalog_items SET live_status = 'streaming' "
+                    "WHERE id = '7777777777777777'"
+                )
+            )
     assert await schema_is_current(db_engine)
 
 

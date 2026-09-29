@@ -36,6 +36,7 @@ from copycast.domain.enums import (
     AssetState,
     BackfillMode,
     FeedKind,
+    LiveStatus,
     RequestedVia,
     RequestStatus,
     SourceKind,
@@ -106,6 +107,7 @@ class DescriptorItem(_Strict):
     duration_seconds: int | None = None
     source_url: str | None = None
     archivable: bool = True
+    live_status: LiveStatus | None = None
     listed: bool = True
     first_seen_at: datetime
     last_listed_at: datetime

@@ -1,27 +1,31 @@
-"""Archive jobs: retries with backoff, permanent failures, storage full, cancel on pause, delete."""
+"""Archive jobs: retries with backoff, permanent failures, storage full, live streams, cancel on
+pause, delete."""
 
 from __future__ import annotations
 
 import asyncio
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import update
 
 from copycast.adapters.db.models import Job
 from copycast.app import Container
-from copycast.application.ports import PermanentError, StorageFull, TransientError
+from copycast.application.ports import NotReady, PermanentError, StorageFull, TransientError
 from copycast.domain.enums import (
     ArchiveState,
     BackfillMode,
     ErrorKind,
     JobKind,
     JobStatus,
+    LiveStatus,
 )
 from copycast.domain.exceptions import Conflict
+from copycast.worker.constants import LIVE_RETRY, LIVE_WAIT_MAX
 from copycast.worker.runner import STORAGE_FULL_ERROR, Runner
 from tests.integration.worker.conftest import Source, create_mirror, jobs_of, uow
+from tests.support.factories import listing
 from tests.support.fake_engine import FakeEngine, part_files
 
 pytestmark = pytest.mark.integration
@@ -139,6 +143,105 @@ async def test_storage_full_requeues_without_counting_and_pauses_archive_claims(
     async with uow(container) as unit:
         states = {i.archive_state for i in await unit.catalog.for_feed(mirror.id)}
         assert states == {ArchiveState.archived}
+
+
+async def _run_now(container: Container, job_id: object) -> None:
+    async with uow(container) as unit:
+        await unit.session.execute(
+            update(Job).where(Job.id == job_id).values(run_after=datetime.now(UTC))
+        )
+
+
+async def test_a_stream_without_a_recording_waits_without_counting_then_gives_up(
+    container: Container, runner: Runner, engine: FakeEngine
+) -> None:
+    """NotReady re-queues in LIVE_RETRY (or the Engine's estimate) attempt-free, stores the
+    live status on the item, and fails for good once the job waited LIVE_WAIT_MAX."""
+    url = "https://www.youtube.com/@streams/streams"
+    engine.script_listing(url, listing(1, service="YouTube", raw={"_type": "playlist"}))
+    mirror = await create_mirror(container, url, mode=BackfillMode.selection)
+    async with uow(container) as unit:
+        item_id = (await unit.catalog.for_feed(mirror.id))[0].id
+    job = await container.services.archive_item(mirror.id, item_id)
+    engine.fail_next(NotReady("still live", live_status=LiveStatus.is_live))
+    before = datetime.now(UTC)
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        row = await unit.jobs.require(job.id)
+        assert row.status == JobStatus.queued.value
+        assert (row.attempt, row.error_kind, row.error) == (
+            0,
+            ErrorKind.transient.value,
+            "still live",
+        )
+        assert before + LIVE_RETRY <= row.run_after <= datetime.now(UTC) + LIVE_RETRY
+        item = await unit.catalog.require(item_id)
+        assert (item.archive_state, item.attempt_count) == (ArchiveState.wanted, 0)
+        assert item.last_error == "still live" and item.live_status == LiveStatus.is_live
+        lines = await unit.jobs.log_lines(job.id)
+        assert any("still live" in line.message for line in lines)
+    assert runner.stats.requeued == 1 and runner.stats.failed == 0
+
+    # An upcoming stream with a known start waits for it (never less than LIVE_RETRY).
+    await _run_now(container, job.id)
+    engine.fail_next(
+        NotReady(
+            "not started yet", live_status=LiveStatus.is_upcoming, retry_after=timedelta(hours=3)
+        )
+    )
+    before = datetime.now(UTC)
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        row = await unit.jobs.require(job.id)
+        assert row.status == JobStatus.queued.value and row.attempt == 0
+        assert (
+            before + timedelta(hours=3) <= row.run_after <= datetime.now(UTC) + timedelta(hours=3)
+        )
+        assert (await unit.catalog.require(item_id)).live_status == LiveStatus.is_upcoming
+    await _run_now(container, job.id)
+    engine.fail_next(
+        NotReady(
+            "not started yet", live_status=LiveStatus.is_upcoming, retry_after=timedelta(minutes=2)
+        )
+    )
+    before = datetime.now(UTC)
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        row = await unit.jobs.require(job.id)
+        assert before + LIVE_RETRY <= row.run_after, (
+            "an estimate shorter than LIVE_RETRY is not honoured"
+        )
+
+    # The recording is published: the same job archives it, still on its first attempt.
+    await _run_now(container, job.id)
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        row = await unit.jobs.require(job.id)
+        assert row.status == JobStatus.succeeded.value and row.attempt == 1
+        item = await unit.catalog.require(item_id)
+        assert item.archive_state == ArchiveState.archived and item.attempt_count == 0
+        assert item.live_status == LiveStatus.is_upcoming, "a listing, not an archive, updates it"
+
+    # Past the ceiling the job and the item fail for good; the status still says why.
+    await container.services.delete_item(mirror.id, item_id)
+    again = await container.services.archive_item(mirror.id, item_id)
+    assert again.id != job.id
+    async with uow(container) as unit:
+        await unit.session.execute(
+            update(Job)
+            .where(Job.id == again.id)
+            .values(created_at=datetime.now(UTC) - LIVE_WAIT_MAX - timedelta(minutes=1))
+        )
+    engine.fail_next(NotReady("recording being processed", live_status=LiveStatus.post_live))
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        row = await unit.jobs.require(again.id)
+        assert row.status == JobStatus.failed.value and row.error_kind == ErrorKind.permanent.value
+        assert row.error == "recording being processed; still not published after 48 h"
+        item = await unit.catalog.require(item_id)
+        assert item.archive_state == ArchiveState.failed and item.attempt_count == 1
+        assert item.last_error == row.error and item.live_status == LiveStatus.post_live
+    assert runner.stats.failed == 1
 
 
 async def test_pause_cancels_a_running_download_and_keeps_the_part_file(

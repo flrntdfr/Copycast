@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from copycast.adapters.db.base import Base, TimestampMixin, TZDateTime, enum_check
-from copycast.domain.enums import ArchiveState, WantedReason
+from copycast.domain.enums import ArchiveState, LiveStatus, WantedReason
 
 
 class CatalogItem(TimestampMixin, Base):
@@ -51,6 +51,9 @@ class CatalogItem(TimestampMixin, Base):
     archivable: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true"), default=True
     )
+    live_status: Mapped[str | None] = mapped_column(Text)
+    """The Engine's ``live_status`` from the last listing or archive attempt (a
+    :class:`LiveStatus` value); NULL when the Source never said."""
     source_item_xml: Mapped[str | None] = mapped_column(Text)
 
     listed: Mapped[bool] = mapped_column(
@@ -95,6 +98,7 @@ class CatalogItem(TimestampMixin, Base):
         UniqueConstraint("feed_id", "ordinal"),
         enum_check("archive_state", ArchiveState, "archive_state"),
         enum_check("wanted_reason", WantedReason, "wanted_reason"),
+        enum_check("live_status", LiveStatus, "live_status"),
         Index(
             "ix_catalog_items_feed_published",
             "feed_id",

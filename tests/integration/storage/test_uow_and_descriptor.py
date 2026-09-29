@@ -23,7 +23,7 @@ from copycast.adapters.storage.descriptor import (
 )
 from copycast.adapters.storage.layout import Layout
 from copycast.application.events import CHANNEL, FeedEvent, parse
-from copycast.domain.enums import ArchiveState, AssetKind, RequestedVia
+from copycast.domain.enums import ArchiveState, AssetKind, LiveStatus, RequestedVia
 from copycast.domain.exceptions import ConcurrentUpdate
 from copycast.settings import Settings
 from tests.integration.storage.conftest import asset_row, inbox_row, item_row, mirror_row, seed
@@ -193,7 +193,9 @@ async def test_publish_delivers_notify_on_commit(
 async def test_descriptor_carries_intent_not_telemetry(uow_factory: UnitOfWorkFactory) -> None:
     async with uow_factory() as uow:
         inbox = await uow.feeds.add(inbox_row(autoprune_days=7))
-        item = item_row(inbox, 1, state=ArchiveState.archived, download_count=5)
+        item = item_row(
+            inbox, 1, state=ArchiveState.archived, download_count=5, live_status="was_live"
+        )
         await seed(uow, item, asset_row(inbox, item, AssetKind.artwork))
         request = await uow.requests.add(inbox.id, "https://x.example/v", RequestedVia.mcp)
         await uow.requests.link_items(request.id, [item.id])
@@ -201,6 +203,7 @@ async def test_descriptor_carries_intent_not_telemetry(uow_factory: UnitOfWorkFa
     assert descriptor is not None
     assert descriptor.policy.autoprune_days == 7
     assert descriptor.items[0].archive_state is ArchiveState.archived
+    assert descriptor.items[0].live_status is LiveStatus.was_live
     assert descriptor.items[0].media_path == item.media_path
     assert not hasattr(descriptor.items[0], "download_count")
     assert descriptor.assets[0].item_id == item.id

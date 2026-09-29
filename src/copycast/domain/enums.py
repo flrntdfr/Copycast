@@ -71,6 +71,32 @@ def catalog_state(archive_state: ArchiveState, listed: bool) -> CatalogState:
     return CatalogState.failed
 
 
+class LiveStatus(StrEnum):
+    """What the Engine says an item is doing as a live stream (yt-dlp's ``live_status``).
+
+    A flat listing knows ``is_upcoming``, ``is_live`` and ``was_live``; only a full
+    extraction (an archive) knows ``post_live``, the stream that ended but whose
+    recording YouTube has not published yet. ``None`` on the item means the Source
+    said nothing (an RSS item, a plain upload from some extractors).
+    """
+
+    is_upcoming = "is_upcoming"
+    is_live = "is_live"
+    post_live = "post_live"
+    was_live = "was_live"
+    not_live = "not_live"
+
+    @property
+    def archivable(self) -> bool:
+        """Whether a listing may want the item: never while it is upcoming or live."""
+        return self not in (LiveStatus.is_upcoming, LiveStatus.is_live)
+
+    @property
+    def recorded(self) -> bool:
+        """Whether a fetch can get a recording: not while upcoming, live or being processed."""
+        return self.archivable and self is not LiveStatus.post_live
+
+
 class AssetKind(StrEnum):
     artwork = "artwork"
     chapters = "chapters"

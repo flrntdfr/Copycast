@@ -12,11 +12,11 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
-from copycast.domain.enums import EnginePhase, FetchKind
+from copycast.domain.enums import EnginePhase, FetchKind, LiveStatus
 from copycast.domain.listing import SourceListing
 
 # --------------------------------------------------------------------------- errors
@@ -40,6 +40,22 @@ class StorageFull(EngineError):
 
 class Cancelled(EngineError):
     """The cancel token was set while the call was in flight."""
+
+
+class NotReady(EngineError):
+    """The item has no recording yet: a stream upcoming, live or still being processed.
+
+    Retry later without counting the attempt; ``live_status`` says why and
+    ``retry_after`` how long the Engine thinks it is worth waiting (an upcoming
+    stream's scheduled start), else the worker's own interval.
+    """
+
+    def __init__(
+        self, message: str, *, live_status: LiveStatus, retry_after: timedelta | None = None
+    ) -> None:
+        super().__init__(message)
+        self.live_status = live_status
+        self.retry_after = retry_after
 
 
 # --------------------------------------------------------------------------- values

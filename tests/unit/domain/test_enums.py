@@ -12,6 +12,7 @@ from copycast.domain.enums import (
     JobKind,
     JobStatus,
     JobTrigger,
+    LiveStatus,
     RefreshRunStatus,
     catalog_state,
 )
@@ -62,3 +63,23 @@ def test_enums_are_plain_strings_for_text_columns() -> None:
     assert set(JobKind) == {"refresh", "archive_item", "expand_request", "prune", "rebuild"}
     assert "export" not in set(JobKind)
     assert set(RefreshRunStatus) == {"running", "succeeded", "unchanged", "failed", "cancelled"}
+    assert set(LiveStatus) == {"is_upcoming", "is_live", "post_live", "was_live", "not_live"}
+
+
+@pytest.mark.parametrize(
+    ("status", "archivable", "recorded"),
+    [
+        (LiveStatus.is_upcoming, False, False),
+        (LiveStatus.is_live, False, False),
+        (LiveStatus.post_live, True, False),  # only a full extraction knows it
+        (LiveStatus.was_live, True, True),
+        (LiveStatus.not_live, True, True),
+    ],
+)
+def test_live_status_says_when_a_stream_can_be_listed_and_fetched(
+    status: LiveStatus, archivable: bool, recorded: bool
+) -> None:
+    """A listing wants nothing upcoming or live; a fetch also waits out the processing."""
+    assert status.archivable is archivable
+    assert status.recorded is recorded
+    assert LiveStatus(status.value) is status

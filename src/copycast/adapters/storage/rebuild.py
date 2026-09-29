@@ -454,6 +454,7 @@ def _item_values(feed_id: str, item: DescriptorItem, public_ext: str) -> dict[st
         "duration_seconds": item.duration_seconds,
         "source_url": item.source_url,
         "archivable": item.archivable,
+        "live_status": item.live_status.value if item.live_status else None,
         "listed": item.listed,
         "first_seen_at": item.first_seen_at,
         "last_listed_at": item.last_listed_at,

@@ -27,6 +27,7 @@ from copycast.domain.enums import (
     AssetState,
     BackfillMode,
     FeedKind,
+    LiveStatus,
     RequestedVia,
     RequestStatus,
     SourceKind,
@@ -61,6 +62,7 @@ def _descriptor() -> FeedDescriptor:
                 archive_state=ArchiveState.archived,
                 media_path="media/fedcba9876543210.m4a",
                 public_ext="mp3",
+                live_status=LiveStatus.was_live,
             )
         ],
         assets=[
@@ -102,9 +104,12 @@ def test_defaults_and_round_trip(tmp_path: Path) -> None:
     assert FeedDescriptor.read(path).intent_version == 3
     # A descriptor written before 1.3 names no public_ext: it reads back as unknown.
     assert FeedDescriptor.read(path).items[0].public_ext == "mp3"
+    assert FeedDescriptor.read(path).items[0].live_status is LiveStatus.was_live
     del data["items"][0]["public_ext"]
+    del data["items"][0]["live_status"]  # written before 1.3.1
     path.write_text(json.dumps(data))
     assert FeedDescriptor.read(path).items[0].public_ext is None
+    assert FeedDescriptor.read(path).items[0].live_status is None
 
 
 def test_read_errors(tmp_path: Path) -> None:

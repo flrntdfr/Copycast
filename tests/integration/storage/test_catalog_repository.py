@@ -7,7 +7,14 @@ from datetime import timedelta
 import pytest
 
 from copycast.adapters.db.uow import UnitOfWork, UnitOfWorkFactory
-from copycast.domain.enums import ArchiveState, ListingOrder, Numbering, SourceKind, WantedReason
+from copycast.domain.enums import (
+    ArchiveState,
+    ListingOrder,
+    LiveStatus,
+    Numbering,
+    SourceKind,
+    WantedReason,
+)
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import item_id
 from tests.integration.storage.conftest import NOW, inbox_row, item_row, mirror_row, seed
@@ -100,7 +107,7 @@ async def test_upsert_delists_absent_rows_only_for_non_empty_listings(
 async def test_partial_upsert_adds_and_refreshes_without_delisting_or_renumbering(
     uow_factory: UnitOfWorkFactory,
 ) -> None:
-    """A light Refresh's first page: known rows keep numbering, position, tab, archivability."""
+    """A light Refresh's first page: known rows keep their numbering, position and tab."""
     feed_id = await _mirror(uow_factory)
     async with uow_factory() as uow:
         await uow.catalog.upsert_listing(feed_id, listing(3))
@@ -138,7 +145,8 @@ async def test_partial_upsert_adds_and_refreshes_without_delisting_or_renumberin
         assert third.published_at_approximate is False
         assert third.last_listed_at is not None and third.last_listed_at > before[third.source_key]
         assert (third.source_number, third.source_season, third.source_position) == (3, None, 0)
-        assert (third.tab, third.archivable) == (None, True), "a first page never re-tabs a row"
+        assert third.tab is None, "a first page never re-tabs a row"
+        assert third.archivable is False, "archivability follows every listing, shallow included"
         assert (fourth.source_number, fourth.source_position, fourth.tab) == (None, 0, "videos")
     # The same page applied as a complete listing does delist and renumber.
     async with uow_factory() as uow:
@@ -147,6 +155,66 @@ async def test_partial_upsert_adds_and_refreshes_without_delisting_or_renumberin
         third = await uow.catalog.by_source_key(feed_id, "urn:test:item:3")
         assert third is not None
         assert (third.source_number, third.source_position, third.tab) == (99, 1, "shorts")
+
+
+async def test_listings_store_the_live_status_and_flip_archivability_when_a_stream_ends(
+    uow_factory: UnitOfWorkFactory,
+) -> None:
+    """A live stream is listed, not archivable; the next listing (complete or shallow) that
+    says it was recorded makes it archivable again and keeps the status for the UI."""
+    feed_id = await _mirror(uow_factory)
+
+    def page(status: LiveStatus, *, archivable: bool, partial_page: bool = False) -> object:
+        items = [listing_item(2, live_status=status, archivable=archivable, position=0)]
+        if not partial_page:
+            items.append(listing_item(1, position=1))
+        return listing(2).model_copy(update={"items": items})
+
+    async with uow_factory() as uow:
+        await uow.catalog.upsert_listing(feed_id, page(LiveStatus.is_live, archivable=False))
+        rows = {r.source_key: r for r in await uow.catalog.for_feed(feed_id)}
+        live, plain = rows["urn:test:item:2"], rows["urn:test:item:1"]
+        assert (live.live_status, live.archivable) == (LiveStatus.is_live, False)
+        assert (plain.live_status, plain.archivable) == (None, True)
+        assert await uow.catalog.available_ids(feed_id) == [plain.id], "never wanted while live"
+        assert [i.id for i in await uow.catalog.for_render(feed_id, include_listed=True)] == [
+            plain.id
+        ], "an Automatic feed does not advertise a live stream"
+
+    # A shallow (light Refresh) listing that says the stream was recorded is enough.
+    async with uow_factory() as uow:
+        result = await uow.catalog.upsert_listing(
+            feed_id, page(LiveStatus.was_live, archivable=True, partial_page=True), partial=True
+        )
+        assert (result.new_count, result.delisted_count) == (0, 0)
+        assert result.archivable_changed_count == 1, "a light Refresh must bump the feed"
+        row = await uow.catalog.by_source_key(feed_id, "urn:test:item:2")
+        assert row is not None
+        assert (row.live_status, row.archivable) == (LiveStatus.was_live, True)
+        assert set(await uow.catalog.available_ids(feed_id)) == {live.id, plain.id}
+        same = await uow.catalog.upsert_listing(
+            feed_id, page(LiveStatus.was_live, archivable=True, partial_page=True), partial=True
+        )
+        assert same.archivable_changed_count == 0
+
+    # ...and so is a complete one, in both directions.
+    async with uow_factory() as uow:
+        await uow.catalog.upsert_listing(feed_id, page(LiveStatus.is_upcoming, archivable=False))
+        row = await uow.catalog.by_source_key(feed_id, "urn:test:item:2")
+        assert row is not None
+        assert (row.live_status, row.archivable) == (LiveStatus.is_upcoming, False)
+        await uow.catalog.upsert_listing(feed_id, page(LiveStatus.was_live, archivable=True))
+        row = await uow.catalog.by_source_key(feed_id, "urn:test:item:2")
+        assert row is not None
+        assert (row.live_status, row.archivable) == (LiveStatus.was_live, True)
+        # A listing that says nothing clears what an archive attempt learnt (below).
+        await uow.catalog.set_live_status(row.id, LiveStatus.post_live)
+        assert (await uow.catalog.require(row.id)).live_status == LiveStatus.post_live
+        await uow.catalog.set_live_status(row.id, None)
+        assert (await uow.catalog.require(row.id)).live_status is None
+        await uow.catalog.set_live_status(row.id, LiveStatus.post_live)
+        await uow.catalog.upsert_listing(feed_id, listing(2))
+        assert (await uow.catalog.require(row.id)).live_status is None
 
 
 async def test_upsert_refreshes_metadata_non_blank(uow_factory: UnitOfWorkFactory) -> None:

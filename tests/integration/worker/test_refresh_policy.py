@@ -16,6 +16,7 @@ from copycast.domain.enums import (
     JobKind,
     JobStatus,
     JobTrigger,
+    LiveStatus,
     RefreshRunStatus,
     WantedReason,
 )
@@ -245,6 +246,52 @@ async def test_minimum_length_keeps_short_items_available(
     async with uow(container) as unit:
         states = {i.source_number: i.archive_state for i in await unit.catalog.for_feed(mirror.id)}
     assert states[1] == ArchiveState.archived
+
+
+async def test_a_live_stream_is_listed_but_archived_only_once_recorded(
+    container: Container, engine, runner: Runner
+) -> None:
+    """Follow leaves a live stream Available and wants it when a listing says it was recorded."""
+    from tests.support.factories import listing, listing_item
+
+    url = "https://www.youtube.com/@live/streams"
+    items = [listing_item(1, position=0, source_number=1)]
+    engine.script_listing(
+        url, listing(1, service="YouTube", raw={"_type": "playlist"}, items=items)
+    )
+    mirror = await create_mirror(container, url)
+    await runner.run_until_idle()
+
+    # A stream goes live after creation: listed, flagged, not wanted.
+    stream = listing_item(
+        2, position=0, source_number=2, live_status=LiveStatus.is_live, archivable=False
+    )
+    engine.script_listing(
+        url, listing(2, service="YouTube", raw={"_type": "playlist"}, items=[stream, *items])
+    )
+    job = await _run_refresh(container, runner, mirror.id)
+    assert job.status == JobStatus.succeeded.value and job.result["new"] == 1
+    assert job.result["wanted"] == 0
+    async with uow(container) as unit:
+        rows = {i.source_number: i for i in await unit.catalog.for_feed(mirror.id)}
+        assert rows[1].archive_state == ArchiveState.archived
+        assert rows[2].archive_state == ArchiveState.available
+        assert (rows[2].archivable, rows[2].live_status) == (False, LiveStatus.is_live)
+    read = await container.services.list_items(mirror.id)
+    assert {i.source_number: i.live_status for i in read.items} == {1: None, 2: LiveStatus.is_live}
+
+    # The stream ended and YouTube published the recording: Follow wants it now.
+    recorded = stream.model_copy(update={"live_status": LiveStatus.was_live, "archivable": True})
+    engine.script_listing(
+        url, listing(2, service="YouTube", raw={"_type": "playlist"}, items=[recorded, *items])
+    )
+    job = await _run_refresh(container, runner, mirror.id)
+    assert job.result["wanted"] == 1
+    async with uow(container) as unit:
+        rows = {i.source_number: i for i in await unit.catalog.for_feed(mirror.id)}
+        assert rows[2].archive_state == ArchiveState.archived
+        assert rows[2].wanted_reason == WantedReason.follow
+        assert (rows[2].archivable, rows[2].live_status) == (True, LiveStatus.was_live)
 
 
 async def test_mirror_language_reaches_the_engine(

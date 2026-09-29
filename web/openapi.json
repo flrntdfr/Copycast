@@ -3790,6 +3790,17 @@
             "title": "Listed",
             "default": true
           },
+          "live_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LiveStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the Source last said the item is doing as a live stream: an upcoming or live stream is listed but archived only once its recording is published; post_live means the recording is still being processed"
+          },
           "attempt_count": {
             "type": "integer",
             "title": "Attempt Count",
@@ -4192,6 +4203,18 @@
         ],
         "title": "KeyScope",
         "description": "What an API key may do over MCP: read < write < full (destructive tools included)."
+      },
+      "LiveStatus": {
+        "type": "string",
+        "enum": [
+          "is_upcoming",
+          "is_live",
+          "post_live",
+          "was_live",
+          "not_live"
+        ],
+        "title": "LiveStatus",
+        "description": "What the Engine says an item is doing as a live stream (yt-dlp's ``live_status``).\n\nA flat listing knows ``is_upcoming``, ``is_live`` and ``was_live``; only a full\nextraction (an archive) knows ``post_live``, the stream that ended but whose\nrecording YouTube has not published yet. ``None`` on the item means the Source\nsaid nothing (an RSS item, a plain upload from some extractors)."
       },
       "MirrorChangePreview": {
         "properties": {

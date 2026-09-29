@@ -3,7 +3,10 @@
 Every call builds one ``YoutubeDL`` with the layered options, wires the
 progress and post-processor hooks (which raise ``DownloadCancelled`` when
 the :class:`CancelToken` is set) and maps every yt-dlp exception through
-:func:`errors.classify`.
+:func:`errors.classify`. A fetch of an Engine item also installs a
+``match_filter`` that refuses a stream with no recording yet (upcoming,
+live, or ended but still being processed) before a byte is downloaded; the
+refusal surfaces as :class:`NotReady`, never as a cancellation.
 """
 
 from __future__ import annotations
@@ -14,8 +17,9 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from collections.abc import Callable, Generator, Mapping
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -32,7 +36,7 @@ from yt_dlp.version import CHANNEL, RELEASE_GIT_HEAD, __version__
 from copycast.adapters.engine.errors import classify
 from copycast.adapters.engine.options import fetch_params, listing_params, with_cookiefile
 from copycast.adapters.engine.synth import build, mime_for_ext
-from copycast.adapters.sources.listing import normalize
+from copycast.adapters.sources.listing import live_status_of, normalize
 from copycast.adapters.sources.youtube_feed import SourceError, enrich_from_youtube_feed
 from copycast.adapters.storage.atomic import write_atomic
 from copycast.adapters.storage.layout import Layout
@@ -43,11 +47,12 @@ from copycast.application.ports import (
     EngineVersion,
     FetchResult,
     FetchSpec,
+    NotReady,
     PermanentError,
     Progress,
     ProgressCallback,
 )
-from copycast.domain.enums import EnginePhase, FetchKind
+from copycast.domain.enums import EnginePhase, FetchKind, LiveStatus
 from copycast.domain.listing import SourceListing
 from copycast.domain.media import AAC_CONTAINERS, PODCAST_EXTS, TRANSCODE_EXT
 from copycast.settings import Settings
@@ -57,8 +62,23 @@ INFO_JSON_SUFFIX: Final = ".info.json"
 ARTWORK_EXTS: Final = frozenset({"jpg", "jpeg", "png", "webp", "gif"})
 SUBTITLE_EXTS: Final = frozenset({"vtt", "srt", "ass", "lrc", "ttml", "json3", "srv3", "sbv"})
 CANCEL_MESSAGE: Final = "cancelled by Copycast"
+NOT_READY_MESSAGES: Final[dict[LiveStatus, str]] = {
+    LiveStatus.is_upcoming: "not started yet: the recording is archived once YouTube publishes it",
+    LiveStatus.is_live: "still live: the recording is archived once YouTube publishes it",
+    LiveStatus.post_live: "recording being processed: archived once YouTube publishes it",
+}
 
 Hook = Callable[[dict[str, Any]], None]
+MatchFilter = Callable[..., str | None]
+
+
+class NotYetAvailable(DownloadCancelled):
+    """Raised inside the match filter: the stream has no recording to download yet.
+
+    yt-dlp re-raises it as a fresh, message-less instance of the same class
+    (``YoutubeDL._match_entry``), so the reason travels in :class:`_HookState`,
+    not on the exception.
+    """
 
 
 @functools.cache
@@ -171,16 +191,14 @@ class YtDlpEngine:
         pp_hook = _postprocessor_hook(cancel, on_progress, state)
         try:
             with cookie_scope(self._cookies_path, options) as with_cookies:
-                params = fetch_params(
+                params = fetch_params_for(
+                    spec,
                     with_cookies,
-                    kind=spec.kind,
-                    item_id=spec.item_id,
-                    home_dir=spec.home_dir,
-                    temp_dir=spec.temp_dir,
                     log=log,
+                    progress_hook=_progress_hook(cancel, on_progress, state),
+                    postprocessor_hook=pp_hook,
+                    state=state,
                 )
-                params["progress_hooks"] = [_progress_hook(cancel, on_progress, state)]
-                params["postprocessor_hooks"] = [pp_hook]
                 with yt_dlp.YoutubeDL(params) as ydl:
                     add_postprocessors(ydl, pp_hook)
                     if spec.kind is FetchKind.direct:
@@ -190,6 +208,12 @@ class YtDlpEngine:
                         info = ydl.extract_info(spec.url, download=True)
         except Exception as exc:
             discard_temp_leftovers(spec)
+            if state.not_ready is not None:
+                raise NotReady(
+                    NOT_READY_MESSAGES[state.not_ready],
+                    live_status=state.not_ready,
+                    retry_after=state.starts_in,
+                ) from exc
             raise classify(exc) from exc
         if info is None:
             raise PermanentError(f"yt-dlp produced nothing for {spec.url}")
@@ -206,6 +230,64 @@ class YtDlpEngine:
 
 def build_engine(settings: Settings) -> YtDlpEngine:
     return YtDlpEngine(settings)
+
+
+def fetch_params_for(
+    spec: FetchSpec,
+    options: Mapping[str, Any],
+    *,
+    log: EngineLog,
+    progress_hook: Hook,
+    postprocessor_hook: Hook,
+    state: _HookState,
+) -> dict[str, Any]:
+    """The complete ``YoutubeDL`` params of one fetch: options, hooks and the live filter.
+
+    Only an Engine extraction gets :func:`live_match_filter`; a direct (RSS
+    enclosure) fetch has no ``live_status`` to look at.
+    """
+    params = fetch_params(
+        options,
+        kind=spec.kind,
+        item_id=spec.item_id,
+        home_dir=spec.home_dir,
+        temp_dir=spec.temp_dir,
+        log=log,
+    )
+    params["progress_hooks"] = [progress_hook]
+    params["postprocessor_hooks"] = [postprocessor_hook]
+    if spec.kind is FetchKind.ytdlp:
+        params["match_filter"] = live_match_filter(state)
+    return params
+
+
+def live_match_filter(state: _HookState) -> MatchFilter:
+    """A yt-dlp ``match_filter`` refusing a stream that has no recording yet.
+
+    yt-dlp calls it in ``process_video_result``, after format selection and
+    before the download, so a live HLS stream is never recorded from the
+    moment the job happened to start. The status (and, for an upcoming
+    stream with a known start, how long until it) is left in ``state``.
+    """
+
+    def match_filter(info: Mapping[str, Any], *, incomplete: bool = False) -> str | None:
+        status = live_status_of(info)
+        if status is None or status.recorded:
+            return None
+        state.not_ready = status
+        state.starts_in = _starts_in(info) if status is LiveStatus.is_upcoming else None
+        raise NotYetAvailable(NOT_READY_MESSAGES[status])
+
+    return match_filter
+
+
+def _starts_in(info: Mapping[str, Any]) -> timedelta | None:
+    """How far away an upcoming stream's ``release_timestamp`` is; ``None`` when unknown or past."""
+    start = info.get("release_timestamp")
+    if not isinstance(start, int | float) or isinstance(start, bool):
+        return None
+    remaining = float(start) - time.time()
+    return timedelta(seconds=remaining) if remaining > 0 else None
 
 
 # --------------------------------------------------------------------------- cookies
@@ -418,16 +500,21 @@ def _check_cancel(cancel: CancelToken, what: str) -> None:
 
 
 class _HookState:
-    """Shared between the hooks: post-processing is only reported once a download finished.
+    """Shared between the hooks and the match filter of one fetch.
 
-    yt-dlp runs the thumbnail converter *before* the download; without this
-    gate the job would appear to post-process, then download.
+    Post-processing is only reported once a download finished: yt-dlp runs
+    the thumbnail converter *before* the download; without this gate the job
+    would appear to post-process, then download. ``not_ready`` is the live
+    status the match filter refused (see :class:`NotYetAvailable`) and
+    ``starts_in`` an upcoming stream's time to its scheduled start.
     """
 
-    __slots__ = ("downloaded",)
+    __slots__ = ("downloaded", "not_ready", "starts_in")
 
     def __init__(self) -> None:
         self.downloaded = False
+        self.not_ready: LiveStatus | None = None
+        self.starts_in: timedelta | None = None
 
 
 def _progress_hook(cancel: CancelToken, on_progress: ProgressCallback, state: _HookState) -> Hook:
@@ -593,9 +680,11 @@ def _final_audio_path(home_dir: Path, info: Mapping[str, Any]) -> Path | None:
 __all__ = [
     "ENGINE_NAME",
     "IMAGE_MAGIC",
+    "NOT_READY_MESSAGES",
     "PODCAST_EXTS",
     "RESUMABLE_SUFFIXES",
     "AudioNormalizer",
+    "NotYetAvailable",
     "ThumbnailConvertor",
     "ThumbnailEmbedder",
     "YtDlpEngine",
@@ -606,9 +695,11 @@ __all__ = [
     "cookie_scope",
     "discard_temp_leftovers",
     "engine_info",
+    "fetch_params_for",
     "ffmpeg_version",
     "fix_thumbnail_extensions",
     "has_embedded_artwork",
+    "live_match_filter",
     "release_date",
     "sniff_image_ext",
 ]

@@ -27,6 +27,7 @@ from copycast.domain.enums import (
     JobStatus,
     JobTrigger,
     KeyScope,
+    LiveStatus,
     Numbering,
     ProgressPhase,
     RequestedVia,
@@ -204,6 +205,12 @@ class ItemRead(ReadModel):
     duration_seconds: int | None = None
     state: ArchiveState
     listed: bool = True
+    live_status: LiveStatus | None = Field(
+        default=None,
+        description="What the Source last said the item is doing as a live stream: an "
+        "upcoming or live stream is listed but archived only once its recording is "
+        "published; post_live means the recording is still being processed",
+    )
     attempt_count: int = 0
     last_error: str | None = None
     media: ItemMedia | None = None

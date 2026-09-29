@@ -21,6 +21,7 @@ from copycast.domain.enums import (
     AssetFormat,
     AssetKind,
     AssetState,
+    LiveStatus,
     RequestedVia,
     SourceKind,
     WantedReason,
@@ -117,6 +118,7 @@ async def _populate(uow_factory: UnitOfWorkFactory, layout: Layout) -> tuple[str
                 row.id, layout.item_xml_path(mirror.id, row.id).read_text()
             )
         await uow.catalog.set_wanted([rows[3].id], WantedReason.backfill)
+        await uow.catalog.set_live_status(rows[3].id, LiveStatus.post_live)  # intent, kept
         await uow.catalog.tombstone(rows[4].id, listed=True, at=NOW)
         await uow.catalog.record_download(rows[0].id, at=NOW)  # telemetry, lost on rebuild
         feed_art = layout.feed_artwork_path(mirror.id, "jpg")
@@ -227,6 +229,8 @@ async def test_round_trip_restores_everything_but_telemetry(
         assert first.source_item_xml is not None and "<guid>" in first.source_item_xml
         tomb = await session.get(CatalogItem, item_id(mirror_id, "urn:test:item:5"))
         assert tomb is not None and tomb.archive_state == ArchiveState.deleted
+        waiting = await session.get(CatalogItem, item_id(mirror_id, "urn:test:item:4"))
+        assert waiting is not None and waiting.live_status == LiveStatus.post_live
         inbox = await session.get(Feed, inbox_id)
         assert inbox is not None and inbox.autoprune_days == 14
 

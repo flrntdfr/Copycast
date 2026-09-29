@@ -1,25 +1,40 @@
-"""Engine pieces that need no network: version info, hooks, output collection."""
+"""Engine pieces that need no network: version info, hooks, the live filter, outputs."""
 
 from __future__ import annotations
 
 import json
-from datetime import date
+import time
+from collections.abc import Mapping
+from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yt_dlp
 from yt_dlp.utils import DownloadCancelled
 
 from copycast.adapters.engine import build_engine, engine_info
 from copycast.adapters.engine.ytdlp import (
+    NOT_READY_MESSAGES,
+    NotYetAvailable,
     YtDlpEngine,
     _HookState,
     _postprocessor_hook,
     _progress_hook,
     collect_outputs,
+    fetch_params_for,
+    live_match_filter,
     release_date,
 )
-from copycast.application.ports import CancelToken, FetchSpec, PermanentError, Progress
-from copycast.domain.enums import EnginePhase, FetchKind
+from copycast.application.ports import (
+    Cancelled,
+    CancelToken,
+    FetchSpec,
+    NotReady,
+    PermanentError,
+    Progress,
+)
+from copycast.domain.enums import EnginePhase, FetchKind, LiveStatus
 from copycast.settings import Settings
 
 
@@ -154,9 +169,147 @@ def test_direct_fetch_without_synth_is_refused(tmp_path: Path) -> None:
         engine.fetch_item(spec, {}, CancelToken(), lambda _: None, _Log())
 
 
-def test_cancelled_token_short_circuits_before_any_call(tmp_path: Path) -> None:
-    from copycast.application.ports import Cancelled
+# --------------------------------------------------------------------------- live streams
 
+
+@pytest.mark.parametrize(
+    "status", [LiveStatus.is_upcoming, LiveStatus.is_live, LiveStatus.post_live]
+)
+def test_live_match_filter_refuses_a_stream_without_a_recording(status: LiveStatus) -> None:
+    state = _HookState()
+    match_filter = live_match_filter(state)
+    with pytest.raises(NotYetAvailable, match=NOT_READY_MESSAGES[status].split(":")[0]):
+        match_filter({"id": "x", "live_status": status.value}, incomplete=False)
+    assert state.not_ready is status
+    assert state.starts_in is None
+    assert issubclass(NotYetAvailable, DownloadCancelled), "yt-dlp re-raises it, never swallows it"
+
+
+@pytest.mark.parametrize("value", ["was_live", "not_live", None, "premiering"])
+def test_live_match_filter_lets_recordings_and_plain_uploads_through(value: object) -> None:
+    state = _HookState()
+    match_filter = live_match_filter(state)
+    assert match_filter({"id": "x", "live_status": value}) is None
+    assert match_filter({"id": "x", "live_status": value}, incomplete=True) is None
+    assert state.not_ready is None
+
+
+def test_live_match_filter_estimates_an_upcoming_streams_start() -> None:
+    state = _HookState()
+    match_filter = live_match_filter(state)
+    start = time.time() + 3 * 3600
+    with pytest.raises(NotYetAvailable):
+        match_filter({"live_status": "is_upcoming", "release_timestamp": start})
+    assert state.not_ready is LiveStatus.is_upcoming
+    assert state.starts_in is not None
+    assert timedelta(hours=2, minutes=59) < state.starts_in <= timedelta(hours=3)
+    # A start in the past (the streamer is late) or none at all estimates nothing.
+    for info in (
+        {"live_status": "is_upcoming", "release_timestamp": start - 4 * 3600},
+        {"live_status": "is_upcoming"},
+        {"live_status": "is_upcoming", "release_timestamp": True},
+    ):
+        state = _HookState()
+        with pytest.raises(NotYetAvailable):
+            live_match_filter(state)(info)
+        assert state.starts_in is None
+
+
+def test_fetch_params_carry_the_live_filter_for_engine_fetches_only(tmp_path: Path) -> None:
+    state = _HookState()
+    hook = _progress_hook(CancelToken(), lambda _: None, state)
+    pp_hook = _postprocessor_hook(CancelToken(), lambda _: None, state)
+    spec = _spec(tmp_path)
+    params = fetch_params_for(
+        spec,
+        {"ratelimit": 1},
+        log=_Log(),
+        progress_hook=hook,
+        postprocessor_hook=pp_hook,
+        state=state,
+    )
+    assert params["progress_hooks"] == [hook] and params["postprocessor_hooks"] == [pp_hook]
+    assert params["ratelimit"] == 1 and params["outtmpl"] == {"default": "abc123.%(ext)s"}
+    with pytest.raises(NotYetAvailable):
+        params["match_filter"]({"live_status": "is_live"}, incomplete=False)
+    assert state.not_ready is LiveStatus.is_live
+
+    from copycast.application.ports import SynthItem
+
+    direct = FetchSpec(
+        FetchKind.direct,
+        "https://x.example/a.mp3",
+        "abc123",
+        spec.home_dir,
+        spec.temp_dir,
+        SynthItem(id="abc123", title="A", url="https://x.example/a.mp3"),
+    )
+    params = fetch_params_for(
+        direct, {}, log=_Log(), progress_hook=hook, postprocessor_hook=pp_hook, state=_HookState()
+    )
+    assert "match_filter" not in params, "an RSS enclosure has no live status to look at"
+
+
+class _StubYoutubeDL:
+    """Enough of ``YoutubeDL`` to run the match filter the way ``_match_entry`` does.
+
+    yt-dlp catches the ``DownloadCancelled`` the filter raises and re-raises a
+    fresh, message-less instance of the same class; the stub does the same so
+    the engine cannot rely on the exception carrying anything.
+    """
+
+    info: Mapping[str, Any] = {"id": "x", "live_status": "is_live"}
+    raise_plain_cancel = False
+
+    def __init__(self, params: dict[str, Any]) -> None:
+        self.params = params
+
+    def __enter__(self) -> _StubYoutubeDL:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def add_post_processor(self, pp: object, when: str = "post_process") -> None:
+        return None
+
+    def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+        if self.raise_plain_cancel:
+            raise DownloadCancelled("stopped")
+        (self.params["paths"]["temp"] / Path("x.jpg")).write_bytes(b"thumb")
+        try:
+            self.params["match_filter"](self.info, incomplete=False)
+        except DownloadCancelled as err:
+            raise type(err)() from None
+        return {"id": "x"}
+
+
+def test_fetch_item_maps_a_refused_stream_to_not_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _StubYoutubeDL)
+    engine = YtDlpEngine()
+    spec = _spec(tmp_path, item_id="x")
+    with pytest.raises(NotReady) as caught:
+        engine.fetch_item(spec, {}, CancelToken(), lambda _: None, _Log())
+    assert caught.value.live_status is LiveStatus.is_live
+    assert caught.value.retry_after is None
+    assert str(caught.value) == NOT_READY_MESSAGES[LiveStatus.is_live]
+    assert isinstance(caught.value.__cause__, NotYetAvailable)
+    assert not list(spec.temp_dir.iterdir()), "temp leftovers are discarded like any failure"
+
+
+def test_fetch_item_keeps_a_plain_cancellation_a_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _StubYoutubeDL)
+    monkeypatch.setattr(_StubYoutubeDL, "raise_plain_cancel", True)
+    engine = YtDlpEngine()
+    with pytest.raises(Cancelled):
+        engine.fetch_item(_spec(tmp_path, item_id="x"), {}, CancelToken(), lambda _: None, _Log())
+
+
+def test_cancelled_token_short_circuits_before_any_call(tmp_path: Path) -> None:
     engine = YtDlpEngine()
     token = CancelToken()
     token.cancel()
