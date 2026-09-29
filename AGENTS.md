@@ -119,6 +119,10 @@ _Avoid_: Playlist Inbox (it is a Mirror underneath), import
 A Mirror option (*Stay in sync with the Source*): an Episode is deleted, leaving a Tombstone, when its item leaves the Source, instead of staying Delisted. Meant for a curated YouTube playlist.
 _Avoid_: Mirror deletions, prune (that is an Inbox's Retention)
 
+**Live stream**:
+A Catalog item the Engine reports as a stream (`live_status`: upcoming, live, recording being processed, recorded). While upcoming or live it is listed in the Catalog with a badge but is not archivable: no policy or selection wants it and an Automatic feed does not list it; any Refresh, full or light, that sees it recorded makes it archivable. An archive that meets a stream with no recording yet waits 30 minutes between tries, without counting attempts, for up to 48 h after the job was created, then fails (ADR 0014).
+_Avoid_: Broadcast, premiere (a scheduled upload is an upcoming stream to Copycast), recording (that is what it becomes)
+
 **Attachment**:
 A file the show notes of an Episode embed or link to (an image, a PDF, an audio file), mirrored next to the Episode's media at archive time; the Mirror Feed's notes point at the local copy.
 _Avoid_: Enclosure (that is the media), inline asset, media (that is the audio)
@@ -241,3 +245,4 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0011](docs/adr/0011-optional-authentication-for-direct-deployments.md) | Optional authentication: operator password, feed credentials, MCP API keys |
 | [0012](docs/adr/0012-mirror-modes-rolling-and-automatic.md) | Mirror modes: Rolling windows and Automatic archives narrow ADR 0009 |
 | [0013](docs/adr/0013-light-refresh-on-fetch-and-stable-media-urls.md) | A feed fetch runs a Light Refresh inline; media URLs are fixed at listing time; the api logs its own requests |
+| [0014](docs/adr/0014-live-streams-archived-once-recorded.md) | Live streams are archived once their recording is published; an archive that meets one waits, then fails |

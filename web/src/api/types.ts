@@ -65,6 +65,7 @@ export type JobKind = Schemas["JobKind"];
 export type JobStatus = Schemas["JobStatus"];
 export type JobTrigger = Schemas["JobTrigger"];
 export type KeyScope = Schemas["KeyScope"];
+export type LiveStatus = Schemas["LiveStatus"];
 export type Numbering = Schemas["Numbering"];
 export type ProgressPhase = Schemas["ProgressPhase"];
 export type RequestStatus = Schemas["RequestStatus"];

@@ -5,6 +5,7 @@ import type { ItemRead } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { LiveBadge } from "./LiveBadge";
 import { RowActions } from "./RowActions";
 import { StateBadge } from "./StateBadge";
 import { catalogStateOf, displayNumber, isBelowMinimum } from "./catalog-state";
@@ -243,7 +244,12 @@ export function buildColumns(ctx: CatalogColumnContext): ColumnDef<ItemRead>[] {
       accessorFn: (item) => catalogStateOf(item),
       enableHiding: false,
       header: "State",
-      cell: ({ row }) => <StateBadge item={row.original} />,
+      cell: ({ row }) => (
+        <div className="flex flex-wrap items-center gap-1">
+          <StateBadge item={row.original} />
+          <LiveBadge item={row.original} />
+        </div>
+      ),
       size: 110,
     },
     {

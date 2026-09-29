@@ -9,6 +9,7 @@ import type {
   JobStatus,
   JobTrigger,
   KeyScope,
+  LiveStatus,
   ProgressPhase,
   RequestStatus,
   RequestedVia,
@@ -128,6 +129,25 @@ export const keyScopeHint: Record<KeyScope, string> = {
   write: "Everything except deletions: mirror, archive, push into Inboxes, pause, refresh.",
   full: "Everything, including delete_feed, delete_item and prune_inbox.",
 };
+
+/** What the Source last said an item is doing as a live stream (yt-dlp's `live_status`). */
+export const liveStatusLabel = label<LiveStatus>({
+  is_upcoming: "Upcoming",
+  is_live: "Live",
+  post_live: "Recording being processed",
+  was_live: "Recorded stream",
+  not_live: "Not a stream",
+});
+
+/** The live statuses the Catalog flags: the item has no recording to archive yet. */
+export const LIVE_STATUSES_WITHOUT_RECORDING: readonly LiveStatus[] = [
+  "is_upcoming",
+  "is_live",
+  "post_live",
+];
+
+/** Why a stream flagged in the Catalog is not archived yet (the badge's tooltip). */
+export const LIVE_HINT = "Archived once the recording is published";
 
 export const healthStatusLabel = label<HealthStatus>({
   ok: "Healthy",

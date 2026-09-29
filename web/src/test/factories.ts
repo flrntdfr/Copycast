@@ -103,6 +103,7 @@ export function item(overrides: Partial<ItemRead> = {}): ItemRead {
     duration_seconds: 1800,
     state,
     listed: true,
+    live_status: null,
     attempt_count: 0,
     last_error: null,
     media:

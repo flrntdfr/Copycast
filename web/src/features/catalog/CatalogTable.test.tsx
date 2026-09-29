@@ -92,6 +92,51 @@ describe("CatalogTable", () => {
     expect(screen.getByText("1–4 of 4")).toBeInTheDocument();
   });
 
+  it("flags a stream without a recording next to its state, and nothing once recorded", async () => {
+    const streams = [
+      item({
+        id: "item-live",
+        feed_id: feed.id,
+        ordinal: 5,
+        title: "On air",
+        state: "available",
+        live_status: "is_live",
+      }),
+      item({
+        id: "item-soon",
+        feed_id: feed.id,
+        ordinal: 6,
+        title: "Tonight",
+        state: "available",
+        live_status: "is_upcoming",
+      }),
+      item({
+        id: "item-done",
+        feed_id: feed.id,
+        ordinal: 7,
+        title: "Yesterday",
+        state: "archived",
+        live_status: "was_live",
+      }),
+    ];
+    server.use(
+      http.get("/api/feeds/:feedId/items", () =>
+        HttpResponse.json({ items: streams, total: streams.length, limit: 100, offset: 0 }),
+      ),
+    );
+    renderWithProviders(
+      <CatalogTable feed={feed} search={search()} onSearchChange={() => undefined} />,
+    );
+    await screen.findAllByTestId("catalog-row");
+    const live = screen.getByText("On air").closest("tr") as HTMLElement;
+    expect(within(live).getByText("Available")).toBeInTheDocument();
+    expect(within(live).getByText("Live")).toHaveAttribute("data-live-status", "is_live");
+    const soon = screen.getByText("Tonight").closest("tr") as HTMLElement;
+    expect(within(soon).getByText("Upcoming")).toHaveAttribute("data-live-status", "is_upcoming");
+    const done = screen.getByText("Yesterday").closest("tr") as HTMLElement;
+    expect(done.querySelector("[data-live-status]")).toBeNull();
+  });
+
   it("marks approximate dates and fetches a missing description when the row opens", async () => {
     const rough = item({
       id: "item-7",

@@ -212,6 +212,25 @@ Automatic feed only, under the `.mp3` placeholder URL 1.2 advertised, so apps th
 it keep working. `public_ext` is written to `feed.json` and survives a rebuild; migration
 0010 sets it for rows that existed before.
 
+**Live streams.** A YouTube stream is archived once its recording is published, never while
+it is on air. Every listing records what the Engine says the item is doing (`live_status`:
+upcoming, live, recording being processed, recorded); a stream that is upcoming or live is a
+Catalog item like any other, shown with an *Upcoming* or *Live* badge next to its state, but it
+is not archivable: no Backfill, Follow or selection wants it, `archive_item` refuses it
+(`422 source-unsupported`), and an Automatic feed does not list it. The next Refresh, full or
+light (so the very next fetch of the feed, once the cooldown has passed), sees the stream
+recorded, makes it archivable, lists it in an Automatic feed and archives it when Follow or
+the Backfill wants it. An archive job that nevertheless meets a stream with no recording yet
+(still live, not started, or ended but still being processed by YouTube) downloads nothing:
+the job is queued again 30 minutes later (at the scheduled start for an upcoming stream, when
+that is later) without counting an attempt, the item goes back to *Queued* with the reason as
+its last error and the badge explaining why, and this repeats for up to 48 h after the job
+was created; then the job and the item fail for good ("still not published after 48 h") and
+*Retry N failed* starts the wait over. RSS Sources are untouched. Nothing is repaired: an
+Episode archived from a stream while it was live (before 1.3.1) keeps the partial recording;
+delete it and archive it again once the recording is published
+([ADR 0014](adr/0014-live-streams-archived-once-recorded.md)).
+
 ## YouTube dates and descriptions
 
 A flat channel listing carries no upload date and no description, which left every video
@@ -416,13 +435,13 @@ the engine tests, and pushes the lock change to `main`; `image.yml` then builds 
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
-| `1.3.0` | yes, on every engine bump | "the current 1.3.0" |
-| `1.3.0-yt2026.8.19` | never | exactly this app + engine combination |
+| `1.3.1` | yes, on every engine bump | "the current 1.3.1" |
+| `1.3.1-yt2026.8.19` | never | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
 Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. To roll back an engine
 that broke a site, pin the previous immutable tag in `.env`
-(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:1.3.0-yt<previous>`) or in the kustomize overlay
+(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:1.3.1-yt<previous>`) or in the kustomize overlay
 (`images[].newTag`), and `docker compose up -d` / `kubectl apply -k`. The About page and
 `copycast --version` show which engine is running; `jobs.engine_version` records which engine
 archived each item.
