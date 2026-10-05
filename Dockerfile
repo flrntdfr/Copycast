@@ -23,7 +23,7 @@ COPY web/ ./
 RUN pnpm run build
 
 # ---- lock ------------------------------------------------------------------------------
-FROM python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS lock
+FROM python:3.13.16-slim-bookworm@sha256:5024f48ba9441d4b13a95d3945abc6365538e3a31109833367a1923523c6efed AS lock
 COPY --from=ghcr.io/astral-sh/uv:0.11.21@sha256:ff07b86af50d4d9391d9daf4ff89ce427bc544f9aae87057e69a1cc0aa369946 /uv /usr/local/bin/uv
 WORKDIR /lock
 COPY pyproject.toml uv.lock ./
@@ -33,7 +33,7 @@ RUN uv export --frozen --no-dev --no-emit-project --no-emit-package yt-dlp -o ba
 # ---- deno ------------------------------------------------------------------------------
 # yt-dlp needs a JavaScript runtime for YouTube (signature and "n" challenges); deno is the
 # one it enables by default. Pinned by version and checksum for both architectures.
-FROM python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS deno
+FROM python:3.13.16-slim-bookworm@sha256:5024f48ba9441d4b13a95d3945abc6365538e3a31109833367a1923523c6efed AS deno
 ARG TARGETARCH
 ARG DENO_VERSION=2.9.6
 ARG DENO_SHA256_AMD64=394f07f4da2bebe6ce6f1e7ce0fa16429b29b08c35e3fac3fe25972676dff4b2
@@ -51,7 +51,7 @@ RUN set -eu; \
     /usr/local/bin/deno --version
 
 # ---- runtime ---------------------------------------------------------------------------
-FROM python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS runtime
+FROM python:3.13.16-slim-bookworm@sha256:5024f48ba9441d4b13a95d3945abc6365538e3a31109833367a1923523c6efed AS runtime
 ARG APP_VERSION
 ARG ENGINE_VERSION
 
