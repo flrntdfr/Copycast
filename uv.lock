@@ -297,7 +297,7 @@ requires-dist = [
     { name = "sse-starlette", specifier = "==3.4.11" },
     { name = "structlog", specifier = "==26.1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = "==0.52.4" },
-    { name = "yt-dlp", extras = ["default"], specifier = "==2026.10.21.202512.dev0" },
+    { name = "yt-dlp", extras = ["default"], specifier = "==2026.10.21.233146.dev0" },
 ]
 
 [package.metadata.requires-dev]
@@ -1731,11 +1731,11 @@ wheels = [
 
 [[package]]
 name = "yt-dlp"
-version = "2026.10.21.202512.dev0"
+version = "2026.10.21.233146.dev0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/01/ac/82b23af020985537d2b629a4069ea5f1e50ad732e1040acf4a6b3d813730/yt_dlp-2026.10.21.202512.dev0.tar.gz", hash = "sha256:574242b7626e747996109a8a4bcdc6c48fbbb90a1ac09f6e312b967412330623", size = 3057800, upload-time = "2026-10-21T20:29:24.59Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/c1/53b2baeb4665c94eba78f50779a4230bdfe644cb7cdc220af478a40aa234/yt_dlp-2026.10.21.233146.dev0.tar.gz", hash = "sha256:10793ef91df7fe1a50c070e6bb4c1332e3a8aa5ece900e7abeabc9015edf10f3", size = 3048449, upload-time = "2026-10-21T23:35:58.787Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/58/dc8d2aa15970945dede13af7a8d348d05ee6254a2a4e873f94b783e81670/yt_dlp-2026.10.21.202512.dev0-py3-none-any.whl", hash = "sha256:4c6d9f5e41c6950ed2d922a9651e2f10338facf4e22fb61a0c7e2096b4cdb4fc", size = 3188290, upload-time = "2026-10-21T20:29:21.847Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/e2/0049103303f373a3800eccf8851b11e295080d55ca78f3b12b3d312c4ae3/yt_dlp-2026.10.21.233146.dev0-py3-none-any.whl", hash = "sha256:ce6cf3789354c289e017646b5740e7fc4e7f07bd246051837493b453581a4dd3", size = 3186409, upload-time = "2026-10-21T23:35:55.884Z" },
 ]
 
 [package.optional-dependencies]
