@@ -19,3 +19,28 @@ export function PageHeader({
     </div>
   );
 }
+
+/** A titled section of a page: an `h2` with its description and actions. */
+export function SectionHeader({
+  id,
+  title,
+  description,
+  actions,
+}: {
+  id: string;
+  title: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+      <div className="min-w-0">
+        <h2 id={id} className="text-lg font-semibold tracking-tight">
+          {title}
+        </h2>
+        {description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
+      </div>
+      {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
+    </div>
+  );
+}

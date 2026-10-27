@@ -8,7 +8,7 @@ export function NotFound() {
       <h1 className="text-2xl font-semibold">Not found</h1>
       <p className="mt-2 text-muted-foreground">There is nothing at this address.</p>
       <Button asChild className="mt-6">
-        <Link to="/mirrors">Go to Mirrors</Link>
+        <Link to="/">Go to Feeds</Link>
       </Button>
     </div>
   );

@@ -1,4 +1,4 @@
-import { Link, Outlet } from "@tanstack/react-router";
+import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { Command, Menu } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
@@ -16,17 +16,22 @@ import { usePlayer } from "@/stores/player";
 import { cn } from "@/lib/utils";
 
 const NAV: {
-  to: "/mirrors" | "/inboxes" | "/jobs" | "/keys" | "/settings" | "/about";
+  to: "/" | "/jobs" | "/keys" | "/settings" | "/about";
   label: string;
   extra?: ReactNode;
 }[] = [
-  { to: "/mirrors", label: "Mirrors" },
-  { to: "/inboxes", label: "Inboxes" },
+  { to: "/", label: "Feeds" },
   { to: "/jobs", label: "Jobs", extra: <JobsIndicator /> },
   { to: "/keys", label: "API keys" },
   { to: "/settings", label: "Settings" },
   { to: "/about", label: "About" },
 ];
+
+/** Feeds covers the page of every Feed and each Mirror's and Inbox's own page. */
+function isCurrent(to: (typeof NAV)[number]["to"], pathname: string): boolean {
+  if (to !== "/") return pathname === to || pathname.startsWith(`${to}/`);
+  return pathname === "/" || /^\/(mirrors|inboxes)(\/|$)/.test(pathname);
+}
 
 function isEditable(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -39,6 +44,7 @@ export function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const { track } = usePlayer();
+  const pathname = useLocation({ select: (location) => location.pathname });
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -64,18 +70,25 @@ export function AppShell() {
   }, []);
 
   const links = (onNavigate?: () => void) =>
-    NAV.map((item) => (
-      <Link
-        key={item.to}
-        to={item.to}
-        onClick={onNavigate}
-        className="inline-flex items-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground data-[status=active]:font-semibold data-[status=active]:text-foreground"
-        activeOptions={{ includeSearch: false }}
-      >
-        {item.label}
-        {item.extra}
-      </Link>
-    ));
+    NAV.map((item) => {
+      const current = isCurrent(item.to, pathname);
+      return (
+        <Link
+          key={item.to}
+          to={item.to}
+          onClick={onNavigate}
+          className={cn(
+            "inline-flex items-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground",
+            current && "font-semibold text-foreground",
+          )}
+          aria-current={current ? "page" : undefined}
+          activeOptions={{ exact: item.to === "/", includeSearch: false }}
+        >
+          {item.label}
+          {item.extra}
+        </Link>
+      );
+    });
 
   return (
     <div className={cn("min-h-dvh", track && "pb-16")}>
@@ -105,7 +118,7 @@ export function AppShell() {
             </SheetContent>
           </Sheet>
           <Link
-            to="/mirrors"
+            to="/"
             className="mr-2 flex items-center gap-2 text-base font-semibold tracking-tight"
           >
             <span

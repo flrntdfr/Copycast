@@ -100,7 +100,7 @@ function handlers(state: {
   ];
 }
 
-describe("Inboxes list", () => {
+describe("Inboxes on the Feeds page", () => {
   it("shows a card per Inbox with the last Request and creates a new one", async () => {
     const state = {
       requests: [
@@ -110,20 +110,18 @@ describe("Inboxes list", () => {
     };
     server.use(...handlers(state));
     const user = userEvent.setup();
-    const { history } = renderApp("/inboxes");
+    const { history } = renderApp("/");
 
     const cards = await screen.findAllByTestId("inbox-card");
     expect(cards).toHaveLength(2);
-    expect(screen.getByTestId("capture-card")).toHaveTextContent("Capture from the YouTube app");
-    // A captured playlist shows here, as a card of its own, not with the Mirrors.
-    expect(await screen.findByTestId("capture-feed-card")).toHaveTextContent("Watch Later");
+    // The Inboxes sit under the Mirrors, with the captured playlists.
+    const section = screen.getByRole("region", { name: "Inboxes" });
+    expect(within(section).getByTestId("capture-feed-card")).toHaveTextContent("Watch Later");
     expect(cards[0]).toHaveTextContent("Copycast");
-    expect(cards[0]).toHaveTextContent("2 Episodes · 8.8 kB · 2 Requests");
-    expect(cards[0]).toHaveTextContent("Autoprune 30 days after the first download");
-    await waitFor(() => expect(cards[0]).toHaveTextContent("Last Request"));
-    expect(cards[0]).toHaveTextContent("Expanded");
-    expect(cards[1]).toHaveTextContent("No Requests yet");
-    expect(cards[1]).toHaveTextContent("No autoprune");
+    expect(cards[0]).toHaveTextContent("2 Episodes");
+    expect(within(cards[0]!).getByText("Storage not checked")).toBeInTheDocument();
+    await waitFor(() => expect(cards[0]).toHaveTextContent("Refreshed"));
+    expect(cards[1]).toHaveTextContent("Never refreshed");
 
     await user.click(screen.getByRole("button", { name: "New Inbox" }));
     const dialog = await screen.findByRole("dialog", { name: "New Inbox" });

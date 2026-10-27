@@ -112,7 +112,7 @@ _Avoid_: Plays, listens, hits
 The trace left by an Episode you deleted (or that rolled out, expired, or was purged): the Catalog item stays, marked deleted, so the Mirror will not archive it again on its own; it shows as Available and can be re-archived on demand, and an Automatic Mirror downloads it again when a podcast app asks.
 
 **Capture**:
-A YouTube playlist of the signed-in account mirrored from the Inboxes page: a synced, Automatic Mirror flagged `playlist_capture`, shown among the Inboxes because it is filled from the YouTube app the way an Inbox is filled by Requests.
+A YouTube playlist of the signed-in account mirrored from the Inboxes section of the Feeds page (the *Capture a YouTube playlist* dropdown): a synced, Automatic Mirror flagged `playlist_capture`, shown among the Inboxes because it is filled from the YouTube app the way an Inbox is filled by Requests.
 _Avoid_: Playlist Inbox (it is a Mirror underneath), import
 
 **Sync**:

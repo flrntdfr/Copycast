@@ -8,7 +8,7 @@ test.describe("Inbox", () => {
     request,
   }) => {
     const inbox = await defaultInbox(request);
-    await page.goto("/inboxes");
+    await page.goto("/");
     await page.getByTestId("inbox-card").filter({ hasText: inbox.title }).first().click();
     await expect(page).toHaveURL(new RegExp(`/inboxes/${inbox.id}`));
     await expect(page.getByRole("heading", { name: inbox.title })).toBeVisible();

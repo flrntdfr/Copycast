@@ -1,6 +1,6 @@
 /**
  * The Add Source dialog's intent: opened with a URL to probe or a name to search for,
- * from the Mirrors page bar, the command palette, or the Inboxes page's capture card.
+ * from the Feeds page bar or the command palette.
  */
 import { useSyncExternalStore } from "react";
 

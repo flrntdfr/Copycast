@@ -116,7 +116,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         """The signed-in YouTube account's playlists, Watch Later first (needs the cookie file).
 
         Each ``url`` can go to ``create_mirror`` with ``sync_deletions`` and
-        ``playlist_capture`` true to capture it on the Inboxes screen.
+        ``playlist_capture`` true to capture it among the Inboxes.
         """
         return await container.services.list_youtube_playlists()
 

@@ -77,7 +77,7 @@ export function CommandPalette({
                 <CommandItem
                   value={`inbox ${query}`}
                   onSelect={() =>
-                    go(() => void navigate({ to: "/inboxes", search: { url: query.trim() } }))
+                    go(() => void navigate({ to: "/", search: { url: query.trim() } }))
                   }
                 >
                   <Send /> Send to Inbox…
@@ -94,10 +94,10 @@ export function CommandPalette({
           </CommandGroup>
         ) : null}
         <CommandGroup heading="Pages">
-          <CommandItem onSelect={() => go(() => void navigate({ to: "/mirrors" }))}>
-            <Radio /> Mirrors
+          <CommandItem onSelect={() => go(() => void navigate({ to: "/" }))}>
+            <Radio /> Feeds
           </CommandItem>
-          <CommandItem onSelect={() => go(() => void navigate({ to: "/inboxes" }))}>
+          <CommandItem onSelect={() => go(() => void navigate({ to: "/", hash: "inboxes" }))}>
             <Inbox /> Inboxes
           </CommandItem>
           <CommandItem onSelect={() => go(() => void navigate({ to: "/jobs" }))}>

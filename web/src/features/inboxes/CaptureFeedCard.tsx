@@ -1,44 +1,42 @@
 import { Link } from "@tanstack/react-router";
-import { ListVideo } from "lucide-react";
 
 import type { MirrorRead } from "@/api/types";
 import { HealthDot } from "@/components/common/HealthDot";
-import { Badge } from "@/components/ui/badge";
+import { RelativeTime } from "@/components/common/RelativeTime";
+import { StorageDot } from "@/components/common/StorageDot";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatBytes } from "@/lib/format";
 import { count } from "@/lib/labels";
 
-/** A captured YouTube playlist: a synced Mirror shown among the Inboxes. */
+/** A captured YouTube playlist among the Inboxes: storage dot, name, sync status, Episode count. */
 export function CaptureFeedCard({ feed }: { feed: MirrorRead }) {
-  const counts = feed.counts;
   return (
-    <Card data-testid="capture-feed-card">
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <ListVideo className="size-4 shrink-0" aria-hidden />
-          <Link
-            to="/mirrors/$mirrorId"
-            params={{ mirrorId: feed.id }}
-            className="truncate hover:underline"
-          >
-            {feed.title}
-          </Link>
-          <Badge variant="outline" className="ml-auto shrink-0">
-            Playlist
-          </Badge>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-1 text-sm text-muted-foreground">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <HealthDot mirror={feed} refreshing={false} withText />
-          <span className="tabular-nums">
-            {count(counts?.listed ?? feed.episode_count, "video")}
-            {counts?.available ? ` · ${counts.available} not downloaded yet` : ""}
-            {` · ${formatBytes(feed.storage_bytes)}`}
+    <Link
+      to="/mirrors/$mirrorId"
+      params={{ mirrorId: feed.id }}
+      className="rounded-xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      data-testid="capture-feed-card"
+    >
+      <Card className="h-full gap-2 py-4 transition-colors hover:bg-accent/40">
+        <CardHeader className="px-4">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <StorageDot reachable={null} />
+            <span className="truncate">{feed.title}</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex items-center justify-between gap-2 px-4 text-sm text-muted-foreground">
+          <span className="flex min-w-0 items-center gap-2">
+            <HealthDot mirror={feed} />
+            <span className="truncate">
+              Synced{" "}
+              <RelativeTime
+                value={feed.last_refresh_success_at ?? feed.last_refresh_attempt_at}
+                fallback="never"
+              />
+            </span>
           </span>
-        </div>
-        <p className="text-xs">Kept in sync with the playlist; videos download on request.</p>
-      </CardContent>
-    </Card>
+          <span className="shrink-0 tabular-nums">{count(feed.episode_count, "Episode")}</span>
+        </CardContent>
+      </Card>
+    </Link>
   );
 }

@@ -58,7 +58,7 @@ export async function createFixtureMirror(page: Page): Promise<string> {
     data: { backfill: { mode: "all" } },
   });
   expect(defaults.ok()).toBeTruthy();
-  await page.goto("/mirrors");
+  await page.goto("/");
   await page.getByLabel("Source URL").fill(FIXTURE_FEED_URL);
   await page.getByRole("main").getByRole("button", { name: "Add Source" }).click();
   await expect(page.getByRole("heading", { name: "Mirror created" })).toBeVisible({

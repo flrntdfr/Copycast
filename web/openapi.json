@@ -4346,7 +4346,7 @@
               }
             ],
             "title": "Playlist Capture",
-            "description": "A YouTube playlist captured from the Inboxes screen (listed there)"
+            "description": "A YouTube playlist captured from the Inboxes (listed among them)"
           }
         },
         "additionalProperties": false,
@@ -4567,7 +4567,7 @@
           "playlist_capture": {
             "type": "boolean",
             "title": "Playlist Capture",
-            "description": "Captured from the Inboxes screen; shown there, not as a Mirror",
+            "description": "Captured from the Inboxes; listed among them, not as a Mirror",
             "default": false
           },
           "paused": {

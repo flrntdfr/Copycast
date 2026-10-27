@@ -129,7 +129,7 @@ class MirrorRead(_FeedReadBase):
         default=False, description="Episodes are deleted when their item leaves the Source"
     )
     playlist_capture: bool = Field(
-        default=False, description="Captured from the Inboxes screen; shown there, not as a Mirror"
+        default=False, description="Captured from the Inboxes; listed among them, not as a Mirror"
     )
     paused: bool = False
     follow: bool = True
@@ -419,7 +419,7 @@ class MirrorCreate(RequestModel):
     )
     playlist_capture: bool | None = Field(
         default=None,
-        description="A YouTube playlist captured from the Inboxes screen (listed there)",
+        description="A YouTube playlist captured from the Inboxes (listed among them)",
     )
 
     @field_validator("preferred_language")

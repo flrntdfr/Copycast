@@ -70,7 +70,7 @@ describe("AppShell", () => {
     // The banner holds theme, palette and the live-update dot; no Add Source button.
     expect(screen.queryByRole("button", { name: /Add Source/ })).not.toBeInTheDocument();
     await user.click(within(palette).getByText("Send to Inbox…"));
-    await waitFor(() => expect(history.location.pathname).toBe("/inboxes"));
+    await waitFor(() => expect(history.location.pathname).toBe("/"));
     expect(history.location.search).toContain("url=https%3A%2F%2Fx.example%2Ff");
 
     await user.keyboard("{Control>}k{/Control}");

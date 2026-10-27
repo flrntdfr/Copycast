@@ -37,7 +37,7 @@ describe("Search step", () => {
       }),
     );
     const user = userEvent.setup();
-    const { history } = renderApp("/mirrors");
+    const { history } = renderApp("/");
     await screen.findByRole("heading", { name: "Mirrors" });
     openAddSource({ query: "gruber wwdc" });
 

@@ -357,7 +357,7 @@ describe("Mirror page", () => {
         body: undefined,
       }),
     );
-    await waitFor(() => expect(history.location.pathname).toBe("/mirrors"));
+    await waitFor(() => expect(history.location.pathname).toBe("/"));
   });
 });
 
@@ -366,7 +366,7 @@ describe("Mirrors list", () => {
     server.use(...handlers());
     // user-event installs a clipboard stub for the test; read it back after the click.
     const user = userEvent.setup();
-    renderApp("/mirrors");
+    renderApp("/");
     const row = await screen.findByTestId("mirror-row");
     expect(within(row).getByRole("link", { name: "Example Podcast" })).toHaveAttribute(
       "href",
@@ -384,12 +384,12 @@ describe("Mirrors list", () => {
       ...handlers(),
     );
     const user = userEvent.setup();
-    const { history } = renderApp("/mirrors");
+    const { history } = renderApp("/");
     await user.type(
       await screen.findByLabelText("Source URL"),
       "https://podcast.example/feed.xml{Enter}",
     );
     expect(await screen.findByRole("dialog", { name: "Choose a Source" })).toBeInTheDocument();
-    expect(history.location.pathname).toBe("/mirrors");
+    expect(history.location.pathname).toBe("/");
   });
 });

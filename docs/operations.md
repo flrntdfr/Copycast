@@ -274,12 +274,14 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   from). `probe_source` and `create_mirror` accept both, so agents can too.
 - **Playlists kept in sync.** A Mirror with *Stay in sync with the Source* deletes an Episode
   when its item leaves the Source instead of Delisting it (a Tombstone, so the video comes back
-  as Available if re-added). The Inboxes page's *Capture from the YouTube app* card lists the
-  signed-in account's playlists through the engine (`GET /api/youtube/playlists`, the cookie
-  file required, Watch Later first) and captures any of them with a click: a synced Mirror in
-  Automatic mode flagged `playlist_capture`, which is listed on the Inboxes page rather than
-  with the Mirrors. Agents get the same through `list_youtube_playlists` and `create_mirror`.
-- **Adding a Source** happens in a dialog from the Mirrors page bar (a URL, an Apple Podcasts or
+  as Available if re-added). The *Capture a YouTube playlist* dropdown of the Inboxes lists the
+  signed-in account's playlists through the engine when it opens (`GET /api/youtube/playlists`,
+  the cookie file required, Watch Later first) and captures any of them with a click: a synced
+  Mirror in Automatic mode flagged `playlist_capture`, which is listed among the Inboxes rather
+  than with the Mirrors. Agents get the same through `list_youtube_playlists` and `create_mirror`.
+- **The Feeds page** (`/`) lists every Feed: the Mirrors table first, then the Inboxes and the
+  captured playlists. `/mirrors` and `/inboxes` redirect there.
+- **Adding a Source** happens in a dialog from the Feeds page bar (a URL, an Apple Podcasts or
   Spotify link, or a name to search) or the command palette; the Mirror takes the operator's
   default policy, changed afterwards in its Settings tab.
 

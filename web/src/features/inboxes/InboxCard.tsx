@@ -1,15 +1,13 @@
 import { Link } from "@tanstack/react-router";
-import { Inbox } from "lucide-react";
 
 import { $api } from "@/api/client";
 import type { InboxRead } from "@/api/types";
 import { RelativeTime } from "@/components/common/RelativeTime";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { describeAutoprune } from "./InboxHeader";
-import { formatBytes } from "@/lib/format";
-import { count, requestStatusLabel } from "@/lib/labels";
+import { StorageDot } from "@/components/common/StorageDot";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { count } from "@/lib/labels";
 
-/** One Inbox on the list: name, Episodes, size, the last Request and the autoprune summary. */
+/** One Inbox on the list, kept minimal: storage dot, name, last update, Episode count. */
 export function InboxCard({ inbox, url = "" }: { inbox: InboxRead; url?: string }) {
   const last = $api.useQuery(
     "get",
@@ -26,30 +24,24 @@ export function InboxCard({ inbox, url = "" }: { inbox: InboxRead; url?: string 
       className="rounded-xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       data-testid="inbox-card"
     >
-      <Card className="h-full transition-colors hover:bg-accent/40">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Inbox className="size-4 text-muted-foreground" aria-hidden /> {inbox.name}
+      <Card className="h-full gap-2 py-4 transition-colors hover:bg-accent/40">
+        <CardHeader className="px-4">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <StorageDot reachable={null} />
+            <span className="truncate">{inbox.name}</span>
           </CardTitle>
-          <CardDescription className="tabular-nums">
-            {count(inbox.episode_count, "Episode")} · {formatBytes(inbox.storage_bytes)} ·{" "}
-            {count(inbox.request_count, "Request")}
-          </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-1 text-sm text-muted-foreground">
-          <p className="truncate">
-            {inbox.request_count === 0 ? (
-              "No Requests yet"
-            ) : lastRequest ? (
+        <CardContent className="flex items-center justify-between gap-2 px-4 text-sm text-muted-foreground">
+          <span className="truncate">
+            {lastRequest ? (
               <>
-                Last Request <RelativeTime value={lastRequest.created_at} /> ·{" "}
-                {requestStatusLabel(lastRequest.status)}
+                Refreshed <RelativeTime value={lastRequest.created_at} />
               </>
             ) : (
-              "Last Request …"
+              "Never refreshed"
             )}
-          </p>
-          <p>{describeAutoprune(inbox)}</p>
+          </span>
+          <span className="shrink-0 tabular-nums">{count(inbox.episode_count, "Episode")}</span>
         </CardContent>
       </Card>
     </Link>

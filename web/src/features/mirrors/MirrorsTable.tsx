@@ -21,9 +21,9 @@ import {
 } from "@/components/ui/table";
 import { MirrorRowActions } from "./MirrorRowActions";
 import { useRunningRefreshFeedIds } from "@/features/jobs/useRunningJobs";
-import { formatBytes, formatNumber } from "@/lib/format";
+import { formatNumber } from "@/lib/format";
 
-export type MirrorsSort = "title" | "created_at" | "updated_at" | "storage_bytes";
+export type MirrorsSort = "title" | "created_at" | "updated_at";
 
 export interface MirrorsTableProps {
   sort: MirrorsSort;
@@ -68,7 +68,7 @@ export function MirrorsTable(props: MirrorsTableProps) {
     params: { query: { kind: "mirror", sort, order } },
   });
   const refreshing = useRunningRefreshFeedIds();
-  // Playlist captures live on the Inboxes screen.
+  // Playlist captures are listed with the Inboxes, below the Mirrors.
   const mirrors: MirrorRead[] = (query.data?.feeds ?? [])
     .filter(isMirror)
     .filter((feed) => !feed.playlist_capture);
@@ -99,12 +99,6 @@ export function MirrorsTable(props: MirrorsTableProps) {
             <TableHead className="hidden text-right md:table-cell">Episodes</TableHead>
             <TableHead className="hidden text-right lg:table-cell">Available</TableHead>
             <SortHeader
-              label="Size"
-              column="storage_bytes"
-              className="hidden text-right md:table-cell"
-              {...props}
-            />
-            <SortHeader
               label="Last Refresh"
               column="updated_at"
               className="hidden lg:table-cell"
@@ -116,7 +110,7 @@ export function MirrorsTable(props: MirrorsTableProps) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {query.isPending ? <SkeletonRows columns={9} /> : null}
+          {query.isPending ? <SkeletonRows columns={8} /> : null}
           {mirrors.map((mirror) => (
             <TableRow key={mirror.id} data-testid="mirror-row">
               <TableCell>
@@ -135,8 +129,6 @@ export function MirrorsTable(props: MirrorsTableProps) {
                 </Link>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground md:hidden">
                   <span>{formatNumber(mirror.episode_count)} Episodes</span>
-                  <span>·</span>
-                  <span>{formatBytes(mirror.storage_bytes)}</span>
                   {mirror.paused ? <Badge variant="outline">Paused</Badge> : null}
                 </div>
                 {mirror.paused ? (
@@ -153,9 +145,6 @@ export function MirrorsTable(props: MirrorsTableProps) {
               </TableCell>
               <TableCell className="hidden text-right tabular-nums lg:table-cell">
                 {formatNumber(mirror.counts?.available ?? 0)}
-              </TableCell>
-              <TableCell className="hidden text-right tabular-nums md:table-cell">
-                {formatBytes(mirror.storage_bytes)}
               </TableCell>
               <TableCell className="hidden lg:table-cell">
                 {mirror.paused ? (

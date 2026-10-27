@@ -45,7 +45,7 @@ test.describe("Mirror", () => {
     }
 
     // The Mirror shows up in the list with its feed URL copyable.
-    await page.goto("/mirrors");
+    await page.goto("/");
     await expect(page.getByTestId("mirror-row")).toHaveCount(1);
     await expect(page.getByRole("link", { name: FIXTURE_TITLE })).toBeVisible();
     await expect(page.getByRole("button", { name: /Copy feed URL/ }).first()).toBeVisible();

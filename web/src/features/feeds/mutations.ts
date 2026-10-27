@@ -96,7 +96,11 @@ export function useDeleteFeed() {
       invalidate();
       toast.success(`${feed.title} deleted`);
       if (navigateAway) {
-        await navigate({ to: feed.kind === "mirror" ? "/mirrors" : "/inboxes", replace: true });
+        await navigate({
+          to: "/",
+          hash: feed.kind === "inbox" ? "inboxes" : undefined,
+          replace: true,
+        });
       }
     },
   };

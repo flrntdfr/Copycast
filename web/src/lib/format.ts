@@ -123,3 +123,10 @@ export function minutesToSeconds(minutes: string | number | null | undefined): n
   if (!Number.isFinite(value) || value < 1) return null;
   return Math.round(value) * 60;
 }
+
+/** Always in megabytes ("0.4 MB", "1,234 MB"): the unit of the feed cards. */
+export function formatMegabytes(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes)) return "";
+  const mb = bytes / 1_000_000;
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb).toLocaleString("en-US")} MB`;
+}

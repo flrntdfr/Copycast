@@ -84,7 +84,7 @@ describe("Add Source dialog", () => {
     const created: MirrorCreate[] = [];
     server.use(...baseHandlers(created));
     const user = userEvent.setup();
-    const { history } = renderApp("/mirrors");
+    const { history } = renderApp("/");
     await submitBar(user, "https://podcast.example/");
 
     const dialog = await screen.findByRole("dialog", { name: "Choose a Source" });
@@ -112,7 +112,7 @@ describe("Add Source dialog", () => {
       ...baseHandlers(created),
     );
     const user = userEvent.setup();
-    renderApp("/mirrors");
+    renderApp("/");
     await submitBar(user, feedUrl);
     expect(await screen.findByRole("dialog", { name: "Mirror created" })).toBeInTheDocument();
     expect(created).toEqual([{ source_url: feedUrl, candidate_token: "only" }]);
@@ -129,7 +129,7 @@ describe("Add Source dialog", () => {
       ...baseHandlers(),
     );
     const user = userEvent.setup();
-    renderApp("/mirrors");
+    renderApp("/");
     await submitBar(user, feedUrl);
     const dialog = await screen.findByRole("dialog", { name: "Choose a Source" });
     expect(
@@ -144,7 +144,7 @@ describe("Add Source dialog", () => {
       ...baseHandlers(),
     );
     const user = userEvent.setup();
-    renderApp("/mirrors");
+    renderApp("/");
     await submitBar(user, "Accidental Tech");
     const dialog = await screen.findByRole("dialog", { name: "Find a podcast" });
     expect(within(dialog).getByLabelText("Podcast or video name")).toHaveValue("Accidental Tech");
@@ -169,7 +169,7 @@ describe("Add Source dialog", () => {
       ...baseHandlers(),
     );
     const user = userEvent.setup();
-    const { history } = renderApp("/mirrors");
+    const { history } = renderApp("/");
     await submitBar(user, feedUrl);
     await waitFor(() => expect(history.location.pathname).toBe("/mirrors/mirror-dup"));
 
@@ -183,13 +183,13 @@ describe("Add Source dialog", () => {
         ),
       ),
     );
-    await user.click(screen.getByRole("link", { name: "Mirrors" }));
+    await user.click(screen.getByRole("link", { name: "Feeds" }));
     await submitBar(user, "https://media.example/file.mp3");
     expect(await screen.findByText("This URL cannot be mirrored")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Send to Inbox instead/ })).toBeInTheDocument();
   });
 
-  it("captures Watch Later with one click and imports selected playlists", async () => {
+  it("captures playlists from the dropdown, several in a row", async () => {
     const created: MirrorCreate[] = [];
     server.use(
       http.get("/api/inboxes/:inboxId/requests", () =>
@@ -217,12 +217,10 @@ describe("Add Source dialog", () => {
       ...baseHandlers(created),
     );
     const user = userEvent.setup();
-    renderApp("/inboxes");
-    const card = await screen.findByTestId("capture-card");
-    expect(card).toHaveTextContent("Capture from the YouTube app");
-    await user.click(
-      await within(card).findByRole("button", { name: "Keep Watch Later as an Inbox" }),
-    );
+    renderApp("/");
+    await user.click(await screen.findByRole("button", { name: /Capture a YouTube playlist/ }));
+    const menu = await screen.findByRole("menu");
+    await user.click(await within(menu).findByRole("menuitem", { name: /Watch Later/ }));
     await waitFor(() =>
       expect(created).toEqual([
         {
@@ -234,17 +232,12 @@ describe("Add Source dialog", () => {
     );
     expect(await screen.findByText("“Example Podcast” captured")).toBeInTheDocument();
 
-    // The playlists fold away until asked for, so the Inboxes stay in view.
-    expect(within(card).queryByRole("list", { name: "Your playlists" })).not.toBeInTheDocument();
-    await user.click(within(card).getByRole("button", { name: /Your playlists/ }));
-    const list = within(card).getByRole("list", { name: "Your playlists" });
-    expect(within(list).getByText("Already captured")).toBeInTheDocument();
-    expect(within(list).getByRole("link", { name: "Open" })).toHaveAttribute(
+    // The menu stays open, so another playlist is one more click; a captured one opens its feed.
+    expect(within(menu).getByRole("menuitem", { name: /Already captured/ })).toHaveAttribute(
       "href",
       "/mirrors/mirror-done",
     );
-    await user.click(within(list).getByRole("checkbox", { name: /Talks/ }));
-    await user.click(within(card).getByRole("button", { name: "Import 1 selected playlist" }));
+    await user.click(within(menu).getByRole("menuitem", { name: /Talks/ }));
     await waitFor(() => expect(created).toHaveLength(2));
     expect(created[1]).toEqual({
       source_url: "https://www.youtube.com/playlist?list=PLtalks",
@@ -267,11 +260,11 @@ describe("Add Source dialog", () => {
       ...baseHandlers(),
     );
     const user = userEvent.setup();
-    renderApp("/inboxes");
-    await user.click(await screen.findByRole("button", { name: /Your playlists/ }));
+    renderApp("/");
+    await user.click(await screen.findByRole("button", { name: /Capture a YouTube playlist/ }));
     const hint = await screen.findByTestId("capture-error");
     expect(hint).toHaveTextContent("Sign in to see your playlists");
-    expect(within(hint).getByRole("link", { name: "Settings" })).toHaveAttribute(
+    expect(screen.getByRole("menuitem", { name: "Open Settings" })).toHaveAttribute(
       "href",
       "/settings",
     );
