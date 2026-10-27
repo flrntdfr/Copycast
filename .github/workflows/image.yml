@@ -5,7 +5,10 @@ name: Image
 #   :<app>              moves on every push, including engine bumps
 #   :<app>-yt<engine>   immutable: app version + engine version
 #   :latest             the newest successful build
-# and creates the git tag v<app> + a GitHub Release the first time an app version ships.
+# creates the git tag v<app> + a GitHub Release the first time an app version ships, and prunes
+# the package down to the three newest tagged images (untagged and orphaned manifests go too).
+# Pruning with GITHUB_TOKEN needs the package to grant this repository the Admin role
+# (Package settings -> Manage Actions access).
 
 on:
   push:
@@ -202,3 +205,19 @@ jobs:
             --title "Copycast $APP" \
             --generate-notes \
             --notes "Image: \`$REGISTRY_IMAGE:$APP\` (engine yt-dlp $ENGINE, immutable tag \`$APP-yt$ENGINE\`)."
+
+  prune:
+    name: Prune old images
+    needs: tag
+    runs-on: ubuntu-24.04
+    steps:
+      # keep-n-tagged counts images, not tags: :latest, :<app>, :<app>-yt<engine> and
+      # :sha-<short> of one build are one image, and :latest is always on the newest.
+      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          package: copycast
+          keep-n-tagged: 3
+          delete-untagged: true
+          delete-ghost-images: true
+          delete-partial-images: true
+          delete-orphaned-images: true

@@ -22,7 +22,7 @@ Vorbis, FLAC, WAV) is transcoded once to mp3 at 192 kbit/s so every archive is p
 
 The image carries ffmpeg and `deno` (the JavaScript runtime yt-dlp uses for YouTube's
 challenges), both pinned. The version is pinned in `uv.lock`, installed as its own image layer, bumped by automation
-(`engine-bump.yml`, every six hours, nightly channel by default, `vars.ENGINE_CHANNEL` to
+(`engine-bump.yml`, every two weeks, nightly channel by default, `vars.ENGINE_CHANNEL` to
 switch) and recorded on every archived item. The engine version and release date are shown
 on the About page.
 
