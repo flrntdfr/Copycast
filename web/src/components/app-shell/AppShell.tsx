@@ -4,15 +4,16 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { CommandPalette } from "./CommandPalette";
 import { AddSourceDialog } from "@/features/add-source/AddSourceDialog";
-import { ConnectionDot } from "./ConnectionDot";
 import { JobsIndicator } from "./JobsIndicator";
 import { PlayerBar } from "./PlayerBar";
+import { StatusIndicator } from "./StatusIndicator";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { usePlayer } from "@/stores/player";
+import { ownsKey } from "@/lib/keyboard";
+import { getPlayerState } from "@/stores/player";
 import { cn } from "@/lib/utils";
 
 const NAV: {
@@ -33,17 +34,15 @@ function isCurrent(to: (typeof NAV)[number]["to"], pathname: string): boolean {
   return pathname === "/" || /^\/(mirrors|inboxes)(\/|$)/.test(pathname);
 }
 
-function isEditable(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
-}
-
-/** Top nav + content column (`max-w-6xl`) + player; nav collapses into a Sheet under `md`. */
+/**
+ * Top nav + content column (`max-w-6xl`) + player; nav collapses into a Sheet under `md`.
+ * The page keeps clear of the player through `--player-h`, so the shell never re-renders
+ * with playback.
+ */
 export function AppShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const { track } = usePlayer();
   const pathname = useLocation({ select: (location) => location.pathname });
 
   useEffect(() => {
@@ -53,7 +52,10 @@ export function AppShell() {
         setPaletteOpen((open) => !open);
         return;
       }
-      if (isEditable(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (ownsKey(event.target, event.key) || event.metaKey || event.ctrlKey || event.altKey)
+        return;
+      // `/` and `?` are single-key shortcuts too: the switch in the shortcuts sheet turns them off.
+      if (!getPlayerState().shortcuts) return;
       if (event.key === "/") {
         const filter = document.querySelector<HTMLInputElement>("[data-filter-input]");
         if (filter) {
@@ -91,7 +93,7 @@ export function AppShell() {
     });
 
   return (
-    <div className={cn("min-h-dvh", track && "pb-16")}>
+    <div className="min-h-dvh pb-[var(--player-h,0px)]">
       <a href="#main" className="skip-link">
         Skip to content
       </a>
@@ -147,7 +149,7 @@ export function AppShell() {
               </TooltipTrigger>
               <TooltipContent>Command palette (⌘K)</TooltipContent>
             </Tooltip>
-            <ConnectionDot />
+            <StatusIndicator />
           </div>
         </div>
       </header>
@@ -156,7 +158,11 @@ export function AppShell() {
       </main>
       <PlayerBar />
       <AddSourceDialog />
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        onShowShortcuts={() => setShortcutsOpen(true)}
+      />
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </div>
   );

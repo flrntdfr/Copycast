@@ -10,7 +10,7 @@ autoprune).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 
 from copycast.application.capabilities import CAPABILITIES, CAPABILITY_NAMES
@@ -51,6 +51,10 @@ from copycast.application.models import (
     RequestRead,
     SelectionRequest,
     SelectionResult,
+    SerialInboxCreate,
+    StatusRead,
+    UploadCreate,
+    UploadRead,
     VideoSearchPage,
     YouTubePlaylistList,
 )
@@ -68,6 +72,8 @@ from copycast.application.services import mirrors as _mirrors
 from copycast.application.services import policy as _policy
 from copycast.application.services import purge as _purge
 from copycast.application.services import sources as _sources
+from copycast.application.services import status as _status
+from copycast.application.services import uploads as _uploads
 from copycast.application.services.context import (
     FeedSort,
     ItemSort,
@@ -257,6 +263,21 @@ class Services:
     async def autoprune(self, feed_id: str) -> PruneResult:
         return await _inboxes.autoprune(self.ctx, feed_id)
 
+    # uploads and Serial Inboxes
+    async def create_upload(self, body: UploadCreate) -> UploadRead:
+        return await _uploads.create_upload(self.ctx, body)
+
+    async def put_upload(
+        self, upload_id: str, token: str, chunks: AsyncIterator[bytes]
+    ) -> UploadRead:
+        return await _uploads.put_upload(self.ctx, upload_id, token, chunks)
+
+    async def get_upload(self, upload_id: str) -> UploadRead:
+        return await _uploads.get_upload(self.ctx, upload_id)
+
+    async def create_serial_inbox(self, body: SerialInboxCreate) -> InboxRead:
+        return await _uploads.create_serial_inbox(self.ctx, body)
+
     # jobs, about, admin
     async def list_jobs(
         self,
@@ -285,6 +306,9 @@ class Services:
 
     async def about(self) -> AboutRead:
         return await _about.about(self.ctx)
+
+    async def get_status(self) -> StatusRead:
+        return await _status.get_status(self.ctx)
 
     # api keys
     async def list_api_keys(self) -> ApiKeyList:

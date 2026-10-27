@@ -32,10 +32,14 @@ PLAN_TOOLS = {
     "update_inbox",
     "add_request",
     "prune_inbox",
+    "create_upload",
+    "get_upload",
+    "create_serial_inbox",
     "get_job",
     "list_jobs",
     "cancel_job",
     "about",
+    "get_status",
 }
 
 OPERATOR_ONLY = {
@@ -51,6 +55,7 @@ OPERATOR_ONLY = {
     "preview_mirror_update",
     "purge_episodes",
     "export_opml",
+    "put_upload",
 }
 """Routed for the UI, never tools: keys must not mint keys, agents must not rotate feeds
 or touch the cookie file (a browser session)."""

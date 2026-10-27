@@ -7,13 +7,14 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Select, delete, exists, func, select, text, update
+from sqlalchemy import Select, and_, delete, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from copycast.adapters.db.base import refresh_loaded, rows_affected
 from copycast.adapters.db.models import ACTIVE_STATUSES, Job, JobLogLine
+from copycast.application.models import QueueStats
 from copycast.domain.enums import ErrorKind, JobKind, JobStatus, JobTrigger, LogLevel
 from copycast.domain.exceptions import NotFound
 
@@ -340,6 +341,30 @@ class JobRepository:
         second = await self._session.execute(running.values(cancel_requested=True))
         await refresh_loaded(self._session, Job, lambda job: job.feed_id == feed_id)
         return rows_affected(first) + rows_affected(second)
+
+    async def queue_stats(self, *, now: datetime, since: datetime) -> QueueStats:
+        """Queued (runnable now or later), running, and failed since ``since``."""
+        queued = Job.status == JobStatus.queued.value
+        runnable = and_(queued, Job.run_after <= now)
+        failed = and_(Job.status == JobStatus.failed.value, Job.finished_at >= since)
+        row = (
+            await self._session.execute(
+                select(
+                    func.count().filter(runnable),
+                    func.count().filter(and_(queued, Job.run_after > now)),
+                    func.count().filter(Job.status == JobStatus.running.value),
+                    func.count().filter(failed),
+                    func.min(Job.run_after).filter(runnable),
+                ).where(or_(Job.status.in_(ACTIVE_STATUSES), failed))
+            )
+        ).one()
+        return QueueStats(
+            queued=row[0],
+            waiting=row[1],
+            running=row[2],
+            failed_recently=row[3],
+            oldest_queued_at=row[4],
+        )
 
     async def requeue_stale(self, older_than: timedelta) -> list[uuid.UUID]:
         """Running jobs whose heartbeat is older than ``older_than`` go back to queued."""

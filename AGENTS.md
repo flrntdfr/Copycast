@@ -32,6 +32,14 @@ _Avoid_: Queue, dropbox, watch later, bucket
 The RSS feed Copycast publishes for an Inbox: the same shape as a Mirror Feed, with every item synthesized from Engine metadata and ordered by the time it was added.
 _Avoid_: Inbox RSS, request feed
 
+**Serial Inbox**:
+An Inbox an agent builds from Uploads in an order it decides (an audiobook's parts and chapters): Episodes archived at creation, numbered by position, dated one per day at a playful posting time so podcast apps play them first to last, and published as `itunes:type serial` (ADR 0015).
+_Avoid_: Bucket, playlist, audiobook feed, ordered Inbox
+
+**Upload**:
+One audio file staged for a Serial Inbox: created with a one-time upload URL, received by an HTTP PUT of its bytes, read for its tags, and consumed (or swept after 24 h) once a Serial Inbox takes it.
+_Avoid_: Import, attachment (that is a show-notes file), file request
+
 **Request**:
 One URL pushed into an Inbox, recorded with who pushed it (UI or MCP) and what it expanded into. A Request for a page or playlist expands to many Catalog items; a Request for a podcast feed is refused ("use create_mirror").
 _Avoid_: Submission, task, job (that is the worker's word)
@@ -258,4 +266,5 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0012](docs/adr/0012-mirror-modes-rolling-and-automatic.md) | Mirror modes: Rolling windows and Automatic archives narrow ADR 0009 |
 | [0013](docs/adr/0013-light-refresh-on-fetch-and-stable-media-urls.md) | A feed fetch runs a Light Refresh inline; media URLs are fixed at listing time; the api logs its own requests |
 | [0014](docs/adr/0014-live-streams-archived-once-recorded.md) | Live streams are archived once their recording is published; an archive that meets one waits, then fails |
+| [0015](docs/adr/0015-serial-inboxes-from-uploads.md) | Serial Inboxes: an agent uploads files over HTTP and gives their listening order |
 | [0016](docs/adr/0016-ephemeral-or-archive-and-the-archive-flag.md) | Two policies, Ephemeral and Archive (with or without Backfill); the Archive flag keeps an Episode for good |

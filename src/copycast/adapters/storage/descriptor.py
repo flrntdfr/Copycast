@@ -83,6 +83,7 @@ class DescriptorPolicy(_Strict):
     refresh_interval_hours: int | None = None
     sync_deletions: bool = False
     playlist_capture: bool = False
+    serial: bool = False
     follow: bool = True
     paused: bool = False
     policy_applied_at: datetime | None = None

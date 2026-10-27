@@ -81,6 +81,7 @@ class FakeEngine:
         self._default_listing = default_listing
         self._failures: list[Exception] = []
         self._fetch_failures: list[tuple[str | None, Exception]] = []
+        self._chapters: dict[str, list[dict[str, Any]]] = {}
         self._block: threading.Event | None = None
         self.records = EngineRecords()
         self.info_extra: dict[str, Any] = {}
@@ -112,6 +113,16 @@ class FakeEngine:
         with self._lock:
             self._fetch_failures.append((url, exc))
 
+    def script_chapters(self, url: str, chapters: list[dict[str, Any]]) -> None:
+        """Report ``chapters`` from fetches of the item at ``url`` (its ``source_url``).
+
+        Give them in yt-dlp's shape, ``{"start_time", "end_time", "title"}``: the fetch
+        returns them and writes them into the info.json as the real Engine does. Every
+        other fetch reports no chapters.
+        """
+        with self._lock:
+            self._chapters[url] = [dict(chapter) for chapter in chapters]
+
     def block_fetches(self, event: threading.Event) -> None:
         """Until ``event`` is set, fetches write a ``.part`` file and poll the cancel token.
 
@@ -131,6 +142,7 @@ class FakeEngine:
             self._listings.clear()
             self._failures.clear()
             self._fetch_failures.clear()
+            self._chapters.clear()
             self._block = None
             self.records = EngineRecords()
 
@@ -188,6 +200,7 @@ class FakeEngine:
                         failure = scripted
                         del self._fetch_failures[index]
                         break
+            chapters = [dict(chapter) for chapter in self._chapters.get(spec.url, [])]
             block = self._block
         if failure is not None:
             log.error(f"fake engine failure: {failure}")
@@ -224,7 +237,7 @@ class FakeEngine:
             "acodec": "aac",
             "duration": self.duration_seconds,
             "extractor": spec.synth.extractor if spec.synth else "fake",
-            "chapters": [],
+            "chapters": chapters,
             **self.info_extra,
         }
         info_path.write_text(json.dumps(info), encoding="utf-8")
@@ -240,7 +253,7 @@ class FakeEngine:
             info_json_path=info_path,
             artwork_path=None,
             subtitle_paths={},
-            chapters=[],
+            chapters=chapters,
             engine_version=self.version_info.version,
         )
 

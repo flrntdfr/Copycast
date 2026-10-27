@@ -17,6 +17,7 @@ import type {
   ReadyRead,
   RequestRead,
   SelectionResult,
+  StatusRead,
   VideoSearchResult,
 } from "@/api/types";
 
@@ -83,6 +84,7 @@ export function inbox(overrides: Partial<InboxRead> = {}): InboxRead {
     created_at: "2024-01-01T00:00:00Z",
     autoprune_days: null,
     request_count: 0,
+    serial: false,
     is_default: false,
     ...overrides,
   };
@@ -331,5 +333,17 @@ export function problem(
     detail: `Problem ${slug}`,
     instance: null,
     ...extra,
+  };
+}
+
+export function systemStatus(overrides: Partial<StatusRead> = {}): StatusRead {
+  return {
+    state: "ok",
+    checked_at: "2024-01-15T09:00:00Z",
+    components: [
+      { id: "database", name: "Database", state: "ok", summary: "Postgres is up", facts: [] },
+      { id: "worker", name: "Worker", state: "ok", summary: "Idle", facts: [] },
+    ],
+    ...overrides,
   };
 }

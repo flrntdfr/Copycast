@@ -17,6 +17,7 @@ from copycast.adapters.api.routes import (
     keys,
     mirrors,
     sources,
+    uploads,
 )
 
 
@@ -35,6 +36,7 @@ def create_api_router() -> APIRouter:
         keys,
         engine,
         defaults,
+        uploads,
     ):
         router.include_router(module.router)
     return router

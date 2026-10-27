@@ -24,6 +24,7 @@ dependencies = [
     "yt-dlp[default]==2026.10.26.220202.dev0",
     "click==8.5.0",
     "packaging==26.3",
+    "mutagen==1.48.1",
 ]
 
 [project.scripts]

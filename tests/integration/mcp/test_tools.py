@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -18,6 +19,7 @@ from copycast.adapters.mcp.tools import DELETE_FEED_WARNING
 from copycast.app import Container
 from copycast.worker.runner import Runner
 from tests.integration.mcp.conftest import Source, structured
+from tests.support.audio import tagged_mp3
 from tests.support.factories import listing
 from tests.support.fake_engine import FakeEngine
 from tests.support.origin import Origin
@@ -38,7 +40,7 @@ async def test_instructions_and_tool_listing(mcp_client: Client[Any]) -> None:
     for name in ("delete_feed", "delete_item", "prune_inbox"):
         annotations = tools[name].annotations
         assert annotations is not None and annotations.destructive_hint is True, name
-    for name in ("get_feed", "list_items", "get_about", "search_podcasts"):
+    for name in ("get_feed", "list_items", "get_about", "get_status", "search_podcasts"):
         annotations = tools[name].annotations
         assert annotations is not None and annotations.read_only_hint is True, name
         assert annotations.destructive_hint is False
@@ -233,6 +235,14 @@ async def test_jobs_and_about(mcp_client: Client[Any], source: Source) -> None:
     assert deleted["deleted"] is True
     about = structured(await mcp_client.call_tool("get_about", {}))
     assert about["engine"]["name"] == "fake-engine" and about["layout_version"] == "1"
+    status = structured(await mcp_client.call_tool("get_status", {}))
+    assert status["components"][0] == {
+        "id": "database",
+        "name": "Database",
+        "state": "ok",
+        "summary": "Postgres is up",
+        "facts": status["components"][0]["facts"],
+    }
     with pytest.raises((ToolError, MCPError)) as bad:
         await mcp_client.call_tool("probe_source", {"url": "   "})
     assert str(bad.value)
@@ -255,3 +265,42 @@ async def test_search_videos_tool(mcp_client: Client[Any], engine: FakeEngine) -
     tools = {tool.name: tool for tool in await mcp_client.list_tools()}
     assert (tools["search_videos"].meta or {})["capability"] == "search_videos"
     assert "add_to_inbox" in (tools["search_videos"].description or "")
+
+
+async def test_serial_inbox_from_uploads(
+    mcp_client: Client[Any], client: httpx.AsyncClient, tmp_path: Path
+) -> None:
+    ids: list[str] = []
+    for name in ("disc2-track1.mp3", "disc1-track1.mp3"):
+        staged = structured(
+            await mcp_client.call_tool("create_upload", {"upload": {"filename": name}})
+        )
+        body = tagged_mp3(tmp_path, name, title=name)
+        put = await client.put(urlsplit(staged["upload_url"]).path, content=body)
+        assert put.status_code == 200, put.text
+        read = structured(await mcp_client.call_tool("get_upload", {"upload_id": staged["id"]}))
+        assert read["state"] == "received" and read["tags"]["title"] == name
+        ids.append(staged["id"])
+
+    inbox = structured(
+        await mcp_client.call_tool(
+            "create_serial_inbox",
+            {
+                "inbox": {
+                    "name": "Audiobook",
+                    "number_titles": False,
+                    "episodes": [
+                        {"upload_id": ids[1], "title": "One", "part": 1},
+                        {"upload_id": ids[0], "title": "Two", "part": 2},
+                    ],
+                }
+            },
+        )
+    )
+    assert inbox["serial"] is True and inbox["episode_count"] == 2
+    items = structured(await mcp_client.call_tool("list_items", {"feed_id": inbox["id"]}))
+    assert [item["title"] for item in items["items"]] == ["Two", "One"]  # newest first
+    assert all(item["state"] == "archived" for item in items["items"])
+
+    with pytest.raises(ToolError):
+        await mcp_client.call_tool("create_upload", {"upload": {"filename": "a.wav"}})

@@ -55,7 +55,7 @@ export function SelectionBar({
   return (
     <div
       className={cn(
-        "sticky bottom-0 z-20 -mx-4 flex flex-wrap items-center gap-2 border-t bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80",
+        "sticky bottom-[var(--player-h,0px)] z-20 -mx-4 flex flex-wrap items-center gap-2 border-t bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80",
         className,
       )}
       role="region"

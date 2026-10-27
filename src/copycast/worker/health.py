@@ -46,6 +46,7 @@ class WorkerState:
     last_heartbeat_at: datetime | None = None
     scheduler_last_tick_at: datetime | None = None
     ffmpeg_version: str | None = None
+    engine_version: str | None = None
     running_jobs: int = 0
     quarantined_feeds: list[str] = field(default_factory=list[str])
     storage_full_until: datetime | None = None

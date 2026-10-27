@@ -33,11 +33,14 @@ export function App({ history, queryClient: injected, events = true }: AppProps)
     <QueryClientProvider client={queryClient}>
       <TooltipProvider delayDuration={300}>
         <RouterProvider router={router} />
+        {/* Toasts sit above the player; sonner's defaults are 24 px (16 px on phones). */}
         <Toaster
           position="bottom-right"
           closeButton
           richColors={false}
           toastOptions={{ duration: 5000 }}
+          offset={{ bottom: "calc(var(--player-h, 0px) + 24px)" }}
+          mobileOffset={{ bottom: "calc(var(--player-h, 0px) + 16px)" }}
         />
       </TooltipProvider>
     </QueryClientProvider>

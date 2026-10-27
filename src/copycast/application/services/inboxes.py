@@ -49,7 +49,7 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-async def _inbox_read(uow: UnitOfWorkPort, ctx: ServiceContext, feed: FeedRow) -> InboxRead:
+async def inbox_read_for(uow: UnitOfWorkPort, ctx: ServiceContext, feed: FeedRow) -> InboxRead:
     counts = await uow.catalog.count_by_state(feed.id)
     request_count = (await uow.requests.count_for_feeds([feed.id])).get(feed.id, 0)
     return inbox_read(feed, ctx.urls, counts=counts, request_count=request_count)
@@ -73,7 +73,7 @@ async def create_inbox(ctx: ServiceContext, body: InboxCreate) -> InboxRead:
         ctx.layout.ensure_feed_dirs(feed.id)
         await uow.update_intent(feed.id)
         await uow.publish(FeedEvent(feed_id=feed.id, revision=feed.revision, reason="created"))
-        read = await _inbox_read(uow, ctx, feed)
+        read = await inbox_read_for(uow, ctx, feed)
     log.info("inbox.created", feed_id=read.id, name=body.name)
     return read
 
@@ -90,7 +90,7 @@ async def update_inbox(ctx: ServiceContext, inbox: str, body: InboxUpdate) -> In
         await uow.flush()
         await uow.update_intent(feed.id)
         await uow.publish(FeedEvent(feed_id=feed.id, revision=feed.revision, reason="updated"))
-        return await _inbox_read(uow, ctx, feed)
+        return await inbox_read_for(uow, ctx, feed)
 
 
 # --------------------------------------------------------------------------- requests
@@ -226,6 +226,7 @@ __all__ = [
     "autoprune",
     "create_inbox",
     "get_request",
+    "inbox_read_for",
     "list_requests",
     "prune_inbox",
     "update_inbox",

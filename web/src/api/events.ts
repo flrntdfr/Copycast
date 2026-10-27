@@ -2,7 +2,7 @@
  * One EventSource over `/api/events`. Frames carry `{"event": name, "data": {...}}`;
  * the six event names are used verbatim. Cache invalidation is debounced 250 ms per
  * query key; `progress` frames only feed the progress store. While the stream is
- * reconnecting the active queries are polled every 10 s and ConnectionDot turns amber.
+ * reconnecting the active queries are polled every 10 s and the status dot turns amber.
  */
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";

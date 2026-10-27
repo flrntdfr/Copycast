@@ -6,6 +6,7 @@ API_PREFIX = "/api"
 MCP_PATH = "/mcp"
 EVENTS_PATH = f"{API_PREFIX}/events"
 ABOUT_PATH = f"{API_PREFIX}/about"
+STATUS_PATH = f"{API_PREFIX}/status"
 
 HEALTH_LIVE = "/healthz/live"
 HEALTH_READY = "/healthz/ready"

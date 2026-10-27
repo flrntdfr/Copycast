@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { z } from "zod";
 
 import { $api } from "@/api/client";
-import { PageHeader, SectionHeader } from "@/components/common/PageHeader";
+import { SectionHeader } from "@/components/common/PageHeader";
 import { InboxesSection } from "@/features/inboxes/InboxesSection";
 import { AddSourceBar } from "@/features/mirrors/AddSourceBar";
 import { MirrorsTable } from "@/features/mirrors/MirrorsTable";
@@ -46,16 +46,9 @@ function FeedsPage() {
 
   return (
     <>
-      <PageHeader
-        title="Feeds"
-        description="Every Source you track and every Inbox you fill, each published as its own podcast feed."
-      />
+      <h1 className="sr-only">Feeds</h1>
       <section aria-labelledby="mirrors-heading" className="mb-10">
-        <SectionHeader
-          id="mirrors-heading"
-          title="Mirrors"
-          description="Paste a podcast feed, a page advertising one or a YouTube channel to track it."
-        />
+        <SectionHeader id="mirrors-heading" title="Mirrors" />
         <div className="mb-4">
           <AddSourceBar />
         </div>

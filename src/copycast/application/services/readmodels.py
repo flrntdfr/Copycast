@@ -145,6 +145,7 @@ def inbox_read(
         created_at=feed.created_at,
         autoprune_days=feed.autoprune_days,
         request_count=request_count,
+        serial=feed.serial,
         is_default=feed.is_default,
     )
 

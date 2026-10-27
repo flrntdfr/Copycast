@@ -37,6 +37,7 @@ from copycast.settings import AuthSettings
 HEALTH_PATH = "/healthz"
 """Never gated: compose healthchecks and Kubernetes probes send no credentials."""
 FEEDS_PREFIX = "/feeds/"
+UPLOADS_PREFIX = "/uploads"
 LOGO_PATH = COPYCAST_ARTWORK_PATH
 MCP_PATH = "/mcp"
 
@@ -82,8 +83,11 @@ ARTWORK_RE = re.compile(r"^/feeds/[^/]+/assets/[^/]+\.artwork\.[A-Za-z0-9]+$")
 
 
 def is_gated(path: str) -> bool:
-    """Paths the operator middleware challenges (everything but health, feeds, MCP, robots)."""
+    """Paths the operator middleware challenges (everything but health, feeds, MCP, robots
+    and upload URLs, whose one-time token is their credential)."""
     if _under(path, HEALTH_PATH) or _under(path, MCP_PATH) or path == ROBOTS_PATH:
+        return False
+    if path.startswith(UPLOADS_PREFIX + "/"):
         return False
     return not path.startswith(FEEDS_PREFIX)
 

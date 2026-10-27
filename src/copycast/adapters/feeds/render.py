@@ -154,6 +154,8 @@ class FeedView:
     source_channel_xml: str | None = None
     last_modified: datetime | None = None
     backfill_mode: BackfillMode | None = None
+    serial: bool = False
+    """A Serial Inbox: dated by ``published_at`` (its schedule) and published ``serial``."""
     assets: tuple[AssetView, ...] = ()
 
     @property
@@ -312,7 +314,7 @@ def _synthesized_channel(
         _sub(channel, tag(NS_ITUNES, "author"), author)
     if artwork:
         etree.SubElement(channel, tag(NS_ITUNES, "image")).set("href", artwork)
-    _sub(channel, tag(NS_ITUNES, "type"), "episodic")
+    _sub(channel, tag(NS_ITUNES, "type"), "serial" if feed.serial else "episodic")
     _sub(channel, tag(NS_ITUNES, "explicit"), "false")
     _append_copycast_tags(channel, self_url, last_modified)
     return root, channel
@@ -451,7 +453,8 @@ def _synthesized_item(
         _sub(element, "link", item.source_url)
     guid = _sub(element, "guid", item.source_url or f"urn:copycast:{item.id}")
     guid.set("isPermaLink", "false")
-    published = item.first_seen_at if feed.kind is FeedKind.inbox else item.published_at
+    by_arrival = feed.kind is FeedKind.inbox and not feed.serial
+    published = item.first_seen_at if by_arrival else item.published_at
     _sub(element, "pubDate", rfc2822(published or item.first_seen_at or now))
     element.append(_enclosure(base_url, feed, item))
     if item.duration_seconds is not None:

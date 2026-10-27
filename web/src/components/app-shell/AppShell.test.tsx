@@ -1,11 +1,16 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { inbox, mirror } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
+import { resetPlayerForTests, setShortcuts } from "@/stores/player";
+
+afterEach(() => {
+  resetPlayerForTests();
+});
 
 function handlers() {
   return [
@@ -90,5 +95,21 @@ describe("AppShell", () => {
     expect(within(sheet).getByText("Focus the filter of the current table")).toBeInTheDocument();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("ignores ? and / with single-key shortcuts off, and opens the sheet from the palette", async () => {
+    server.use(...handlers());
+    setShortcuts(false);
+    const user = userEvent.setup();
+    renderApp("/about");
+    await screen.findByRole("heading", { name: "About" });
+
+    await user.keyboard("?");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.keyboard("{Control>}k{/Control}");
+    const palette = await screen.findByRole("dialog", { name: "Command palette" });
+    await user.click(within(palette).getByText("Keyboard shortcuts"));
+    const sheet = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+    expect(within(sheet).getByRole("switch", { name: "Single-key shortcuts" })).not.toBeChecked();
   });
 });

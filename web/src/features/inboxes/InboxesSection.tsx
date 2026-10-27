@@ -13,7 +13,7 @@ import { NewInboxDialog } from "./NewInboxDialog";
 
 /**
  * The Inboxes under the Mirrors: a card per Inbox, then the captured YouTube playlists, with
- * the playlist dropdown and New Inbox. With `url`, each card opens its Inbox ready to add it.
+ * New Inbox and the playlist dropdown. With `url`, each card opens its Inbox ready to add it.
  */
 export function InboxesSection({ url = "", ref }: { url?: string; ref?: Ref<HTMLElement> }) {
   const query = $api.useQuery("get", "/api/feeds");
@@ -26,15 +26,11 @@ export function InboxesSection({ url = "", ref }: { url?: string; ref?: Ref<HTML
       <SectionHeader
         id="inboxes-heading"
         title="Inboxes"
-        description={
-          url
-            ? "Pick the Inbox that should receive the URL you pasted."
-            : "Feeds without a Source, filled by the URLs you or your agents push into them, and the YouTube playlists you capture."
-        }
+        description={url ? "Pick the Inbox that should receive the URL you pasted." : undefined}
         actions={
           <>
-            <CapturePlaylistMenu />
             <NewInboxDialog />
+            <CapturePlaylistMenu />
           </>
         }
       />

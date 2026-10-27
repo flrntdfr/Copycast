@@ -7,11 +7,12 @@ from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import delete, func, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import aggregate_order_by, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from copycast.adapters.db.base import rows_affected
-from copycast.adapters.db.models import EngineVersion, RefreshRun, WorkerHeartbeat
+from copycast.adapters.db.models import EngineVersion, Feed, RefreshRun, WorkerHeartbeat
+from copycast.application.models import CrawlerStats
 from copycast.domain.enums import JobTrigger, RefreshRunStatus
 
 
@@ -79,6 +80,40 @@ class TelemetryRepository:
             .limit(limit)
         )
         return list(result.scalars())
+
+    async def crawler_stats(self, since: datetime) -> list[CrawlerStats]:
+        """Finished Refresh runs (full and light) since ``since``, by the Feed's service."""
+        service = func.coalesce(Feed.service, Feed.source_kind)
+        failed = RefreshRun.status == RefreshRunStatus.failed.value
+        succeeded = RefreshRun.status.in_(
+            (RefreshRunStatus.succeeded.value, RefreshRunStatus.unchanged.value)
+        )
+        errors = func.array_agg(
+            aggregate_order_by(RefreshRun.error, RefreshRun.started_at.desc())
+        ).filter(failed)
+        result = await self._session.execute(
+            select(
+                service,
+                func.count(),
+                func.count().filter(failed),
+                func.max(RefreshRun.finished_at).filter(succeeded),
+                errors,
+            )
+            .join(Feed, Feed.id == RefreshRun.feed_id)
+            .where(RefreshRun.started_at >= since, failed | succeeded)
+            .group_by(service)
+            .order_by(service)
+        )
+        return [
+            CrawlerStats(
+                service=name,
+                runs=runs,
+                failed=failures,
+                last_success_at=last_success_at,
+                last_error=next((error for error in recent or [] if error), None),
+            )
+            for name, runs, failures, last_success_at, recent in result.tuples()
+        ]
 
     async def purge_refresh_runs(self, before: datetime) -> int:
         result = await self._session.execute(

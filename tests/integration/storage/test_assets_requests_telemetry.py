@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -13,9 +13,11 @@ from copycast.domain.enums import (
     AssetKind,
     AssetProvenance,
     AssetState,
+    JobKind,
     JobTrigger,
     RefreshRunStatus,
     RequestedVia,
+    SourceKind,
 )
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import asset_id
@@ -176,3 +178,42 @@ async def test_telemetry_repository(uow_factory: UnitOfWorkFactory) -> None:
         second = await uow.telemetry.record_engine_version("2026.08.19", channel="stable")
         assert first.id == second.id and second.channel == "nightly"
         assert [v.version for v in await uow.telemetry.engine_versions()] == ["2026.08.19"]
+
+
+async def test_status_queries(uow_factory: UnitOfWorkFactory) -> None:
+    now = datetime.now(UTC)
+    async with uow_factory() as uow:
+        rss = await uow.feeds.add(mirror_row())
+        tube = await uow.feeds.add(
+            mirror_row("https://www.youtube.com/@test", source_kind=SourceKind.ytdlp)
+        )
+        outcomes = [
+            (rss, RefreshRunStatus.succeeded, None),
+            (rss, RefreshRunStatus.unchanged, None),
+            (tube, RefreshRunStatus.failed, "older error"),
+            (tube, RefreshRunStatus.failed, "Sign in to confirm you're not a bot"),
+            (tube, RefreshRunStatus.cancelled, None),
+        ]
+        for feed, status, error in outcomes:
+            run = await uow.telemetry.start_refresh_run(feed.id, trigger=JobTrigger.scheduled)
+            await uow.telemetry.finish_refresh_run(run.id, status, error=error)
+        await uow.telemetry.start_refresh_run(rss.id, trigger=JobTrigger.manual)  # still running
+
+        await uow.jobs.enqueue(JobKind.refresh, JobTrigger.manual, feed_id=rss.id)
+        await uow.jobs.enqueue(
+            JobKind.refresh, JobTrigger.manual, feed_id=tube.id, run_after=now + timedelta(hours=1)
+        )
+    async with uow_factory() as uow:
+        stats = await uow.telemetry.crawler_stats(now - timedelta(hours=1))
+        by_service = {s.service: s for s in stats}
+        assert set(by_service) == {"RSS", "YouTube"}
+        assert (by_service["RSS"].runs, by_service["RSS"].failed) == (2, 0)
+        assert by_service["RSS"].last_success_at is not None
+        youtube = by_service["YouTube"]
+        assert (youtube.runs, youtube.failed, youtube.last_success_at) == (2, 2, None)
+        assert youtube.last_error is not None
+        assert await uow.telemetry.crawler_stats(now + timedelta(hours=1)) == []
+
+        queue = await uow.jobs.queue_stats(now=datetime.now(UTC), since=now - timedelta(hours=1))
+        assert (queue.queued, queue.waiting, queue.running, queue.failed_recently) == (1, 1, 0, 0)
+        assert queue.oldest_queued_at is not None

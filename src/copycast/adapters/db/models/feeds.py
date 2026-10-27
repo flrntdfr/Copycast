@@ -87,6 +87,10 @@ class Feed(TimestampMixin, Base):
     )
 
     # Inbox only
+    serial: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    """A Serial Inbox: Episodes dated in the order given at creation, published as serial."""
     autoprune_days: Mapped[int | None] = mapped_column(Integer)
     last_autoprune_at: Mapped[datetime | None] = mapped_column(TZDateTime)
 

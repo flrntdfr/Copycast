@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -11,7 +12,14 @@ import structlog
 
 from copycast.app import Container
 from copycast.version import APP_VERSION
-from tests.support.paths import ABOUT_PATH, HEALTH_LIVE, HEALTH_READY, MCP_PATH, api
+from tests.support.paths import (
+    ABOUT_PATH,
+    HEALTH_LIVE,
+    HEALTH_READY,
+    MCP_PATH,
+    STATUS_PATH,
+    api,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -114,3 +122,58 @@ async def test_mcp_is_mounted_stateless(client: httpx.AsyncClient) -> None:
         message = response.json()
     names = {tool["name"] for tool in message["result"]["tools"]}
     assert {"search_podcasts", "create_mirror", "add_to_inbox", "delete_feed"} <= names
+
+
+async def test_status_without_a_worker(client: httpx.AsyncClient) -> None:
+    response = await client.get(STATUS_PATH)
+    assert response.status_code == 200, response.text
+    report = response.json()
+    components = {c["id"]: c for c in report["components"]}
+    assert list(components) == [
+        "database",
+        "worker",
+        "scheduler",
+        "queue",
+        "storage",
+        "engine",
+        "ffmpeg",
+        "crawlers",
+    ]
+    assert components["database"]["state"] == "ok"
+    assert components["worker"]["state"] == "error"
+    assert components["scheduler"]["state"] == "unknown"
+    assert components["storage"]["state"] == "ok"
+    assert components["crawlers"]["summary"] == "No Refresh in the last 24 h"
+    assert report["state"] == "error"
+
+
+async def test_status_with_a_healthy_worker(
+    client: httpx.AsyncClient, container: Container
+) -> None:
+    now = datetime.now(UTC).isoformat()
+    engine = (await client.get(ABOUT_PATH)).json()["engine"]["version"]
+    async with container.uow_factory() as uow:
+        await uow.telemetry.heartbeat(
+            "w1",
+            {
+                "running_jobs": 1,
+                "concurrency": 2,
+                "app_version": APP_VERSION,
+                "started_at": now,
+                "scheduler_last_tick_at": now,
+                "engine_version": engine,
+                "ffmpeg_version": "7.1",
+            },
+        )
+    report = (await client.get(STATUS_PATH)).json()
+    components = {c["id"]: c for c in report["components"]}
+    assert components["worker"]["state"] == "ok"
+    assert components["worker"]["summary"] == "Running 1 job"
+    assert components["scheduler"]["state"] == "ok"
+    assert components["ffmpeg"] == {
+        "id": "ffmpeg",
+        "name": "ffmpeg",
+        "state": "ok",
+        "summary": "7.1",
+        "facts": [],
+    }

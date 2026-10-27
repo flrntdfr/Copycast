@@ -10,10 +10,7 @@ import { MirrorDefaultsSection } from "./MirrorDefaultsSection";
 export function SettingsPage() {
   return (
     <>
-      <PageHeader
-        title="Settings"
-        description="Changes apply as you make them. The rest is configured through the environment (see docs/operations.md)."
-      />
+      <PageHeader title="Settings" />
       <div className="space-y-10">
         <AuthenticationsSection />
         <div className="grid gap-10 lg:grid-cols-2">

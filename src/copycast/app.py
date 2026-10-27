@@ -16,9 +16,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from copycast.application.models import (
+    AudioTags,
     FeedCredentials,
     PodcastSearchResult,
     VideoSearchResult,
@@ -119,6 +121,11 @@ class SourceGatewayAdapter:
         except source_error as exc:
             raise EngineUnavailable(f"podcast search is unavailable: {exc}") from exc
         return results
+
+    def read_audio_tags(self, path: Path) -> AudioTags | None:
+        read = _load("copycast.adapters.sources.audiotags", "read_audio_tags")
+        tags: AudioTags | None = read(path)
+        return tags
 
     def search_videos(self, query: str, limit: int) -> list[VideoSearchResult]:
         """yt-dlp's ``ytsearchN:`` listing, flattened to what an agent or the wizard needs."""
@@ -394,6 +401,7 @@ class FeedRendererAdapter:
                 source_channel_xml=feed.source_channel_xml,
                 last_modified=feed.updated_at,
                 backfill_mode=BackfillMode(feed.backfill_mode) if feed.backfill_mode else None,
+                serial=bool(feed.serial),
                 assets=tuple(by_item.get(None, [])),
             )
             item_views = [

@@ -362,6 +362,7 @@ async def _upsert_feed(session: AsyncSession, layout: Layout, descriptor: FeedDe
         "refresh_interval_hours": policy.refresh_interval_hours,
         "sync_deletions": policy.sync_deletions,
         "playlist_capture": policy.playlist_capture,
+        "serial": policy.serial,
         "follow": policy.follow,
         "paused": policy.paused,
         "policy_applied_at": policy.policy_applied_at,

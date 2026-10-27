@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -19,6 +20,7 @@ from copycast.settings import Settings, get_settings
 from copycast.worker.runner import Runner
 from tests.conftest import TEST_BASE_URL
 from tests.integration.api.conftest import Source, archived_items, create_mirror
+from tests.support.audio import TINY_MP3
 from tests.support.paths import ABOUT_PATH, FEED_URL, HEALTH_LIVE, HEALTH_READY, MEDIA_URL, api
 
 pytestmark = pytest.mark.integration
@@ -212,3 +214,16 @@ async def test_api_keys_lifecycle(client: httpx.AsyncClient) -> None:
     bad_scope = await client.post(api("/keys"), json={"name": "x", "scope": "admin"})
     assert bad_scope.status_code == 422
     assert json.loads(invalid.text)["type"] == "urn:copycast:problem:validation"
+
+
+async def test_upload_url_is_its_own_credential(client: httpx.AsyncClient) -> None:
+    assert (await client.post(api("/uploads"), json={"filename": "a.mp3"})).status_code == 401
+    staged = await client.post(
+        api("/uploads"), json={"filename": "a.mp3"}, headers=OPERATOR_HEADERS
+    )
+    assert staged.status_code == 201
+    path = urlsplit(staged.json()["upload_url"]).path
+    body = TINY_MP3.read_bytes()
+    assert (await client.put(path + "x", content=body)).status_code == 404
+    put = await client.put(path, content=body)
+    assert put.status_code == 200 and put.json()["state"] == "received"

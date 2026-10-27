@@ -54,6 +54,11 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "list_requests",
         "get_request",
         "prune_inbox",
+        # uploads and Serial Inboxes
+        "create_upload",
+        "put_upload",
+        "get_upload",
+        "create_serial_inbox",
         # jobs
         "list_jobs",
         "get_job",
@@ -61,6 +66,7 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         # events, about, admin
         "subscribe_events",
         "about",
+        "get_status",
         "rebuild",
         "purge_episodes",
         # api keys
@@ -107,6 +113,8 @@ TOOL_EXEMPT: Final[frozenset[str]] = frozenset(
         "purge_episodes",
         # A download for a podcast app; an agent has list_feeds.
         "export_opml",
+        # The file's bytes go to the upload URL over HTTP; a tool argument cannot carry them.
+        "put_upload",
     }
 )
 """Capabilities with a route but deliberately no MCP tool."""

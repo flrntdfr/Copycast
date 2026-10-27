@@ -51,7 +51,9 @@ describe("Settings page: Authentications", () => {
     const youtube = await screen.findByTestId("service-youtube");
     expect(youtube).toHaveAttribute("data-authenticated", "false");
     expect(screen.getByTestId("service-mixcloud")).toHaveAttribute("data-authenticated", "false");
-    expect(screen.getByText("No cookie file: every fetch is anonymous.")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Cookie files" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Locked")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add cookies.txt…" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Paste…" }));
     const form = await screen.findByRole("form", { name: "Paste a cookie file" });
@@ -61,7 +63,9 @@ describe("Settings page: Authentications", () => {
     await user.click(within(form).getByRole("button", { name: "Store cookies" }));
     await waitFor(() => expect(state.written).toEqual([{ content: COOKIES, name: "youtube" }]));
     await waitFor(() => expect(youtube).toHaveAttribute("data-authenticated", "true"));
-    expect(screen.getByTestId("cookie-file-youtube")).toHaveTextContent("youtube.txt");
+    expect(screen.getByTestId("cookie-file-youtube")).toHaveTextContent(
+      "data/engine/cookies/youtube.txt",
+    );
     expect(await screen.findByText("Cookie file stored")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Remove youtube.txt" }));

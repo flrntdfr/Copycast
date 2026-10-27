@@ -35,6 +35,7 @@ from copycast.settings import SettingsError
 LAYOUT_VERSION: Final = "1"
 LAYOUT_VERSION_FILE: Final = "LAYOUT_VERSION"
 FEEDS_DIR: Final = "feeds"
+UPLOADS_DIR: Final = "uploads"
 ENGINE_DIR: Final = "engine"
 COOKIES_NAME: Final = "cookies.txt"
 COOKIE_FILES_DIR: Final = "cookies"
@@ -112,6 +113,11 @@ class Layout:
     @property
     def feeds_dir(self) -> Path:
         return self.root / FEEDS_DIR
+
+    @property
+    def uploads_dir(self) -> Path:
+        """Files PUT to an upload URL, staged until a Serial Inbox takes them (ADR 0015)."""
+        return self.root / UPLOADS_DIR
 
     def read_version(self) -> str | None:
         try:

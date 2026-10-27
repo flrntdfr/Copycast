@@ -47,6 +47,10 @@ from copycast.application.models import (
     RequestRead,
     SelectionRequest,
     SelectionResult,
+    SerialInboxCreate,
+    StatusRead,
+    UploadCreate,
+    UploadRead,
     VideoSearchPage,
     YouTubePlaylistList,
 )
@@ -301,6 +305,38 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         """
         return await container.services.prune_inbox(inbox, prune)
 
+    # ------------------------------------------------------------------ uploads
+
+    async def create_upload(upload: UploadCreate) -> UploadRead:
+        """Stage one local audio file (mp3, m4a, m4b) for a Serial Inbox.
+
+        Returns ``upload_url``: send the file's bytes there with an HTTP PUT, for example
+        ``curl -sf -T "<file>" "<upload_url>"`` (no other credential; usable once). The
+        answer of that PUT, or ``get_upload``, carries the tags Copycast read from the file:
+        title, album, artist, track and disc numbers, duration, embedded chapters.
+        """
+        return await container.services.create_upload(upload)
+
+    async def get_upload(upload_id: str) -> UploadRead:
+        """A staged upload: ``state`` (pending until its PUT, then received) and its tags."""
+        return await container.services.get_upload(upload_id)
+
+    async def create_serial_inbox(inbox: SerialInboxCreate) -> InboxRead:
+        """Create an Inbox from received uploads, Episodes in exactly the order of ``episodes``.
+
+        Use it for an audiobook or any work split into files. You decide the listening
+        order: read every upload's tags and file name (disc, then track, then natural
+        file-name order is the usual answer; chapter titles beat file names when the tags
+        disagree), then list ``episodes`` first to last. Give each one a clean ``title``
+        (the chapter's name, not the file name; Copycast prefixes "07 · " unless
+        ``number_titles`` is false), ``part``/``part_title`` for books or parts,
+        ``chapter`` when it has one, and ``author`` only when it differs from the Inbox's.
+        The feed is published ``itunes:type serial``, one Episode per day at a playful
+        posting time so every app plays it in order; each description starts with the
+        Episode's place in the work. Quote the returned ``feed_url`` to the user.
+        """
+        return await container.services.create_serial_inbox(inbox)
+
     # ------------------------------------------------------------------ jobs and about
 
     async def get_job(job_id: uuid.UUID) -> JobRead:
@@ -327,6 +363,11 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         """Application and engine versions, layout version and totals."""
         return await container.services.about()
 
+    async def get_status() -> StatusRead:
+        """Status of every component (database, worker, scheduler, job queue, storage,
+        yt-dlp, ffmpeg, crawlers by service): check it when Refreshes or archives fail."""
+        return await container.services.get_status()
+
     registrations: list[tuple[ToolFn, str, str, bool]] = [
         (search_podcasts, "search_podcasts", "search_podcasts", True),
         (search_videos, "search_videos", "search_videos", True),
@@ -352,10 +393,14 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         (update_inbox, "update_inbox", "update_inbox", False),
         (add_to_inbox, "add_to_inbox", "add_request", False),
         (prune_inbox, "prune_inbox", "prune_inbox", False),
+        (create_upload, "create_upload", "create_upload", False),
+        (get_upload, "get_upload", "get_upload", True),
+        (create_serial_inbox, "create_serial_inbox", "create_serial_inbox", False),
         (get_job, "get_job", "get_job", True),
         (list_jobs, "list_jobs", "list_jobs", True),
         (cancel_job, "cancel_job", "cancel_job", False),
         (get_about, "get_about", "about", True),
+        (get_status, "get_status", "get_status", True),
     ]
     for fn, name, capability, read_only in registrations:
         scope = required_scope(destructive=capability in DESTRUCTIVE, read_only=read_only)

@@ -119,12 +119,17 @@
   }
   html {
     color-scheme: light;
+    /* Focus and anchor scrolling stop above the player (PlayerBar sets --player-h). */
+    scroll-padding-bottom: var(--player-h, 0px);
   }
   html.dark {
     color-scheme: dark;
   }
   body {
     @apply bg-background text-foreground antialiased;
+    /* viewport-fit=cover: keep content out of a landscape notch. */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
   @media (prefers-reduced-motion: reduce) {
     .animate-health-blink {

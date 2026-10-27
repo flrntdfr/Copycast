@@ -152,6 +152,9 @@ class InboxRead(_FeedReadBase):
     name: str
     autoprune_days: int | None = None
     request_count: int = 0
+    serial: bool = Field(
+        default=False, description="A Serial Inbox: Episodes in the order given at creation"
+    )
     is_default: bool = Field(
         default=False, description="The default Inbox: it can be renamed but never deleted"
     )
@@ -566,6 +569,91 @@ class InboxUpdate(RequestModel):
         return None if value is None else _clean_name(value)
 
 
+class UploadCreate(RequestModel):
+    filename: str = Field(min_length=1, max_length=255, description="The file's own name")
+
+    @field_validator("filename")
+    @classmethod
+    def _filename(cls, value: str) -> str:
+        value = value.strip().replace("\\", "/").rsplit("/", 1)[-1]
+        if not value or value in {".", ".."}:
+            raise ValueError("filename must name a file")
+        return value
+
+
+class AudioChapter(ReadModel):
+    start_seconds: float
+    title: str | None = None
+
+
+class AudioTags(ReadModel):
+    """What Copycast read from an uploaded file (ID3, MP4, Vorbis tags); null when absent."""
+
+    title: str | None = None
+    album: str | None = None
+    artist: str | None = None
+    album_artist: str | None = None
+    track: int | None = None
+    track_total: int | None = None
+    disc: int | None = None
+    disc_total: int | None = None
+    genre: str | None = None
+    year: str | None = None
+    comment: str | None = None
+    duration_seconds: int | None = None
+    mime: str | None = None
+    chapters: list[AudioChapter] = Field(default_factory=list[AudioChapter])
+
+
+class UploadRead(ReadModel):
+    id: str
+    filename: str
+    state: Literal["pending", "received", "used"]
+    upload_url: str | None = Field(
+        default=None,
+        description="PUT the file's bytes here (no other credential); null once received",
+    )
+    size_bytes: int | None = None
+    tags: AudioTags | None = None
+    created_at: datetime
+
+
+class SerialEpisode(RequestModel):
+    """One file of a Serial Inbox, described the way it should read in a podcast app."""
+
+    upload_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=300)
+    author: str | None = Field(default=None, max_length=300, description="Else the Inbox's")
+    description: str | None = Field(default=None, max_length=20000)
+    part: int | None = Field(default=None, ge=0, description="Part, book or disc number")
+    part_title: str | None = Field(default=None, max_length=300)
+    chapter: int | None = Field(default=None, ge=0)
+
+
+class SerialInboxCreate(RequestModel):
+    """A Serial Inbox: ``episodes`` in listening order, first to last (ADR 0015)."""
+
+    name: str = Field(min_length=1, max_length=INBOX_NAME_MAX_LEN)
+    author: str | None = Field(default=None, max_length=300)
+    description: str | None = Field(default=None, max_length=20000)
+    number_titles: bool = Field(
+        default=True, description='Prefix each title with its position ("07 · Title")'
+    )
+    episodes: list[SerialEpisode] = Field(min_length=1, max_length=2000)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        return _clean_name(value)
+
+    @model_validator(mode="after")
+    def _distinct(self) -> SerialInboxCreate:
+        ids = [episode.upload_id for episode in self.episodes]
+        if len(set(ids)) != len(ids):
+            raise ValueError("each upload may appear only once")
+        return self
+
+
 class RequestCreate(RequestModel):
     url: str = Field(min_length=1, max_length=2048)
 
@@ -814,6 +902,57 @@ class ReadyRead(ReadModel):
     checks: dict[str, ReadyCheck]
 
 
+StatusState = Literal["ok", "warn", "error", "unknown"]
+
+
+class StatusFact(ReadModel):
+    """One line under a component: a value, a moment (shown relative) or both."""
+
+    label: str
+    value: str | None = None
+    at: datetime | None = None
+    detail: str | None = Field(default=None, description="A longer note, such as the last error")
+    state: StatusState | None = Field(
+        default=None, description="Set when this line has a state of its own (a crawler)"
+    )
+
+
+class ComponentStatus(ReadModel):
+    id: str
+    name: str
+    state: StatusState
+    summary: str
+    facts: list[StatusFact] = Field(default_factory=list[StatusFact])
+
+
+class StatusRead(ReadModel):
+    """Every component Copycast depends on; ``state`` is the worst of them (unknown counts ok)."""
+
+    state: StatusState
+    checked_at: datetime
+    components: list[ComponentStatus]
+
+
+class QueueStats(ReadModel):
+    """The job queue as the status report reads it (not part of any response)."""
+
+    queued: int = 0
+    waiting: int = 0
+    running: int = 0
+    failed_recently: int = 0
+    oldest_queued_at: datetime | None = None
+
+
+class CrawlerStats(ReadModel):
+    """Finished Refresh runs of one service since a moment (not part of any response)."""
+
+    service: str | None
+    runs: int = 0
+    failed: int = 0
+    last_success_at: datetime | None = None
+    last_error: str | None = None
+
+
 class RebuildRequest(RequestModel):
     dry_run: bool = True
 
@@ -841,9 +980,13 @@ __all__ = [
     "ApiKeyList",
     "ApiKeyRead",
     "AssetRead",
+    "AudioChapter",
+    "AudioTags",
     "BackfillPolicy",
     "BackfillRequest",
     "CatalogCounts",
+    "ComponentStatus",
+    "CrawlerStats",
     "EngineCookiesRead",
     "EngineCookiesWrite",
     "EngineRead",
@@ -873,6 +1016,7 @@ __all__ = [
     "Problem",
     "PruneRequest",
     "PruneResult",
+    "QueueStats",
     "ReadModel",
     "ReadyCheck",
     "ReadyRead",
@@ -884,7 +1028,14 @@ __all__ = [
     "SelectionRequest",
     "SelectionResult",
     "SelectionSummary",
+    "SerialEpisode",
+    "SerialInboxCreate",
+    "StatusFact",
+    "StatusRead",
+    "StatusState",
     "Totals",
+    "UploadCreate",
+    "UploadRead",
     "VideoSearchPage",
     "VideoSearchResult",
 ]

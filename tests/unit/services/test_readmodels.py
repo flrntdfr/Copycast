@@ -65,6 +65,7 @@ def mirror_row(**overrides: Any) -> Any:
         "refresh_interval_hours": None,
         "sync_deletions": False,
         "playlist_capture": False,
+        "serial": False,
         "preferred_language": None,
         "follow": True,
         "paused": False,

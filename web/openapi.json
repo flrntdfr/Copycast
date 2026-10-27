@@ -2415,6 +2415,28 @@
         "x-capability": "about"
       }
     },
+    "/api/status": {
+      "get": {
+        "tags": [
+          "about"
+        ],
+        "summary": "Status of every component: database, worker, storage, yt-dlp, crawlers",
+        "operationId": "get_status",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusRead"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "get_status"
+      }
+    },
     "/api/admin/rebuild": {
       "post": {
         "tags": [
@@ -2800,6 +2822,163 @@
         "x-capability": "set_mirror_defaults"
       }
     },
+    "/api/uploads": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Stage an audio file; PUT its bytes to the returned upload_url",
+        "operationId": "create_upload",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "create_upload"
+      }
+    },
+    "/api/uploads/{upload_id}": {
+      "get": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "A staged upload and the tags read from it",
+        "operationId": "get_upload",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "get_upload"
+      }
+    },
+    "/api/serial-inboxes": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Create an Inbox from uploads, Episodes in the given order",
+        "operationId": "create_serial_inbox",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SerialInboxCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "create_serial_inbox"
+      }
+    },
     "/feeds/{feed_id}.xml": {
       "get": {
         "tags": [
@@ -2928,6 +3107,78 @@
             }
           }
         }
+      }
+    },
+    "/uploads/{upload_id}/{token}": {
+      "put": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "The bytes of a staged upload (the URL is the credential)",
+        "operationId": "put_upload",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "put_upload"
       }
     },
     "/healthz/ready": {
@@ -3306,6 +3557,187 @@
         ],
         "title": "AssetState"
       },
+      "AudioChapter": {
+        "properties": {
+          "start_seconds": {
+            "type": "number",
+            "title": "Start Seconds"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start_seconds"
+        ],
+        "title": "AudioChapter"
+      },
+      "AudioTags": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "album": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Album"
+          },
+          "artist": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artist"
+          },
+          "album_artist": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Album Artist"
+          },
+          "track": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Track"
+          },
+          "track_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Track Total"
+          },
+          "disc": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disc"
+          },
+          "disc_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disc Total"
+          },
+          "genre": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genre"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "mime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime"
+          },
+          "chapters": {
+            "items": {
+              "$ref": "#/components/schemas/AudioChapter"
+            },
+            "type": "array",
+            "title": "Chapters"
+          }
+        },
+        "type": "object",
+        "title": "AudioTags",
+        "description": "What Copycast read from an uploaded file (ID3, MP4, Vorbis tags); null when absent."
+      },
       "BackfillMode": {
         "type": "string",
         "enum": [
@@ -3493,6 +3925,47 @@
           "dry_run"
         ],
         "title": "ClearFeedResult"
+      },
+      "ComponentStatus": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "warn",
+              "error",
+              "unknown"
+            ],
+            "title": "State"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/StatusFact"
+            },
+            "type": "array",
+            "title": "Facts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "state",
+          "summary"
+        ],
+        "title": "ComponentStatus"
       },
       "CookieServiceRead": {
         "properties": {
@@ -3950,6 +4423,12 @@
             "type": "integer",
             "title": "Request Count",
             "default": 0
+          },
+          "serial": {
+            "type": "boolean",
+            "title": "Serial",
+            "description": "A Serial Inbox: Episodes in the order given at creation",
+            "default": false
           },
           "is_default": {
             "type": "boolean",
@@ -5837,6 +6316,149 @@
         "title": "SelectionSummary",
         "description": "What a selection-mode Mirror has selected so far."
       },
+      "SerialEpisode": {
+        "properties": {
+          "upload_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Upload Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author",
+            "description": "Else the Inbox's"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "part": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part",
+            "description": "Part, book or disc number"
+          },
+          "part_title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
+          },
+          "chapter": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chapter"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "upload_id",
+          "title"
+        ],
+        "title": "SerialEpisode",
+        "description": "One file of a Serial Inbox, described the way it should read in a podcast app."
+      },
+      "SerialInboxCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "number_titles": {
+            "type": "boolean",
+            "title": "Number Titles",
+            "description": "Prefix each title with its position (\"07 \u00b7 Title\")",
+            "default": true
+          },
+          "episodes": {
+            "items": {
+              "$ref": "#/components/schemas/SerialEpisode"
+            },
+            "type": "array",
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Episodes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "episodes"
+        ],
+        "title": "SerialInboxCreate",
+        "description": "A Serial Inbox: ``episodes`` in listening order, first to last (ADR 0015)."
+      },
       "SourceKind": {
         "type": "string",
         "enum": [
@@ -5844,6 +6466,107 @@
           "ytdlp"
         ],
         "title": "SourceKind"
+      },
+      "StatusFact": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail",
+            "description": "A longer note, such as the last error"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ok",
+                  "warn",
+                  "error",
+                  "unknown"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State",
+            "description": "Set when this line has a state of its own (a crawler)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label"
+        ],
+        "title": "StatusFact",
+        "description": "One line under a component: a value, a moment (shown relative) or both."
+      },
+      "StatusRead": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "warn",
+              "error",
+              "unknown"
+            ],
+            "title": "State"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Checked At"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/ComponentStatus"
+            },
+            "type": "array",
+            "title": "Components"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "checked_at",
+          "components"
+        ],
+        "title": "StatusRead",
+        "description": "Every component Copycast depends on; ``state`` is the worst of them (unknown counts ok)."
       },
       "Totals": {
         "properties": {
@@ -5865,6 +6588,90 @@
         },
         "type": "object",
         "title": "Totals"
+      },
+      "UploadCreate": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "description": "The file's own name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "filename"
+        ],
+        "title": "UploadCreate"
+      },
+      "UploadRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "received",
+              "used"
+            ],
+            "title": "State"
+          },
+          "upload_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upload Url",
+            "description": "PUT the file's bytes here (no other credential); null once received"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AudioTags"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "filename",
+          "state",
+          "created_at"
+        ],
+        "title": "UploadRead"
       },
       "ValidationError": {
         "properties": {

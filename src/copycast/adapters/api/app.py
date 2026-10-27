@@ -37,6 +37,7 @@ from copycast.adapters.api.middleware import (
 from copycast.adapters.api.problems import install_exception_handlers, relabel_problem_content
 from copycast.adapters.api.routes import create_api_router
 from copycast.adapters.api.routes import public as public_routes
+from copycast.adapters.api.routes import uploads as upload_routes
 from copycast.adapters.api.spa import mount_spa
 from copycast.adapters.mcp.server import create_mcp
 from copycast.logging import get_logger
@@ -45,6 +46,7 @@ from copycast.version import APP_VERSION
 
 API_PREFIX = "/api"
 FEEDS_PREFIX = "/feeds"
+UPLOADS_PREFIX = "/uploads"
 HEALTH_PREFIX = "/healthz"
 MCP_PREFIX = "/mcp"
 GZIP_MINIMUM_SIZE = 500
@@ -202,6 +204,7 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
     app.include_router(create_api_router(), prefix=API_PREFIX)
     app.include_router(public_routes.open_router, prefix=FEEDS_PREFIX)
     app.include_router(public_routes.router, prefix=FEEDS_PREFIX)
+    app.include_router(upload_routes.open_router, prefix=UPLOADS_PREFIX)
     app.add_api_route(ROBOTS_PATH, robots, methods=["GET"], include_in_schema=False)
     app.include_router(create_health_router(), prefix=HEALTH_PREFIX)
     app.router.routes.append(Route(MCP_PREFIX, ExactMount(mcp_app, MCP_PREFIX), name="mcp-root"))

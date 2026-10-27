@@ -1,4 +1,4 @@
-import { CircleCheck, ClipboardPaste, Loader2, Lock, Trash2, Upload } from "lucide-react";
+import { CircleCheck, ClipboardPaste, Loader2, Trash2, Upload } from "lucide-react";
 import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { $api } from "@/api/client";
@@ -42,8 +42,8 @@ import { HelpTip } from "./HelpTip";
 import { useDeleteCookies, useSetCookies } from "./mutations";
 
 /**
- * The sites that need a login: one tile per service, unlocked (green check) once a stored
- * cookie file covers it, and the table of stored cookie files with Add, Paste and Remove.
+ * The sites that need a login: an Add tile, then one tile per service, unlocked (green check)
+ * once a stored cookie file covers it; below, the stored files that hold cookies, if any.
  */
 export function AuthenticationsSection() {
   const cookies = $api.useQuery("get", "/api/engine/cookies");
@@ -52,7 +52,7 @@ export function AuthenticationsSection() {
   const [pasting, setPasting] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const services = cookies.data?.services ?? [];
-  const files = cookies.data?.files ?? [];
+  const files = (cookies.data?.files ?? []).filter((file) => (file.cookie_count ?? 0) > 0);
 
   const pickFile = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -88,15 +88,6 @@ export function AuthenticationsSection() {
             />
             <Button
               size="sm"
-              className="h-10 md:h-8"
-              onClick={() => fileInput.current?.click()}
-              disabled={save.isPending}
-            >
-              {save.isPending ? <Loader2 className="animate-spin" /> : <Upload />}
-              Add cookies.txt…
-            </Button>
-            <Button
-              size="sm"
               variant="outline"
               className="h-10 md:h-8"
               onClick={() => setPasting(true)}
@@ -106,7 +97,22 @@ export function AuthenticationsSection() {
           </>
         }
       />
-      <ul className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Services">
+      <ul className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5" aria-label="Services">
+        <li>
+          <button
+            type="button"
+            onClick={() => fileInput.current?.click()}
+            disabled={save.isPending}
+            className="flex w-full items-center gap-2.5 rounded-lg border border-dashed px-3 py-2.5 text-left text-sm font-medium transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+          >
+            {save.isPending ? (
+              <Loader2 className="size-6 shrink-0 animate-spin p-0.5" />
+            ) : (
+              <Upload className="size-6 shrink-0 p-0.5 text-muted-foreground" />
+            )}
+            <span className="min-w-0 flex-1 truncate">Add cookies.txt…</span>
+          </button>
+        </li>
         {cookies.isPending
           ? null
           : services.map((service) => (
@@ -119,9 +125,9 @@ export function AuthenticationsSection() {
       </ul>
       {cookies.isError ? (
         <p className="text-sm text-destructive">The cookie files could not be loaded.</p>
-      ) : (
+      ) : files.length > 0 ? (
         <CookieFilesTable files={files} onRemove={setRemoving} />
-      )}
+      ) : null}
       <PasteDialog open={pasting} onOpenChange={setPasting} />
       <RemoveDialog name={removing} onClose={() => setRemoving(null)} />
     </section>
@@ -154,9 +160,7 @@ function ServiceTile({ service, onClick }: { service: CookieServiceRead; onClick
             </span>
             {on ? (
               <CircleCheck className="size-4 shrink-0 text-success" aria-label="Unlocked" />
-            ) : (
-              <Lock className="size-3.5 shrink-0 text-muted-foreground" aria-label="Locked" />
-            )}
+            ) : null}
           </button>
         </TooltipTrigger>
         <TooltipContent>
@@ -169,6 +173,7 @@ function ServiceTile({ service, onClick }: { service: CookieServiceRead; onClick
   );
 }
 
+/** The stored files that hold cookies: when each was added, where it lives, what it unlocks. */
 function CookieFilesTable({
   files,
   onRemove,
@@ -181,64 +186,57 @@ function CookieFilesTable({
       <Table aria-label="Cookie files">
         <TableHeader>
           <TableRow>
-            <TableHead>Cookie file</TableHead>
+            <TableHead>Added</TableHead>
+            <TableHead>File path</TableHead>
             <TableHead>Unlocks</TableHead>
-            <TableHead className="text-right">Cookies</TableHead>
-            <TableHead className="hidden sm:table-cell">Updated</TableHead>
             <TableHead className="w-10">
               <span className="sr-only">Remove</span>
             </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {files.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={5} className="text-muted-foreground">
-                No cookie file: every fetch is anonymous.
+          {files.map((file) => (
+            <TableRow key={file.name} data-testid={`cookie-file-${file.name}`}>
+              <TableCell className="whitespace-nowrap text-muted-foreground">
+                <RelativeTime value={file.updated_at} fallback="unknown" />
+              </TableCell>
+              <TableCell className="max-w-48 truncate font-mono text-xs">
+                {cookieFilePath(file.name)}
+              </TableCell>
+              <TableCell>
+                <span className="flex items-center gap-1.5">
+                  {(file.services ?? []).map((service) => (
+                    <ServiceLogo key={service} service={service} className="size-4" />
+                  ))}
+                  {(file.services ?? []).length === 0 ? (
+                    <span className="truncate text-xs text-muted-foreground">
+                      {(file.domains ?? []).slice(0, 3).join(", ") || "—"}
+                    </span>
+                  ) : null}
+                </span>
+              </TableCell>
+              <TableCell>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-10 text-muted-foreground hover:text-destructive md:size-8"
+                  aria-label={`Remove ${file.name}.txt`}
+                  onClick={() => onRemove(file.name)}
+                >
+                  <Trash2 />
+                </Button>
               </TableCell>
             </TableRow>
-          ) : (
-            files.map((file) => (
-              <TableRow key={file.name} data-testid={`cookie-file-${file.name}`}>
-                <TableCell className="max-w-40 truncate font-mono text-xs">
-                  {file.name}.txt
-                </TableCell>
-                <TableCell>
-                  <span className="flex items-center gap-1.5">
-                    {(file.services ?? []).map((service) => (
-                      <ServiceLogo key={service} service={service} className="size-4" />
-                    ))}
-                    {(file.services ?? []).length === 0 ? (
-                      <span className="truncate text-xs text-muted-foreground">
-                        {(file.domains ?? []).slice(0, 3).join(", ") || "—"}
-                      </span>
-                    ) : null}
-                  </span>
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {(file.cookie_count ?? 0).toLocaleString()}
-                </TableCell>
-                <TableCell className="hidden text-muted-foreground sm:table-cell">
-                  <RelativeTime value={file.updated_at} fallback="unknown" />
-                </TableCell>
-                <TableCell>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="size-10 text-muted-foreground hover:text-destructive md:size-8"
-                    aria-label={`Remove ${file.name}.txt`}
-                    onClick={() => onRemove(file.name)}
-                  >
-                    <Trash2 />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))
-          )}
+          ))}
         </TableBody>
       </Table>
     </div>
   );
+}
+
+/** Where a cookie file lives in the data directory (`data/engine/cookies/{name}.txt`). */
+function cookieFilePath(name: string): string {
+  return `data/engine/cookies/${name}.txt`;
 }
 
 function PasteDialog({
