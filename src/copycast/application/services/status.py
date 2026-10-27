@@ -123,13 +123,13 @@ async def _snapshot(ctx: ServiceContext, now: datetime) -> _Snapshot:
 
 
 def _database(snapshot: _Snapshot) -> ComponentStatus:
-    name = "Database"
+    name = "Postgres"
     if snapshot.error:
         return ComponentStatus(
             id="database",
             name=name,
             state="error",
-            summary="Postgres is unreachable",
+            summary="Unreachable",
             facts=[StatusFact(label="Error", detail=snapshot.error)],
         )
     facts = [StatusFact(label="Answered in", value=f"{snapshot.latency_ms or 0:.0f} ms")]
@@ -142,7 +142,7 @@ def _database(snapshot: _Snapshot) -> ComponentStatus:
             facts=facts,
         )
     return ComponentStatus(
-        id="database", name=name, state="ok", summary="Postgres is up", facts=facts
+        id="database", name=name, state="ok", summary="Up", facts=facts
     )
 
 
@@ -216,6 +216,13 @@ def _scheduler(snapshot: _Snapshot, now: datetime) -> ComponentStatus:
     tick = _parse(snapshot.worker.get("scheduler_last_tick_at"))
     if "scheduler_last_tick_at" not in snapshot.worker:
         return _unknown("scheduler", name, "This worker does not report its scheduler")
+    started_at = _parse(snapshot.worker.get("started_at"))
+    if (
+        tick is None
+        and started_at
+        and (now - started_at).total_seconds() <= SCHEDULER_STALE_SECONDS
+    ):
+        return _unknown("scheduler", name, "Starting with the worker")
     if tick is None:
         return ComponentStatus(
             id="scheduler",
@@ -388,9 +395,9 @@ def _crawlers(snapshot: _Snapshot, unlocked: set[str]) -> ComponentStatus:
         down = [fact.label for fact in facts if fact.state == "error"]
         summary = f"{', '.join(down)} failing on every Refresh"
     elif failed:
-        summary = f"{failed} of {runs} Refreshes failed in 24 h"
+        summary = f"{failed} of {runs} Refresh{'' if runs == 1 else 'es'} failed in 24 h"
     else:
-        summary = f"{runs} Refreshes in 24 h, none failed"
+        summary = f"{runs} Refresh{'' if runs == 1 else 'es'} in 24 h, none failed"
     return ComponentStatus(id="crawlers", name=name, state=overall, summary=summary, facts=facts)
 
 

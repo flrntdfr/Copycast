@@ -15,7 +15,7 @@ function baseHandlers() {
 }
 
 describe("StatusIndicator", () => {
-  it("shows the worst component and opens the ones that need attention", async () => {
+  it("shows the worst component, the check time and one entry per crawler", async () => {
     server.use(
       ...baseHandlers(),
       http.get("/api/status", () =>
@@ -25,9 +25,9 @@ describe("StatusIndicator", () => {
             components: [
               {
                 id: "database",
-                name: "Database",
+                name: "Postgres",
                 state: "ok",
-                summary: "Postgres is up",
+                summary: "Up",
                 facts: [],
               },
               {
@@ -60,7 +60,12 @@ describe("StatusIndicator", () => {
     expect(within(list).getByTestId("status-database")).toHaveAttribute("data-state", "ok");
     const crawlers = within(list).getByTestId("status-crawlers");
     expect(crawlers).toHaveTextContent("1 of 14 Refreshes failed in 24 h");
-    expect(within(crawlers).getByText("Sign in to confirm you're not a bot")).toBeVisible();
+    expect(within(crawlers).getByTestId("crawler-YouTube")).toHaveTextContent("3 ok, 1 failed");
+    expect(within(crawlers).getByTestId("crawler-YouTube")).toHaveAttribute(
+      "title",
+      "Sign in to confirm you're not a bot",
+    );
+    expect(document.querySelector('time[datetime="2024-01-15T09:00:00Z"]')).not.toBeNull();
     expect(within(list).getByTestId("status-live")).toHaveTextContent("Live updates");
   });
 

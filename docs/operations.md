@@ -43,6 +43,14 @@ Readiness: `GET /healthz/ready` on the api (8080) and on the worker (8081) answe
 liveness check. `/api/about` shows the app version, the engine version and channel, ffmpeg,
 the layout version and storage totals.
 
+Status: `GET /api/status` (the MCP tool `get_status`, and the dot in the web UI's header)
+reports each component as ok, warn, error or unknown with a summary and details: the
+Postgres, the worker (from its heartbeat), the scheduler, the job queue, storage, yt-dlp
+(warns when the worker runs another version or the release is over 60 days old), ffmpeg,
+and the crawlers, that is the last 24 h of Refreshes by service with each one's last error.
+It sits behind the operator password and never reaches the internet; probes keep using
+`/healthz/ready`.
+
 ## Configuration
 
 Configuration is read, in increasing precedence, from built-in defaults, the TOML file named

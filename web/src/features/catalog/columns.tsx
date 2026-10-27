@@ -65,7 +65,7 @@ export function buildColumns(ctx: CatalogColumnContext): ColumnDef<ItemRead>[] {
                 : false
           }
           onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all on this page"
+          aria-label="Select all loaded rows"
         />
       ),
       cell: ({ row }) => (
@@ -257,7 +257,8 @@ export function buildColumns(ctx: CatalogColumnContext): ColumnDef<ItemRead>[] {
       enableHiding: false,
       header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) => <RowActions item={row.original} feedTitle={ctx.feedTitle} />,
-      size: 120,
+      // Room for an Episode's four buttons (Play, Download, Archive flag, Delete).
+      size: 152,
     },
   );
   return columns;

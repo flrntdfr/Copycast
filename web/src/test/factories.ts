@@ -341,7 +341,7 @@ export function systemStatus(overrides: Partial<StatusRead> = {}): StatusRead {
     state: "ok",
     checked_at: "2024-01-15T09:00:00Z",
     components: [
-      { id: "database", name: "Database", state: "ok", summary: "Postgres is up", facts: [] },
+      { id: "database", name: "Postgres", state: "ok", summary: "Up", facts: [] },
       { id: "worker", name: "Worker", state: "ok", summary: "Idle", facts: [] },
     ],
     ...overrides,

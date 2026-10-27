@@ -60,6 +60,8 @@ def test_scheduler_states() -> None:
     scheduler = status._scheduler  # pyright: ignore[reportPrivateUsage]
     assert scheduler(snapshot(), NOW).state == "unknown"  # an older worker reports no tick
     assert scheduler(snapshot(scheduler_last_tick_at=None), NOW).state == "warn"
+    starting = snapshot(scheduler_last_tick_at=None, started_at=NOW.isoformat())
+    assert scheduler(starting, NOW).summary == "Starting with the worker"
     fresh = scheduler(snapshot(scheduler_last_tick_at=NOW.isoformat()), NOW)
     assert fresh.state == "ok"
     old = (NOW - timedelta(minutes=10)).isoformat()

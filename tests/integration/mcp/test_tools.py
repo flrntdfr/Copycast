@@ -238,9 +238,9 @@ async def test_jobs_and_about(mcp_client: Client[Any], source: Source) -> None:
     status = structured(await mcp_client.call_tool("get_status", {}))
     assert status["components"][0] == {
         "id": "database",
-        "name": "Database",
+        "name": "Postgres",
         "state": "ok",
-        "summary": "Postgres is up",
+        "summary": "Up",
         "facts": status["components"][0]["facts"],
     }
     with pytest.raises((ToolError, MCPError)) as bad:
