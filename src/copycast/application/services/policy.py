@@ -58,11 +58,12 @@ async def delete_rows(
 
 
 async def rolled_out(uow: UnitOfWorkPort, feed: FeedRow, *, size: int) -> list[ItemRow]:
-    """Archived items outside the window of the newest ``size``."""
+    """Archived items outside the window of the newest ``size``, flagged Archive ones spared."""
     window = set(await uow.catalog.window_ids(feed.id, size))
     archived = await uow.catalog.ids_in_state(feed.id, ArchiveState.archived)
     outside = [item_id for item_id in archived if item_id not in window]
-    return list(await uow.catalog.get_many(outside)) if outside else []
+    rows: Sequence[ItemRow] = await uow.catalog.get_many(outside) if outside else []
+    return [row for row in rows if not row.archive_flag]
 
 
 async def apply_policy(
@@ -76,6 +77,7 @@ async def apply_policy(
 
     all: every listed archivable Available item once, then Follow wants items first seen
     after the policy was applied. latest: the N highest ordinals once, then Follow.
+    new: nothing at first, then every item first seen after, whatever Follow says.
     rolling: the newest N by publication, every time, and archived items outside that
     window are tombstoned. automatic and selection: nothing. Deleted (tombstoned) and
     failed items are never re-wanted; items shorter than ``min_duration_seconds`` stay
@@ -119,7 +121,8 @@ async def apply_policy(
         feed.policy_applied_at = now
         await uow.flush()
         return changed
-    if feed.follow and mode in (BackfillMode.all, BackfillMode.latest):
+    following = feed.follow and mode in (BackfillMode.all, BackfillMode.latest)
+    if following or mode is BackfillMode.new:
         ids = await uow.catalog.available_ids(
             feed.id, first_seen_after=feed.policy_applied_at, min_duration_seconds=shortest
         )

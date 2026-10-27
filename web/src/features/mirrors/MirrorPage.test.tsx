@@ -144,7 +144,7 @@ describe("Mirror page", () => {
     );
   });
 
-  it("archives everything Available from the menu, optionally switching to Everything", async () => {
+  it("archives everything Available from the menu, optionally switching to Archive", async () => {
     const calls: { method: string; path: string; body?: unknown }[] = [];
     server.use(
       // Before the shared handlers: the first matching handler wins.
@@ -290,21 +290,27 @@ describe("Mirror page", () => {
     expect(rejected).toHaveTextContent("not allowed for a feed");
   });
 
-  it("previews a mode change and asks before archived Episodes are deleted", async () => {
+  it("offers Ephemeral and Archive, with Backfill as Archive's switch", async () => {
     const calls: { method: string; path: string; body?: unknown }[] = [];
     server.use(...handlers(calls));
     const user = userEvent.setup();
     renderApp("/mirrors/mirror-1?tab=settings");
     const form = await screen.findByRole("form", { name: "Mirror settings" });
-    expect(within(form).getByRole("tab", { name: "Everything" })).toHaveAttribute(
+    expect(within(form).getByRole("tab", { name: "Archive" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
-    // Latest N is not offered for a Mirror that does not use it.
-    expect(within(form).queryByRole("tab", { name: "Latest N" })).not.toBeInTheDocument();
+    // Rolling N, Selection and Latest N only show on a Mirror that still uses them.
+    expect(
+      within(form)
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent),
+    ).toEqual(["Ephemeral", "Archive"]);
+    const backfill = within(form).getByRole("switch", { name: /Backfill/ });
+    expect(backfill).toBeChecked();
 
     // A change that deletes nothing goes straight through.
-    await user.click(within(form).getByRole("tab", { name: "Automatic" }));
+    await user.click(within(form).getByRole("tab", { name: "Ephemeral" }));
     expect(within(form).getByLabelText("Keep downloaded for")).toHaveValue(7);
     expect(within(form).getByText(/expire 7 days after/)).toBeInTheDocument();
     await user.click(within(form).getByRole("button", { name: "Save changes" }));
@@ -314,8 +320,39 @@ describe("Mirror page", () => {
       backfill: { mode: "automatic", retention_days: 7 },
     });
 
+    await user.click(within(form).getByRole("tab", { name: "Archive" }));
+    await user.click(within(form).getByRole("switch", { name: /Backfill/ }));
+    expect(
+      within(form).getByText("Off: only what the Source publishes from now on."),
+    ).toBeInTheDocument();
+    await user.click(within(form).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
+    expect(calls.filter((c) => c.method === "PATCH")[1]?.body).toEqual({
+      backfill: { mode: "new" },
+    });
+  });
+
+  it("keeps a Rolling Mirror's tab and asks before archived Episodes are deleted", async () => {
+    const calls: { method: string; path: string; body?: unknown }[] = [];
+    server.use(
+      // Before the shared handlers: the first matching handler wins.
+      http.get("/api/feeds/:feedId", () =>
+        HttpResponse.json({
+          ...feed,
+          backfill: { mode: "rolling", latest_n: 3, retention_days: null },
+        }),
+      ),
+      ...handlers(calls),
+    );
+    const user = userEvent.setup();
+    renderApp("/mirrors/mirror-1?tab=settings");
+    const form = await screen.findByRole("form", { name: "Mirror settings" });
+    expect(within(form).getByRole("tab", { name: "Rolling N" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
     // Rolling 1 would delete two of the three archived Episodes: confirm first.
-    await user.click(within(form).getByRole("tab", { name: "Rolling N" }));
     const keep = within(form).getByLabelText("Keep the newest");
     await user.clear(keep);
     await user.type(keep, "1");
@@ -326,7 +363,7 @@ describe("Mirror page", () => {
     expect(dialog).toHaveTextContent("Rolling 1 keeps only the newest 1 Episode.");
     expect(dialog).toHaveTextContent("2 archived Episodes (2.0 MB) will be deleted now");
     await user.click(within(dialog).getByRole("button", { name: "Keep them" }));
-    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
 
     await user.click(within(form).getByRole("button", { name: "Save changes" }));
     await user.click(
@@ -334,8 +371,8 @@ describe("Mirror page", () => {
         name: "Delete and switch",
       }),
     );
-    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
-    expect(calls.filter((c) => c.method === "PATCH")[1]?.body).toEqual({
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({
       backfill: { mode: "rolling", latest_n: 1 },
     });
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());

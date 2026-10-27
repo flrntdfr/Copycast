@@ -1,8 +1,10 @@
-"""``/api/engine/cookies``: the Engine's cookie file, stored for sites that need a login."""
+"""``/api/engine/cookies``: the Engine's cookie files, stored for sites that need a login."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Query, Response
 
 from copycast.adapters.api.deps import ServicesDep
 from copycast.adapters.api.problems import problem_responses
@@ -16,7 +18,7 @@ router = APIRouter(tags=["engine"])
     operation_id="get_engine_cookies",
     openapi_extra={"x-capability": "get_engine_cookies"},
     response_model=EngineCookiesRead,
-    summary="Whether a cookie file is stored and which domains it covers (never its values)",
+    summary="The stored cookie files and the services they unlock (never their values)",
 )
 async def get_engine_cookies(services: ServicesDep) -> EngineCookiesRead:
     return await services.get_engine_cookies()
@@ -28,7 +30,7 @@ async def get_engine_cookies(services: ServicesDep) -> EngineCookiesRead:
     openapi_extra={"x-capability": "set_engine_cookies"},
     response_model=EngineCookiesRead,
     responses=problem_responses(422),
-    summary="Store a Netscape cookies.txt for every future fetch",
+    summary="Store a Netscape cookies.txt under its name for every future fetch",
 )
 async def set_engine_cookies(services: ServicesDep, body: EngineCookiesWrite) -> EngineCookiesRead:
     return await services.set_engine_cookies(body)
@@ -39,10 +41,14 @@ async def set_engine_cookies(services: ServicesDep, body: EngineCookiesWrite) ->
     operation_id="delete_engine_cookies",
     openapi_extra={"x-capability": "delete_engine_cookies"},
     status_code=204,
-    summary="Remove the stored cookie file",
+    responses=problem_responses(404),
+    summary="Remove one stored cookie file, or every one without name",
 )
-async def delete_engine_cookies(services: ServicesDep) -> Response:
-    await services.delete_engine_cookies()
+async def delete_engine_cookies(
+    services: ServicesDep,
+    name: Annotated[str | None, Query(max_length=128, description="The file to remove")] = None,
+) -> Response:
+    await services.delete_engine_cookies(name)
     return Response(status_code=204)
 
 

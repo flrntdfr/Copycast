@@ -3,7 +3,8 @@
 ::
 
     {data_dir}/LAYOUT_VERSION                       "1\\n"
-    {data_dir}/engine/cookies.txt                   the Engine's cookie file (optional, 0600)
+    {data_dir}/engine/cookies.txt                   the Engine's cookie jar (optional, 0600)
+    {data_dir}/engine/cookies/{name}.txt            the stored files the jar merges (0600)
     {data_dir}/engine/defaults.json                 operator defaults every Mirror may override
     {data_dir}/feeds/{feed_id}/feed.json            descriptor
       source/feed.xml | source/listing.json         verbatim Source XML | last flat listing
@@ -36,6 +37,7 @@ LAYOUT_VERSION_FILE: Final = "LAYOUT_VERSION"
 FEEDS_DIR: Final = "feeds"
 ENGINE_DIR: Final = "engine"
 COOKIES_NAME: Final = "cookies.txt"
+COOKIE_FILES_DIR: Final = "cookies"
 DEFAULTS_NAME: Final = "defaults.json"
 DESCRIPTOR_NAME: Final = "feed.json"
 SOURCE_XML_NAME: Final = "feed.xml"
@@ -98,6 +100,10 @@ class Layout:
     def cookies_path(self) -> Path:
         """``engine/cookies.txt``: handed to yt-dlp as ``cookiefile`` when present."""
         return self.engine_dir / COOKIES_NAME
+
+    def cookie_files_dir(self) -> Path:
+        """``engine/cookies/``: one Netscape file per upload, merged into the jar."""
+        return self.engine_dir / COOKIE_FILES_DIR
 
     def defaults_path(self) -> Path:
         """``engine/defaults.json``: the operator's defaults (language, minimum length)."""

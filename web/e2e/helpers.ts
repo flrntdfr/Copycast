@@ -53,7 +53,7 @@ export async function defaultInbox(request: APIRequestContext): Promise<FeedSumm
 
 /** Add the fixture feed from the Mirrors page bar and land on the dialog's Created step. */
 export async function createFixtureMirror(page: Page): Promise<string> {
-  // Everything, so the worker archives every fixture item (the built-in default is Automatic).
+  // Archive with Backfill, so the worker archives every fixture item (the default is Ephemeral).
   const defaults = await page.request.put("/api/settings/defaults", {
     data: { backfill: { mode: "all" } },
   });

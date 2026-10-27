@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, Response
 
 from copycast.adapters.api.deps import RebuildGuard, ServicesDep
 from copycast.adapters.api.problems import problem_responses
-from copycast.application.models import ItemPage, ItemRead, JobRead
+from copycast.application.models import ArchiveFlagUpdate, ItemPage, ItemRead, JobRead
 from copycast.domain.enums import ArchiveState, JobTrigger
 
 router = APIRouter(tags=["items"])
@@ -100,6 +100,21 @@ async def fetch_item_metadata(services: ServicesDep, feed_id: str, item_id: str)
 async def delete_item(services: ServicesDep, feed_id: str, item_id: str) -> Response:
     await services.delete_item(feed_id, item_id)
     return Response(status_code=204)
+
+
+@router.put(
+    "/feeds/{feed_id}/items/{item_id}/archive-flag",
+    operation_id="set_archive_flag",
+    openapi_extra={"x-capability": "set_archive_flag"},
+    response_model=ItemRead,
+    dependencies=[RebuildGuard],
+    responses=problem_responses(404),
+    summary="Flag an Episode Archive (kept for good) or clear the flag",
+)
+async def set_archive_flag(
+    services: ServicesDep, feed_id: str, item_id: str, body: ArchiveFlagUpdate
+) -> ItemRead:
+    return await services.set_archive_flag(feed_id, item_id, body)
 
 
 __all__ = ["MAX_LIMIT", "router"]

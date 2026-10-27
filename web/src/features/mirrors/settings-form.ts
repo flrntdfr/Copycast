@@ -76,7 +76,7 @@ export function settingsDefaults(mirror: MirrorRead): MirrorSettingsInput {
     follow: mirror.follow,
     mode: backfill.mode,
     latest_n: backfill.latest_n ?? 10,
-    // Under Automatic an empty field means "keep forever"; elsewhere the field is unused.
+    // Under Ephemeral an empty field means "keep forever"; elsewhere the field is unused.
     retention_days:
       backfill.mode === "automatic"
         ? (backfill.retention_days ?? undefined)

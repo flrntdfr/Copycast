@@ -6,6 +6,7 @@ import {
   ArrowUpDown,
   Database,
   ExternalLink,
+  FileDown,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -105,11 +106,22 @@ export function AboutPage() {
         title="About"
         description={`Copycast ${info.version}`}
         actions={
-          <Button variant="outline" size="sm" asChild>
-            <a href={REPOSITORY_URL} target="_blank" rel="noreferrer">
-              <ExternalLink /> GitHub
-            </a>
-          </Button>
+          <>
+            <Button variant="outline" size="sm" asChild>
+              <a
+                href="/api/feeds.opml"
+                download="copycast.opml"
+                title="Every Mirror and Inbox feed with its credentials, to subscribe to all of them at once in Overcast, Pocket Casts or AntennaPod"
+              >
+                <FileDown /> Export OPML
+              </a>
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <a href={REPOSITORY_URL} target="_blank" rel="noreferrer">
+                <ExternalLink /> GitHub
+              </a>
+            </Button>
+          </>
         }
       />
       <dl className="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-[max-content_1fr]">

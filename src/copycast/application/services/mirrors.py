@@ -213,6 +213,8 @@ async def create_mirror(
             feed.policy_applied_at = _now()
             await uow.flush()
         else:
+            if backfill.mode is BackfillMode.new:
+                feed.policy_applied_at = _now()  # what is listed now stays Available
             await enqueue_refresh(uow, feed, JobTrigger.policy)
         await uow.update_intent(feed_id)
         await uow.publish(FeedEvent(feed_id=feed_id, revision=feed.revision, reason="created"))
@@ -399,6 +401,7 @@ async def update_mirror(
         if "sync_deletions" in fields and body.sync_deletions is not None:
             feed.sync_deletions = body.sync_deletions
         if "backfill" in fields and body.backfill is not None:
+            previous_mode = feed.backfill_mode
             feed.backfill_mode = body.backfill.mode.value
             feed.backfill_latest_n = body.backfill.latest_n
             feed.retention_days = body.backfill.retention_days
@@ -409,6 +412,10 @@ async def update_mirror(
                 refresh_needed = True
             elif body.backfill.mode is BackfillMode.automatic:
                 feed.policy_applied_at = feed.policy_applied_at or _now()
+            elif body.backfill.mode is BackfillMode.new:
+                # Only what the Source lists from now on; nothing listed so far is wanted.
+                if previous_mode != BackfillMode.new or feed.policy_applied_at is None:
+                    feed.policy_applied_at = _now()
             elif body.backfill.mode is BackfillMode.selection:
                 feed.policy_applied_at = feed.policy_applied_at or _now()
                 expression = body.backfill.selection

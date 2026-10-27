@@ -87,10 +87,11 @@ export const progressPhaseLabel = label<ProgressPhase>({
 });
 
 export const backfillModeLabel = label<BackfillMode>({
-  all: "Everything",
+  all: "Archive",
+  new: "Archive, new only",
   latest: "Latest N",
   rolling: "Rolling N",
-  automatic: "Automatic",
+  automatic: "Ephemeral",
   selection: "Selection",
 });
 

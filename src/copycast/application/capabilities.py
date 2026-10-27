@@ -23,6 +23,7 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "list_feeds",
         "get_feed",
         "delete_feed",
+        "clear_feed",
         "rotate_feed_credentials",
         "export_opml",
         # items
@@ -31,6 +32,7 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "archive_item",
         "delete_item",
         "fetch_item_metadata",
+        "set_archive_flag",
         # sources
         "probe_source",
         "search_podcasts",
@@ -122,7 +124,9 @@ INTERNAL: Final[frozenset[str]] = frozenset(
 
 ROUTED_INTERNAL: Final[frozenset[str]] = frozenset({"subscribe_events"})
 
-DESTRUCTIVE: Final[frozenset[str]] = frozenset({"delete_feed", "delete_item", "prune_inbox"})
+DESTRUCTIVE: Final[frozenset[str]] = frozenset(
+    {"delete_feed", "clear_feed", "delete_item", "prune_inbox"}
+)
 """Tools that carry the MCP destructive hint."""
 
 

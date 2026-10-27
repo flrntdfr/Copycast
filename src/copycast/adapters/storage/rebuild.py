@@ -460,6 +460,7 @@ def _item_values(feed_id: str, item: DescriptorItem, public_ext: str) -> dict[st
         "last_listed_at": item.last_listed_at,
         "archive_state": item.archive_state.value,
         "wanted_reason": item.wanted_reason.value if item.wanted_reason else None,
+        "archive_flag": item.archive_flag,
         "archived_at": item.archived_at,
         "deleted_at": item.deleted_at,
         "media_path": item.media_path,

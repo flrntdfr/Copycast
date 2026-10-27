@@ -73,16 +73,24 @@ A Feed's permanent, opaque identity. For a Mirror it is derived from the Source'
 _Avoid_: Slug, name, feed name
 
 **Backfill**:
-The part of a Mirror's policy that says which items get archived: everything, a Rolling window, on demand (Automatic), or an explicit selection (Latest N remains for Mirrors that already use it). Everything and Latest N apply once, at the first Refresh (immediately for a selection).
-_Avoid_: Initial sync, history, catch-up, mode (in prose; the UI shows the modes as tabs)
+The part of a Mirror's policy that says which items get archived (`backfill.mode`): Archive with or without its backfill (`all`, `new`), Ephemeral (`automatic`), and for agents and the Mirrors already using them a Rolling window or an explicit selection (Latest N remains too). Everything and Latest N apply once, at the first Refresh (immediately for a selection); `new` wants only what is first seen after it was applied. On the Archive tab, *Backfill* is the switch that also archives everything already published.
+_Avoid_: Initial sync, history, catch-up, mode (in prose; the UI shows the policies as tabs)
+
+**Archive**:
+The policy that keeps whatever it archives for good: with Backfill on (`all`) every item listed, then every new one; with it off (`new`) only what the Source lists from the moment it is chosen. Nothing is deleted on its own, and every Episode of an Archive Mirror counts as kept when its bucket is cleared (ADR 0016).
+_Avoid_: Everything (the old tab name), permanent, keep
 
 **Rolling**:
-The Backfill mode that keeps exactly the newest N items by publication archived: applied at every Refresh and at once when chosen; archived items that fall outside the window are tombstoned (ADR 0012).
+The Backfill mode that keeps exactly the newest N items by publication archived: applied at every Refresh and at once when chosen; archived items that fall outside the window are tombstoned, Episodes flagged Archive excepted (ADR 0012). No longer offered as a tab: a Mirror on it keeps the tab until switched; agents may still choose it.
 _Avoid_: Sliding window, keep-last, FIFO
 
-**Automatic**:
-The Backfill mode that archives nothing ahead of time: the Mirror Feed lists every item the Source lists, an Episode is archived when a podcast app first asks for its media (the request waits up to two minutes, then says retry), and it expires after the Mirror's Retention. An item's media URL is fixed when it is first listed (`public_ext`) and never changes once archived, whatever container the archive got, so no app downloads an Episode twice.
-_Avoid_: Lazy, on-demand mode (say "archived on demand" for the act), streaming
+**Ephemeral**:
+The policy that archives nothing ahead of time (`automatic` in the API): the Mirror Feed lists every item the Source lists, an Episode is archived when a podcast app first asks for its media (the request waits up to two minutes, then says retry), and it expires after the Mirror's Retention. An item's media URL is fixed when it is first listed (`public_ext`) and never changes once archived, whatever container the archive got, so no app downloads an Episode twice.
+_Avoid_: Automatic (the old name, still the API value), lazy, on-demand mode (say "archived on demand" for the act), streaming
+
+**Archive flag**:
+An Episode's mark that it is kept for good, set from its Catalog row or `set_archive_flag`: Retention, a Rolling window, Sync and clearing a bucket skip it; deleting the Episode or its Feed, and the admin purge, do not. Kept in `feed.json` like the rest of the item.
+_Avoid_: Pin, star, favourite, protected, keep
 
 **Follow**:
 The part of a Mirror's policy that says whether items the Source lists after creation are archived automatically. Off by default when the Backfill is a selection.
@@ -101,7 +109,7 @@ The state of a Mirror that no longer Refreshes but keeps serving its Mirror Feed
 _Avoid_: Disabled, stopped, archived
 
 **Retention**:
-An Inbox's rule for deleting Episodes it no longer needs: automatically N days after their first download, or on demand by criterion; for an Automatic Mirror, the days after an Episode's last download before it is tombstoned (7 by default, none keeps forever). Other Mirrors have no Retention. Inbox Episodes never downloaded are never auto-pruned.
+An Inbox's rule for deleting Episodes it no longer needs: automatically N days after their first download, or on demand by criterion; for an Ephemeral Mirror, the days after an Episode's last download before it is tombstoned (7 by default, none keeps forever). Other Mirrors have no Retention. Inbox Episodes never downloaded, and Episodes flagged Archive, are never pruned.
 _Avoid_: Expiry, TTL, cleanup, garbage collection
 
 **Download count**:
@@ -109,10 +117,10 @@ How many times an Episode's media was fetched by a client: a full GET or a Range
 _Avoid_: Plays, listens, hits
 
 **Tombstone**:
-The trace left by an Episode you deleted (or that rolled out, expired, or was purged): the Catalog item stays, marked deleted, so the Mirror will not archive it again on its own; it shows as Available and can be re-archived on demand, and an Automatic Mirror downloads it again when a podcast app asks.
+The trace left by an Episode you deleted (or that rolled out, expired, or was purged): the Catalog item stays, marked deleted, so the Mirror will not archive it again on its own; it shows as Available and can be re-archived on demand, and an Ephemeral Mirror downloads it again when a podcast app asks.
 
 **Capture**:
-A YouTube playlist of the signed-in account mirrored from the Inboxes section of the Feeds page (the *Capture a YouTube playlist* dropdown): a synced, Automatic Mirror flagged `playlist_capture`, shown among the Inboxes because it is filled from the YouTube app the way an Inbox is filled by Requests.
+A YouTube playlist of the signed-in account mirrored from the Inboxes section of the Feeds page (the *Capture a YouTube playlist* dropdown): a synced, Ephemeral Mirror flagged `playlist_capture`, shown among the Inboxes because it is filled from the YouTube app the way an Inbox is filled by Requests.
 _Avoid_: Playlist Inbox (it is a Mirror underneath), import
 
 **Sync**:
@@ -120,7 +128,7 @@ A Mirror option (*Stay in sync with the Source*): an Episode is deleted, leaving
 _Avoid_: Mirror deletions, prune (that is an Inbox's Retention)
 
 **Live stream**:
-A Catalog item the Engine reports as a stream (`live_status`: upcoming, live, recording being processed, recorded). While upcoming or live it is listed in the Catalog with a badge but is not archivable: no policy or selection wants it and an Automatic feed does not list it; any Refresh, full or light, that sees it recorded makes it archivable. A Request is the exception: an Inbox never Refreshes, so a pushed stream is wanted at once and its archive job waits instead. An archive that meets a stream with no recording yet waits 30 minutes between tries, without counting attempts, for up to 48 h after the job was created, then fails; the archive job alone measures that ceiling (ADR 0014).
+A Catalog item the Engine reports as a stream (`live_status`: upcoming, live, recording being processed, recorded). While upcoming or live it is listed in the Catalog with a badge but is not archivable: no policy or selection wants it and an Ephemeral feed does not list it; any Refresh, full or light, that sees it recorded makes it archivable. A Request is the exception: an Inbox never Refreshes, so a pushed stream is wanted at once and its archive job waits instead. An archive that meets a stream with no recording yet waits 30 minutes between tries, without counting attempts, for up to 48 h after the job was created, then fails; the archive job alone measures that ceiling (ADR 0014).
 _Avoid_: Broadcast, premiere (a scheduled upload is an upcoming stream to Copycast), recording (that is what it becomes)
 
 **Attachment**:
@@ -149,7 +157,7 @@ A bearer secret minted from the UI for one MCP client, shown once, stored as a d
 _Avoid_: Token, PAT, MCP password, service account
 
 **Default**:
-An operator setting on the Settings page (metadata language, minimum length) that every Mirror inherits unless its own value is set; stored in `data/engine/defaults.json`. A Mirror overrides it by setting a value and resets by clearing it.
+An operator setting in the Mirrors half of the Settings page (Refresh interval, metadata language, minimum length, the policy new Mirrors start from) that every Mirror inherits unless its own value is set; saved as it changes, stored in `data/engine/defaults.json`. A Mirror overrides it by setting a value and resets by clearing it.
 _Avoid_: Global setting, preference, config (that is the environment)
 
 **Minimum length**:
@@ -157,8 +165,12 @@ A Mirror's rule, or the Default, that keeps items shorter than N seconds Availab
 _Avoid_: Filter, Shorts rule, duration threshold
 
 **Cookie file**:
-The one Netscape `cookies.txt` the Engine carries along on every listing and fetch, stored at `data/engine/cookies.txt` from the Settings page so sites that demand a login (YouTube from a server's IP) accept downloads. Never shown back, never exposed to agents.
-_Avoid_: Cookies setting, session file, YouTube login
+A Netscape `cookies.txt` added under *Authentications* on the Settings page so sites that demand a login (YouTube from a server's IP, Twitch, Vimeo, Mixcloud) accept downloads; stored as `data/engine/cookies/{name}.txt`, one row each. The Engine carries one jar merged from all of them, `data/engine/cookies.txt`, on every listing and fetch, and cookies the sites rotate there go back to their file. A service shows unlocked while a file holds its cookies. Never shown back, never exposed to agents.
+_Avoid_: Cookies setting, session file, YouTube login, credentials
+
+**Bucket**:
+A Feed's storage: its data directory of media, Artwork and assets, listed with its size in the Buckets half of the Settings page (the Mirrors in the Feeds page's order, then the Inboxes and captured playlists). Clearing a bucket deletes every Episode not kept for good and keeps the Feed; deleting it deletes the Feed.
+_Avoid_: Inbox (every Feed has a bucket), folder, volume
 
 **Scope**:
 What an API key may do over MCP: `read` (read-only tools), `write` (everything but deletions) or `full` (everything). Every tool checks it before running.
@@ -246,3 +258,4 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0012](docs/adr/0012-mirror-modes-rolling-and-automatic.md) | Mirror modes: Rolling windows and Automatic archives narrow ADR 0009 |
 | [0013](docs/adr/0013-light-refresh-on-fetch-and-stable-media-urls.md) | A feed fetch runs a Light Refresh inline; media URLs are fixed at listing time; the api logs its own requests |
 | [0014](docs/adr/0014-live-streams-archived-once-recorded.md) | Live streams are archived once their recording is published; an archive that meets one waits, then fails |
+| [0016](docs/adr/0016-ephemeral-or-archive-and-the-archive-flag.md) | Two policies, Ephemeral and Archive (with or without Backfill); the Archive flag keeps an Episode for good |

@@ -51,6 +51,21 @@ export function useDeleteItem(feedId: string) {
   });
 }
 
+/** `set_archive_flag` for one row: kept for good, or back to the Feed's policy. */
+export function useSetArchiveFlag(feedId: string) {
+  const invalidate = useInvalidateCatalog(feedId);
+  return $api.useMutation("put", "/api/feeds/{feed_id}/items/{item_id}/archive-flag", {
+    onSuccess: (item) => {
+      invalidate();
+      toast.success(item.archive_flag ? "Flagged Archive" : "Archive flag cleared", {
+        description: item.archive_flag
+          ? "Kept for good: nothing deletes it on its own."
+          : "It follows the Feed's policy again.",
+      });
+    },
+  });
+}
+
 /** Bulk helpers for the SelectionBar; per-item calls so Inboxes work too. */
 export function useBulkActions(feedId: string, feedKind: "mirror" | "inbox") {
   const invalidate = useInvalidateCatalog(feedId);

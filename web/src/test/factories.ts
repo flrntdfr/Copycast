@@ -2,6 +2,8 @@
 import type {
   AboutRead,
   ApiKeyRead,
+  CookieServiceRead,
+  EngineCookieFileRead,
   EngineCookiesRead,
   InboxRead,
   MirrorDefaults,
@@ -81,6 +83,7 @@ export function inbox(overrides: Partial<InboxRead> = {}): InboxRead {
     created_at: "2024-01-01T00:00:00Z",
     autoprune_days: null,
     request_count: 0,
+    is_default: false,
     ...overrides,
   };
 }
@@ -103,6 +106,7 @@ export function item(overrides: Partial<ItemRead> = {}): ItemRead {
     duration_seconds: 1800,
     state,
     listed: true,
+    archive_flag: false,
     live_status: null,
     attempt_count: 0,
     last_error: null,
@@ -229,14 +233,48 @@ export function apiKey(overrides: Partial<ApiKeyRead> = {}): ApiKeyRead {
   };
 }
 
-export function engineCookies(overrides: Partial<EngineCookiesRead> = {}): EngineCookiesRead {
+const COOKIE_SERVICES = [
+  { id: "youtube", name: "YouTube", domains: ["google.com", "youtube.com"] },
+  { id: "twitch", name: "Twitch", domains: ["twitch.tv"] },
+  { id: "vimeo", name: "Vimeo", domains: ["vimeo.com"] },
+  { id: "mixcloud", name: "Mixcloud", domains: ["mixcloud.com"] },
+];
+
+/** The four services, unlocked by whichever of `files` lists them. */
+export function cookieServices(files: EngineCookieFileRead[] = []): CookieServiceRead[] {
+  return COOKIE_SERVICES.map((service) => {
+    const unlocking = files.filter((file) => file.services?.includes(service.id));
+    return {
+      ...service,
+      authenticated: unlocking.length > 0,
+      files: unlocking.map((file) => file.name),
+    };
+  });
+}
+
+export function cookieFile(overrides: Partial<EngineCookieFileRead> = {}): EngineCookieFileRead {
   return {
-    present: false,
-    size_bytes: 0,
+    name: "youtube",
+    size_bytes: 61,
+    updated_at: "2024-01-15T09:00:00Z",
+    cookie_count: 1,
+    domains: ["youtube.com"],
+    services: ["youtube"],
+    ...overrides,
+  };
+}
+
+export function engineCookies(overrides: Partial<EngineCookiesRead> = {}): EngineCookiesRead {
+  const files = overrides.files ?? [];
+  return {
+    present: files.length > 0,
+    size_bytes: files.reduce((sum, file) => sum + (file.size_bytes ?? 0), 0),
     updated_at: null,
-    cookie_count: 0,
-    domains: [],
-    youtube: false,
+    cookie_count: files.reduce((sum, file) => sum + (file.cookie_count ?? 0), 0),
+    domains: [...new Set(files.flatMap((file) => file.domains ?? []))].sort(),
+    youtube: files.some((file) => file.services?.includes("youtube")),
+    files,
+    services: cookieServices(files),
     ...overrides,
   };
 }

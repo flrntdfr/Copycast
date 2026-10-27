@@ -145,6 +145,7 @@ def inbox_read(
         created_at=feed.created_at,
         autoprune_days=feed.autoprune_days,
         request_count=request_count,
+        is_default=feed.is_default,
     )
 
 
@@ -256,6 +257,7 @@ def item_read(
         duration_seconds=item.duration_seconds,
         state=ArchiveState(item.archive_state),
         listed=item.listed,
+        archive_flag=item.archive_flag,
         live_status=LiveStatus(item.live_status) if item.live_status else None,
         attempt_count=item.attempt_count,
         last_error=item.last_error,

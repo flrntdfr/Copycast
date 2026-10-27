@@ -22,7 +22,10 @@ from copycast.adapters.mcp.errors import guarded, refuse
 from copycast.application.capabilities import DESTRUCTIVE
 from copycast.application.models import (
     AboutRead,
+    ArchiveFlagUpdate,
     BackfillRequest,
+    ClearFeedRequest,
+    ClearFeedResult,
     FeedList,
     FeedRead,
     InboxCreate,
@@ -79,7 +82,7 @@ ToolFn = Callable[..., Awaitable[Any]]
 
 
 def _check_deleting_mode(backfill: BackfillRequest | None, tool: str) -> None:
-    """Rolling windows and expiring Automatic Mirrors delete on a schedule: ``full`` only."""
+    """Rolling windows and expiring Ephemeral Mirrors delete on a schedule: ``full`` only."""
     if backfill is None:
         return
     if backfill.mode is BackfillMode.rolling or (
@@ -142,13 +145,15 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
     async def create_mirror(mirror: MirrorCreate) -> MirrorRead:
         """Create a Mirror of a Source; returns the Mirror with its ``feed_url`` synchronously.
 
-        ``backfill`` absent: the operator's default policy (Automatic unless changed on
-        the Settings page). ``backfill.mode``: ``all`` (everything), ``rolling`` with
-        ``latest_n`` (only the newest N stay archived), ``automatic`` (downloaded when a
-        podcast app first asks, expiring ``retention_days`` after the last download,
-        null keeps forever), or ``selection`` with ``selection`` such as ``"1-42, 180"``
-        (follow then defaults to false). Rolling and expiring modes delete on their own,
-        so they need a ``full`` key. Several candidates -> pass ``candidate_token``.
+        ``backfill`` absent: the operator's default policy (Ephemeral unless changed on
+        the Settings page). ``backfill.mode``: the Archive policy is ``all`` (everything
+        listed, then every new item) or ``new`` (only what the Source publishes from now
+        on); the Ephemeral policy is ``automatic`` (downloaded when a podcast app first
+        asks, expiring ``retention_days`` after the last download, null keeps forever).
+        Also ``rolling`` with ``latest_n`` (only the newest N stay archived) and
+        ``selection`` with ``selection`` such as ``"1-42, 180"`` (follow then defaults to
+        false). Rolling and expiring modes delete on their own, so they need a ``full``
+        key. Several candidates -> pass ``candidate_token``.
         """
         _check_deleting_mode(mirror.backfill, "create_mirror")
         return await container.services.create_mirror(mirror, trigger=JobTrigger.mcp)
@@ -170,6 +175,14 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
             raise refuse(DELETE_FEED_WARNING, feed_id=feed_id)
         await container.services.delete_feed(feed_id)
         return {"deleted": True, "feed_id": feed_id}
+
+    async def clear_feed(feed_id: str, clear: ClearFeedRequest) -> ClearFeedResult:
+        """Delete every Episode of a Feed that is not kept for good; the Feed stays.
+
+        Kept: Episodes flagged Archive, and every Episode of a Mirror on the Archive
+        policy. ``dry_run`` (the default) counts what would go and what stays.
+        """
+        return await container.services.clear_feed(feed_id, clear)
 
     # ------------------------------------------------------------------ items
 
@@ -215,6 +228,13 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         await container.services.delete_item(feed_id, item_id)
         return {"deleted": True, "feed_id": feed_id, "item_id": item_id}
 
+    async def set_archive_flag(feed_id: str, item_id: str, flag: ArchiveFlagUpdate) -> ItemRead:
+        """Flag an Episode Archive so nothing deletes it on its own, or clear the flag.
+
+        Retention, a Rolling window, Sync and ``clear_feed`` spare a flagged Episode.
+        """
+        return await container.services.set_archive_flag(feed_id, item_id, flag)
+
     # ------------------------------------------------------------------ mirrors
 
     async def refresh_mirror(feed_id: str) -> JobRead | None:
@@ -237,8 +257,9 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         """Change a Mirror's title, follow flag, backfill, engine options or Source URL.
 
         ``title`` is kept over the Source's across Refreshes; null restores the Source's.
-        Switching to ``rolling``, or to ``automatic`` with a ``retention_days``,
-        schedules deletions, so it needs a ``full`` key.
+        Switching to ``rolling``, or to ``automatic`` (Ephemeral) with a
+        ``retention_days``, schedules deletions, so it needs a ``full`` key; switching to
+        ``new`` archives only what the Source publishes from then on.
         """
         _check_deleting_mode(patch.backfill, "update_mirror")
         return await container.services.update_mirror(feed_id, patch)
@@ -315,6 +336,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         (list_feeds, "list_feeds", "list_feeds", True),
         (get_feed, "get_feed", "get_feed", True),
         (delete_feed, "delete_feed", "delete_feed", False),
+        (clear_feed, "clear_feed", "clear_feed", False),
         (list_items, "list_items", "list_items", True),
         (get_item, "get_item", "get_item", True),
         (archive_episodes, "archive_episodes", "select_items", False),
@@ -322,6 +344,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         (retry_failed, "retry_failed", "retry_failed", False),
         (delete_item, "delete_item", "delete_item", False),
         (fetch_item_metadata, "fetch_item_metadata", "fetch_item_metadata", False),
+        (set_archive_flag, "set_archive_flag", "set_archive_flag", False),
         (refresh_mirror, "refresh_mirror", "request_refresh", False),
         (set_mirror_paused, "set_mirror_paused", "set_paused", False),
         (update_mirror, "update_mirror", "update_mirror", False),

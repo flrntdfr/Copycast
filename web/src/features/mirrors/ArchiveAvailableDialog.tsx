@@ -20,7 +20,7 @@ import { count } from "@/lib/labels";
 
 /**
  * "Archive everything Available now": queues every Available Episode without touching
- * the policy, and offers to switch the Mirror to Everything so new items follow.
+ * the policy, and offers to switch the Mirror to Archive so new items follow.
  */
 export function ArchiveAvailableDialog({
   mirror,
@@ -72,9 +72,7 @@ export function ArchiveAvailableDialog({
               className="mt-0.5"
             />
             <div className="space-y-1">
-              <Label htmlFor="archive-available-switch">
-                Also switch this Mirror to Everything
-              </Label>
+              <Label htmlFor="archive-available-switch">Also switch this Mirror to Archive</Label>
               <p className="text-xs text-muted-foreground">
                 So new items are archived as they arrive, and nothing is ever deleted.
               </p>

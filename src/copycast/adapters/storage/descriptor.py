@@ -113,6 +113,7 @@ class DescriptorItem(_Strict):
     last_listed_at: datetime
     archive_state: ArchiveState = ArchiveState.available
     wanted_reason: WantedReason | None = None
+    archive_flag: bool = False
     archived_at: datetime | None = None
     deleted_at: datetime | None = None
     media_path: str | None = None

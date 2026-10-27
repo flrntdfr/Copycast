@@ -71,6 +71,10 @@ class CatalogItem(TimestampMixin, Base):
         default=ArchiveState.available.value,
     )
     wanted_reason: Mapped[str | None] = mapped_column(Text)
+    archive_flag: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    """Kept for good: Retention, a Rolling window, Sync and clearing the Feed spare it."""
 
     attempt_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0"), default=0

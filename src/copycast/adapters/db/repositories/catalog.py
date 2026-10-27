@@ -324,13 +324,14 @@ class CatalogRepository:
         return list((await self._session.execute(stmt)).scalars())
 
     async def delisted_archived(self, feed_id: str) -> list[CatalogItem]:
-        """Archived items the Source no longer lists (what a synced Mirror deletes)."""
+        """Archived, unflagged items the Source no longer lists (what a synced Mirror deletes)."""
         result = await self._session.execute(
             select(CatalogItem)
             .where(
                 CatalogItem.feed_id == feed_id,
                 CatalogItem.listed.is_(False),
                 CatalogItem.archive_state == ArchiveState.archived.value,
+                CatalogItem.archive_flag.is_(False),
             )
             .order_by(CatalogItem.ordinal)
         )
@@ -353,7 +354,8 @@ class CatalogRepository:
         downloaded_before: datetime | None = None,
         last_activity_before: datetime | None = None,
     ) -> list[CatalogItem]:
-        """Archived items matching every given criterion (AND); at least one is required.
+        """Archived, unflagged items matching every given criterion (AND); at least one is
+        required. An Episode flagged Archive is never prunable.
 
         ``downloaded``: downloaded at least once. ``added_before``: ``first_seen_at`` older.
         ``downloaded_before``: ``first_downloaded_at`` older (autoprune; never-downloaded
@@ -370,6 +372,7 @@ class CatalogRepository:
         stmt = select(CatalogItem).where(
             CatalogItem.feed_id == feed_id,
             CatalogItem.archive_state == ArchiveState.archived.value,
+            CatalogItem.archive_flag.is_(False),
         )
         if downloaded:
             stmt = stmt.where(CatalogItem.first_downloaded_at.is_not(None))
@@ -665,6 +668,12 @@ class CatalogRepository:
         counted = result.scalar_one_or_none() is not None
         await self._refresh_if_loaded(item_id)
         return counted
+
+    async def set_archive_flag(self, item_id: str, flag: bool) -> None:
+        await self._session.execute(
+            update(CatalogItem).where(CatalogItem.id == item_id).values(archive_flag=flag)
+        )
+        await self._refresh_if_loaded(item_id)
 
     async def fill_metadata(
         self,

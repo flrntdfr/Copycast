@@ -16,11 +16,13 @@ class SourceKind(StrEnum):
 
 
 class BackfillMode(StrEnum):
-    """A Mirror's archive policy: what gets archived, and for Rolling and Automatic, what goes.
+    """A Mirror's archive policy: what gets archived, and for Rolling and Ephemeral, what goes.
 
-    ``latest`` (N at creation, then Follow) is kept for existing Mirrors; the UI offers
-    ``all``, ``rolling`` (the newest N, older ones tombstoned), ``automatic`` (downloaded on
-    the first request, expired after ``retention_days``) and ``selection``.
+    The UI offers two policies: Ephemeral (``automatic``: downloaded on the first request,
+    expired after ``retention_days``) and Archive, either with its backfill (``all``) or
+    without (``new``: only what the Source lists after the policy is applied). ``rolling``
+    (the newest N, older ones tombstoned) and ``selection`` remain for agents and the
+    Mirrors that use them; ``latest`` (N at creation, then Follow) for existing Mirrors.
     """
 
     all = "all"
@@ -28,6 +30,7 @@ class BackfillMode(StrEnum):
     selection = "selection"
     rolling = "rolling"
     automatic = "automatic"
+    new = "new"
 
 
 class ArchiveState(StrEnum):

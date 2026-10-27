@@ -27,7 +27,7 @@ import { RangeInput } from "@/features/catalog/RangeInput";
 import { DeleteFeedDialog } from "@/features/feeds/DeleteFeedDialog";
 import { useInvalidateFeed } from "@/features/feeds/mutations";
 import { EngineOptionsEditor } from "./EngineOptionsEditor";
-import { MODE_LABELS, ModeTabs } from "./ModeTabs";
+import { MODE_LABELS, ModeTabs, isLegacyMode } from "./ModeTabs";
 import {
   isEmptyUpdate,
   mirrorSettingsSchema,
@@ -40,7 +40,7 @@ import {
 import { formatBytes, secondsToMinutes } from "@/lib/format";
 import { count } from "@/lib/labels";
 
-/** Follow, Backfill as mode tabs (previewed, confirmed when it deletes), Source URL, Engine options, overrides and the danger zone. */
+/** Follow, the policy as tabs (previewed, confirmed when it deletes), Source URL, Engine options, overrides and the danger zone. */
 export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
   const invalidate = useInvalidateFeed();
   const [rejectedKeys, setRejectedKeys] = useState<string[]>([]);
@@ -167,10 +167,10 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
         </div>
 
         <fieldset className="space-y-3">
-          <legend className="text-sm font-medium">Backfill</legend>
+          <legend className="text-sm font-medium">Policy</legend>
           <p className="text-xs text-muted-foreground">
-            Everything and Latest N apply at the next Refresh; Rolling N applies now (you are asked
-            first when it deletes); a Selection with numbers archives those now.
+            Archive with Backfill applies at the next Refresh; without it, only what the Source
+            publishes from now on is archived. Ephemeral asks first when it deletes.
           </p>
           <Controller
             control={form.control}
@@ -179,7 +179,8 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
               <ModeTabs
                 value={field.value}
                 onValueChange={field.onChange}
-                legacyLatest={mirror.backfill.mode === "latest"}
+                idPrefix="settings"
+                legacy={isLegacyMode(mirror.backfill.mode) ? mirror.backfill.mode : undefined}
               >
                 {(active) =>
                   active === "rolling" || active === "latest" ? (

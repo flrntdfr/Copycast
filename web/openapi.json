@@ -640,6 +640,69 @@
         "x-capability": "retry_failed"
       }
     },
+    "/api/feeds/{feed_id}/clear": {
+      "post": {
+        "tags": [
+          "feeds"
+        ],
+        "summary": "Delete every Episode not kept for good, keeping the Feed (dry run by default)",
+        "operationId": "clear_feed",
+        "parameters": [
+          {
+            "name": "feed_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feed Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClearFeedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearFeedResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "clear_feed"
+      }
+    },
     "/api/feeds/{feed_id}/items": {
       "get": {
         "tags": [
@@ -1055,6 +1118,78 @@
           }
         },
         "x-capability": "fetch_item_metadata"
+      }
+    },
+    "/api/feeds/{feed_id}/items/{item_id}/archive-flag": {
+      "put": {
+        "tags": [
+          "items"
+        ],
+        "summary": "Flag an Episode Archive (kept for good) or clear the flag",
+        "operationId": "set_archive_flag",
+        "parameters": [
+          {
+            "name": "feed_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feed Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveFlagUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "set_archive_flag"
       }
     },
     "/api/probe": {
@@ -2492,7 +2627,7 @@
         "tags": [
           "engine"
         ],
-        "summary": "Whether a cookie file is stored and which domains it covers (never its values)",
+        "summary": "The stored cookie files and the services they unlock (never their values)",
         "operationId": "get_engine_cookies",
         "responses": {
           "200": {
@@ -2512,17 +2647,17 @@
         "tags": [
           "engine"
         ],
-        "summary": "Store a Netscape cookies.txt for every future fetch",
+        "summary": "Store a Netscape cookies.txt under its name for every future fetch",
         "operationId": "set_engine_cookies",
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/EngineCookiesWrite"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -2552,11 +2687,52 @@
         "tags": [
           "engine"
         ],
-        "summary": "Remove the stored cookie file",
+        "summary": "Remove one stored cookie file, or every one without name",
         "operationId": "delete_engine_cookies",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The file to remove",
+              "title": "Name"
+            },
+            "description": "The file to remove"
+          }
+        ],
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         },
         "x-capability": "delete_engine_cookies"
@@ -2935,6 +3111,21 @@
         ],
         "title": "ApiKeyRead"
       },
+      "ArchiveFlagUpdate": {
+        "properties": {
+          "archive_flag": {
+            "type": "boolean",
+            "title": "Archive Flag",
+            "description": "True keeps the Episode for good: Retention, a Rolling window, Sync and clearing the Feed spare it"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "archive_flag"
+        ],
+        "title": "ArchiveFlagUpdate"
+      },
       "ArchiveState": {
         "type": "string",
         "enum": [
@@ -3122,10 +3313,11 @@
           "latest",
           "selection",
           "rolling",
-          "automatic"
+          "automatic",
+          "new"
         ],
         "title": "BackfillMode",
-        "description": "A Mirror's archive policy: what gets archived, and for Rolling and Automatic, what goes.\n\n``latest`` (N at creation, then Follow) is kept for existing Mirrors; the UI offers\n``all``, ``rolling`` (the newest N, older ones tombstoned), ``automatic`` (downloaded on\nthe first request, expired after ``retention_days``) and ``selection``."
+        "description": "A Mirror's archive policy: what gets archived, and for Rolling and Ephemeral, what goes.\n\nThe UI offers two policies: Ephemeral (``automatic``: downloaded on the first request,\nexpired after ``retention_days``) and Archive, either with its backfill (``all``) or\nwithout (``new``: only what the Source lists after the policy is applied). ``rolling``\n(the newest N, older ones tombstoned) and ``selection`` remain for agents and the\nMirrors that use them; ``latest`` (N at creation, then Follow) for existing Mirrors."
       },
       "BackfillPolicy": {
         "properties": {
@@ -3211,7 +3403,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "BackfillRequest",
-        "description": "The archive policy; ``selection`` implies mode ``selection``.\n\n``all``: everything, then Follow. ``rolling``: the newest ``latest_n`` only, older\nEpisodes tombstoned as newer ones arrive. ``automatic``: nothing ahead of time; an\nEpisode is downloaded when a podcast app first asks for it and expires\n``retention_days`` (default 7) after its last download. ``selection``: exactly\nthe Episodes named. ``latest`` (N at creation, then Follow) remains for existing\nMirrors."
+        "description": "The archive policy; ``selection`` implies mode ``selection``.\n\nArchive: ``all`` (everything, then Follow) or ``new`` (nothing listed so far, then\nevery new item). Ephemeral: ``automatic``, nothing ahead of time; an Episode is\ndownloaded when a podcast app first asks for it and expires ``retention_days``\n(default 7) after its last download. ``rolling``: the newest ``latest_n`` only, older\nEpisodes tombstoned as newer ones arrive. ``selection``: exactly the Episodes named.\n``latest`` (N at creation, then Follow) remains for existing Mirrors."
       },
       "CatalogCounts": {
         "properties": {
@@ -3248,6 +3440,150 @@
         },
         "type": "object",
         "title": "CatalogCounts"
+      },
+      "ClearFeedRequest": {
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "description": "Only count what would go and what stays",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ClearFeedRequest",
+        "description": "Delete every Episode of one Feed that is not kept for good; the Feed stays."
+      },
+      "ClearFeedResult": {
+        "properties": {
+          "matched": {
+            "type": "integer",
+            "title": "Matched"
+          },
+          "deleted_count": {
+            "type": "integer",
+            "title": "Deleted Count"
+          },
+          "bytes_freed": {
+            "type": "integer",
+            "title": "Bytes Freed"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run"
+          },
+          "kept_count": {
+            "type": "integer",
+            "title": "Kept Count",
+            "description": "Episodes spared: flagged Archive, or every Episode of a Mirror whose policy is Archive",
+            "default": 0
+          },
+          "kept_bytes": {
+            "type": "integer",
+            "title": "Kept Bytes",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "matched",
+          "deleted_count",
+          "bytes_freed",
+          "dry_run"
+        ],
+        "title": "ClearFeedResult"
+      },
+      "CookieServiceRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "domains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Domains"
+          },
+          "authenticated": {
+            "type": "boolean",
+            "title": "Authenticated"
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Files",
+            "description": "The files unlocking it"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "domains",
+          "authenticated"
+        ],
+        "title": "CookieServiceRead",
+        "description": "A site shown on the Settings page, unlocked once a stored file covers it."
+      },
+      "EngineCookieFileRead": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes",
+            "default": 0
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "cookie_count": {
+            "type": "integer",
+            "title": "Cookie Count",
+            "default": 0
+          },
+          "domains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Domains"
+          },
+          "services": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Services",
+            "description": "The ids of the services the file unlocks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "EngineCookieFileRead",
+        "description": "One stored cookie file without any value."
       },
       "EngineCookiesRead": {
         "properties": {
@@ -3289,6 +3625,20 @@
             "title": "Youtube",
             "description": "Whether a youtube.com cookie is stored",
             "default": false
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/EngineCookieFileRead"
+            },
+            "type": "array",
+            "title": "Files"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/CookieServiceRead"
+            },
+            "type": "array",
+            "title": "Services"
           }
         },
         "type": "object",
@@ -3296,7 +3646,7 @@
           "present"
         ],
         "title": "EngineCookiesRead",
-        "description": "The stored cookie file without any value: presence, size, where it applies."
+        "description": "The stored cookie files without any value: presence, size, where they apply."
       },
       "EngineCookiesWrite": {
         "properties": {
@@ -3305,6 +3655,14 @@
             "maxLength": 1048576,
             "minLength": 1,
             "title": "Content"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "description": "The file's name in the table (an upload's file name); the same name replaces that file, a new one adds a row",
+            "default": "cookies"
           }
         },
         "additionalProperties": false,
@@ -3313,7 +3671,7 @@
           "content"
         ],
         "title": "EngineCookiesWrite",
-        "description": "A Netscape ``cookies.txt`` as exported by a browser extension."
+        "description": "A Netscape ``cookies.txt`` as exported by a browser extension, stored under ``name``."
       },
       "EngineRead": {
         "properties": {
@@ -3592,6 +3950,12 @@
             "type": "integer",
             "title": "Request Count",
             "default": 0
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default",
+            "description": "The default Inbox: it can be renamed but never deleted",
+            "default": false
           }
         },
         "type": "object",
@@ -3789,6 +4153,12 @@
             "type": "boolean",
             "title": "Listed",
             "default": true
+          },
+          "archive_flag": {
+            "type": "boolean",
+            "title": "Archive Flag",
+            "description": "Kept for good: Retention, a Rolling window, Sync and clearing the Feed never delete it",
+            "default": false
           },
           "live_status": {
             "anyOf": [

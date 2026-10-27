@@ -17,7 +17,7 @@ export const optionalCount = z.preprocess(
     .optional(),
 );
 
-/** Days an Automatic Mirror keeps an Episode after its last download; empty keeps forever. */
+/** Days an Ephemeral Mirror keeps an Episode after its last download; empty keeps forever. */
 export const optionalDays = z.preprocess(
   (value) =>
     value === "" || value === null || (typeof value === "number" && Number.isNaN(value))
@@ -31,7 +31,7 @@ export const optionalDays = z.preprocess(
     .optional(),
 );
 
-export const MODES = ["all", "rolling", "automatic", "selection", "latest"] as const;
+export const MODES = ["all", "new", "rolling", "automatic", "selection", "latest"] as const;
 export const DEFAULT_RETENTION_DAYS = 7;
 
 /** The fields shared by the wizard and the Settings form; each schema extends them. */
@@ -109,6 +109,8 @@ export function backfillOf(values: {
   switch (values.mode) {
     case "all":
       return { mode: "all" };
+    case "new":
+      return { mode: "new" };
     case "latest":
       return { mode: "latest", latest_n: values.latest_n ?? 1 };
     case "rolling":

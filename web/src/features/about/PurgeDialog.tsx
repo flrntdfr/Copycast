@@ -81,9 +81,9 @@ export function PurgeButton() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               Every feed keeps its Catalog, artwork, credentials and settings; only the downloaded
-              media goes. Deleted Episodes leave Tombstones: Everything, Rolling and Follow never
-              download them again on their own, Automatic Mirrors do when a podcast app asks, and
-              you can archive any of them again on purpose.
+              media goes. Deleted Episodes leave Tombstones: Archive and Follow never download them
+              again on their own, Ephemeral Mirrors do when a podcast app asks, and you can archive
+              any of them again on purpose. Purging ignores the Archive flag.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -7,7 +7,7 @@ from collections.abc import Sequence
 
 from copycast.application.capabilities import capability
 from copycast.application.events import FeedEvent, ItemEvent, JobEvent
-from copycast.application.models import ItemPage, ItemRead, JobRead
+from copycast.application.models import ArchiveFlagUpdate, ItemPage, ItemRead, JobRead
 from copycast.application.services.context import (
     ItemRow,
     ItemSort,
@@ -216,6 +216,20 @@ async def delete_item(ctx: ServiceContext, feed_id: str, item_id: str) -> None:
     await retry_concurrent(_delete, what=f"delete_item:{item_id}")
 
 
+@capability("set_archive_flag", request=ArchiveFlagUpdate, response=ItemRead)
+async def set_archive_flag(
+    ctx: ServiceContext, feed_id: str, item_id: str, body: ArchiveFlagUpdate
+) -> ItemRead:
+    """Flag a Catalog item Archive (kept for good) or clear the flag; any state may carry it."""
+    async with ctx.uow_factory() as uow:
+        await uow.catalog.require(item_id, feed_id)
+        await uow.catalog.set_archive_flag(item_id, body.archive_flag)
+        _, revision = await uow.update_intent(feed_id)
+        await uow.publish(FeedEvent(feed_id=feed_id, revision=revision, reason="item-flagged"))
+        item = await uow.catalog.require(item_id, feed_id)
+        return (await item_reads(uow, ctx.urls, [item]))[0]
+
+
 @capability("record_download")
 async def record_download(ctx: ServiceContext, feed_id: str, item_id: str) -> bool:
     """Count one download of an archived item (the byte-0 rule is the media route's)."""
@@ -242,4 +256,5 @@ __all__ = [
     "prune_dedup_key",
     "record_download",
     "refresh_dedup_key",
+    "set_archive_flag",
 ]

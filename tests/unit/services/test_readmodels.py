@@ -149,6 +149,7 @@ def item_row(**overrides: Any) -> Any:
         "first_seen_at": NOW,
         "archive_state": "archived",
         "wanted_reason": "backfill",
+        "archive_flag": False,
         "attempt_count": 1,
         "last_error": None,
         "archived_at": NOW,

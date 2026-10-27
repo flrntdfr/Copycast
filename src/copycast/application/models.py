@@ -152,6 +152,9 @@ class InboxRead(_FeedReadBase):
     name: str
     autoprune_days: int | None = None
     request_count: int = 0
+    is_default: bool = Field(
+        default=False, description="The default Inbox: it can be renamed but never deleted"
+    )
 
 
 FeedRead = Annotated[MirrorRead | InboxRead, Field(discriminator="kind")]
@@ -205,6 +208,11 @@ class ItemRead(ReadModel):
     duration_seconds: int | None = None
     state: ArchiveState
     listed: bool = True
+    archive_flag: bool = Field(
+        default=False,
+        description="Kept for good: Retention, a Rolling window, Sync and clearing the Feed "
+        "never delete it",
+    )
     live_status: LiveStatus | None = Field(
         default=None,
         description="What the Source last said the item is doing as a live stream: an "
@@ -362,12 +370,12 @@ WINDOW_MODES = frozenset({BackfillMode.latest, BackfillMode.rolling})
 class BackfillRequest(RequestModel):
     """The archive policy; ``selection`` implies mode ``selection``.
 
-    ``all``: everything, then Follow. ``rolling``: the newest ``latest_n`` only, older
-    Episodes tombstoned as newer ones arrive. ``automatic``: nothing ahead of time; an
-    Episode is downloaded when a podcast app first asks for it and expires
-    ``retention_days`` (default 7) after its last download. ``selection``: exactly
-    the Episodes named. ``latest`` (N at creation, then Follow) remains for existing
-    Mirrors.
+    Archive: ``all`` (everything, then Follow) or ``new`` (nothing listed so far, then
+    every new item). Ephemeral: ``automatic``, nothing ahead of time; an Episode is
+    downloaded when a podcast app first asks for it and expires ``retention_days``
+    (default 7) after its last download. ``rolling``: the newest ``latest_n`` only, older
+    Episodes tombstoned as newer ones arrive. ``selection``: exactly the Episodes named.
+    ``latest`` (N at creation, then Follow) remains for existing Mirrors.
     """
 
     mode: BackfillMode = BackfillMode.all
@@ -619,6 +627,28 @@ class PurgeRequest(RequestModel):
     dry_run: bool = True
 
 
+class ClearFeedRequest(RequestModel):
+    """Delete every Episode of one Feed that is not kept for good; the Feed stays."""
+
+    dry_run: bool = Field(default=True, description="Only count what would go and what stays")
+
+
+class ClearFeedResult(PruneResult):
+    kept_count: int = Field(
+        default=0,
+        description="Episodes spared: flagged Archive, or every Episode of a Mirror whose "
+        "policy is Archive",
+    )
+    kept_bytes: int = 0
+
+
+class ArchiveFlagUpdate(RequestModel):
+    archive_flag: bool = Field(
+        description="True keeps the Episode for good: Retention, a Rolling window, Sync and "
+        "clearing the Feed spare it"
+    )
+
+
 # --------------------------------------------------------------------------- mirror defaults
 
 
@@ -661,13 +691,43 @@ class MirrorDefaults(RequestModel):
 
 
 class EngineCookiesWrite(RequestModel):
-    """A Netscape ``cookies.txt`` as exported by a browser extension."""
+    """A Netscape ``cookies.txt`` as exported by a browser extension, stored under ``name``."""
 
     content: str = Field(min_length=1, max_length=1024 * 1024)
+    name: str = Field(
+        default="cookies",
+        min_length=1,
+        max_length=128,
+        description="The file's name in the table (an upload's file name); the same name "
+        "replaces that file, a new one adds a row",
+    )
+
+
+class EngineCookieFileRead(ReadModel):
+    """One stored cookie file without any value."""
+
+    name: str
+    size_bytes: int = 0
+    updated_at: datetime | None = None
+    cookie_count: int = 0
+    domains: list[str] = Field(default_factory=list[str])
+    services: list[str] = Field(
+        default_factory=list[str], description="The ids of the services the file unlocks"
+    )
+
+
+class CookieServiceRead(ReadModel):
+    """A site shown on the Settings page, unlocked once a stored file covers it."""
+
+    id: str
+    name: str
+    domains: list[str]
+    authenticated: bool
+    files: list[str] = Field(default_factory=list[str], description="The files unlocking it")
 
 
 class EngineCookiesRead(ReadModel):
-    """The stored cookie file without any value: presence, size, where it applies."""
+    """The stored cookie files without any value: presence, size, where they apply."""
 
     present: bool
     size_bytes: int = 0
@@ -675,6 +735,8 @@ class EngineCookiesRead(ReadModel):
     cookie_count: int = 0
     domains: list[str] = Field(default_factory=list[str])
     youtube: bool = Field(default=False, description="Whether a youtube.com cookie is stored")
+    files: list[EngineCookieFileRead] = Field(default_factory=list[EngineCookieFileRead])
+    services: list[CookieServiceRead] = Field(default_factory=list[CookieServiceRead])
 
 
 # --------------------------------------------------------------------------- api keys

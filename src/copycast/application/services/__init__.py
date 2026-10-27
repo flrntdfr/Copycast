@@ -20,6 +20,9 @@ from copycast.application.models import (
     ApiKeyCreated,
     ApiKeyList,
     ApiKeyRead,
+    ArchiveFlagUpdate,
+    ClearFeedRequest,
+    ClearFeedResult,
     EngineCookiesRead,
     EngineCookiesWrite,
     FeedList,
@@ -104,6 +107,9 @@ class Services:
     async def delete_feed(self, feed_id: str) -> None:
         await _feeds.delete_feed(self.ctx, feed_id)
 
+    async def clear_feed(self, feed_id: str, body: ClearFeedRequest) -> ClearFeedResult:
+        return await _purge.clear_feed(self.ctx, feed_id, body)
+
     async def export_opml(self) -> str:
         return await _feeds.export_opml(self.ctx)
 
@@ -154,6 +160,11 @@ class Services:
 
     async def delete_item(self, feed_id: str, item_id: str) -> None:
         await _items.delete_item(self.ctx, feed_id, item_id)
+
+    async def set_archive_flag(
+        self, feed_id: str, item_id: str, body: ArchiveFlagUpdate
+    ) -> ItemRead:
+        return await _items.set_archive_flag(self.ctx, feed_id, item_id, body)
 
     async def record_download(self, feed_id: str, item_id: str) -> bool:
         return await _items.record_download(self.ctx, feed_id, item_id)
@@ -302,8 +313,8 @@ class Services:
     async def set_engine_cookies(self, body: EngineCookiesWrite) -> EngineCookiesRead:
         return await _engine.set_engine_cookies(self.ctx, body)
 
-    async def delete_engine_cookies(self) -> None:
-        await _engine.delete_engine_cookies(self.ctx)
+    async def delete_engine_cookies(self, name: str | None = None) -> None:
+        await _engine.delete_engine_cookies(self.ctx, name)
 
 
 def build_services(container: ServiceContext) -> Services:

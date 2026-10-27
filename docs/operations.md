@@ -160,7 +160,8 @@ Kubernetes: the example overlay's `api-auth.yaml` reads the password from a Secr
 
 ```
 data/LAYOUT_VERSION                     "1"; written on first start, a mismatch refuses to start
-data/engine/cookies.txt                 the engine's cookie file (optional, mode 0600), see below
+data/engine/cookies.txt                 the engine's cookie jar, merged from the files below (0600)
+data/engine/cookies/<name>.txt          the stored cookie files, one per upload (optional, 0600)
 data/feeds/<feed_id>/feed.json          descriptor of the feed, its policy, items, assets and requests
 data/feeds/<feed_id>/source/            verbatim Source XML or the last engine listing
 data/feeds/<feed_id>/media/             audio, <item_id>.info.json, <item_id>.item.xml (original RSS item)
@@ -173,18 +174,27 @@ reads. Nothing outside the worker writes into `media/` or `tmp/`.
 
 ## Mirror modes
 
-A Mirror's Settings tab (and the wizard) offers the Backfill as tabs:
+A Mirror's Settings tab and the Settings page offer two policies as tabs, Ephemeral and
+Archive; Archive's *Backfill* switch picks between its two modes:
 
-| Mode | Archives | Deletes |
+| Policy (mode) | Archives | Deletes |
 |---|---|---|
-| Everything | every listed item, then whatever Follow brings | never |
-| Rolling N | the newest N by publication, at every Refresh | archived items outside the window, at the next Refresh and at once when you switch to it |
-| Automatic | nothing until a podcast app asks for an Episode's media; the request waits up to two minutes, then answers `503 Retry-After: 30` while the download continues | Episodes idle for *Retention* days after their last download (7 by default; empty keeps forever), checked by the worker's prune pass |
-| Selection | exactly the numbers given | never |
+| Archive, Backfill on (`all`) | every listed item, then whatever Follow brings | never |
+| Archive, Backfill off (`new`) | only what the Source lists after the policy is applied | never |
+| Ephemeral (`automatic`) | nothing until a podcast app asks for an Episode's media; the request waits up to two minutes, then answers `503 Retry-After: 30` while the download continues | Episodes idle for *Retention* days after their last download (7 by default; empty keeps forever), checked by the worker's prune pass |
+| Rolling N (`rolling`) | the newest N by publication, at every Refresh | archived items outside the window, at the next Refresh and at once when you switch to it |
+| Selection (`selection`) | exactly the numbers given | never |
 
-New Mirrors start from the operator's default policy (*Policy for new Mirrors* on the Settings
-page, stored with the other defaults; Automatic with a 7-day retention out of the box), both in
-the wizard and for an MCP `create_mirror` without `backfill`.
+Rolling N and Selection are no longer offered as tabs: a Mirror that uses one keeps a third
+tab for it until switched, and agents still pass them to `create_mirror` and `update_mirror`.
+Switching to Archive without Backfill starts from that moment: nothing listed so far is
+archived. New Mirrors start from the operator's default policy (the Settings page; Ephemeral
+with a 7-day retention out of the box), both in the wizard and for an MCP `create_mirror`
+without `backfill`.
+
+An Episode flagged **Archive** (the archive button on its Catalog row, `PUT
+/api/feeds/{id}/items/{item}/archive-flag`, the `set_archive_flag` tool) is kept for good:
+Ephemeral and Inbox Retention, a Rolling window and Sync skip it. The admin purge does not.
 
 Switching modes previews the change (`POST /api/mirrors/{id}/preview`) and asks for
 confirmation when archived Episodes would be deleted; rolled-out and expired Episodes leave
@@ -292,7 +302,7 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   file) are mirrored as `attachment` assets under `assets/{item}.attachment.{slot}.{ext}`,
   and the Mirror Feed's description points at the local copies. A file that cannot be fetched
   is recorded as a failed asset and its original URL stays in the notes.
-- **OPML.** *Export OPML* on the Settings page (`GET /api/feeds.opml`) lists every feed with
+- **OPML.** *Export OPML* on the About page (`GET /api/feeds.opml`) lists every feed with
   its credentialed URL, to subscribe to all of them in one go.
 - **Player.** The web player has a seek bar with chapter marks (from the Episode's chapters
   asset), skip back 15 s / forward 30 s, speed from 0.75× to 2×, volume and mute, and keyboard
@@ -317,17 +327,26 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   feed after a dry run (`POST /api/admin/purge`, `dry_run` true by default); feeds, Catalogs,
   artwork and credentials stay, and the Episodes leave Tombstones.
 
-## Settings page: defaults every Mirror may override
+## Settings page: Authentications, Mirrors and Buckets
 
-Two settings live in the data directory (`data/engine/defaults.json`, `PUT
-/api/settings/defaults`) rather than in the environment, because they are policy the operator
-changes from the UI:
+The Settings page saves every change as it is made, with no Save button. *Authentications*
+shows YouTube, Twitch, Vimeo and Mixcloud with a green check once a stored cookie file covers
+them (see below). *Buckets* lists every Feed's storage, the Mirrors in the Feeds page's order,
+then the Inboxes and captured playlists, each with its size and a trash button. A bucket
+holding Episodes flagged Archive warns first and offers *Delete the rest* (`POST
+/api/feeds/{id}/clear`, the `clear_feed` tool: a dry run by default, it deletes every archived
+Episode not kept for good and keeps the feed) next to *Delete everything*. Every Episode of a
+Mirror on the Archive policy counts as kept. The default Inbox can only be emptied.
+
+The *Mirrors* half holds defaults that live in the data directory (`data/engine/defaults.json`,
+`PUT /api/settings/defaults`) rather than in the environment, because they are policy the
+operator changes from the UI:
 
 | Default | Effect | Per-Mirror override |
 |---|---|---|
 | Metadata language (`fr`, `pt-BR`) | yt-dlp asks YouTube for that language instead of English, so a French channel's titles and descriptions stay French | the Mirror's *Metadata language* field (`preferred_language`; `language` stays what the Source reports) |
 | Minimum length (minutes) | items shorter than that are listed but never archived by Backfill or Follow; unknown lengths pass; explicit selections still work (keeps Shorts out) | the Mirror's *Minimum length* field (`min_duration_seconds`) |
-| Policy for new Mirrors | the Backfill a new Mirror starts from: Automatic (with its retention), Everything or Rolling N | the Mirror's Settings tab, or `backfill` in `create_mirror` |
+| Policy | the policy a new Mirror starts from: Ephemeral (with its retention) or Archive (with or without Backfill) | the Mirror's Settings tab, or `backfill` in `create_mirror` |
 | Refresh every (hours) | how often the scheduler Refreshes a Mirror (24 by default; replaces the `refresh.interval_hours` config key) | the Mirror's *Refresh every* field (`refresh_interval_hours`) |
 
 A Mirror's Settings tab shows "Using the default" when a field is empty, marks a value that
@@ -351,16 +370,21 @@ recommends is the cookies of a logged-in browser session:
 1. In a browser, open a private window and sign in to youtube.com.
 2. Export its cookies with a "Get cookies.txt LOCALLY" extension (Netscape format).
 3. Close the private window without signing out, so YouTube does not rotate the session.
-4. Paste or pick the file on the **Settings** page (`PUT /api/engine/cookies`).
+4. Add or paste the file under *Authentications* on the **Settings** page (`PUT
+   /api/engine/cookies` with the file's `name`); the site's tile turns green.
 5. **Retry** the failed Episodes from the Catalog.
 
 The image also ships `deno`, the JavaScript runtime yt-dlp needs for YouTube's signature
 and "n" challenges; without it YouTube extraction degrades to a warning-laden fallback that
-is refused far more often. The file is stored at `data/engine/cookies.txt` with mode 0600, never shown again, and
-handed to yt-dlp as `cookiefile` on every listing and fetch, in both processes. Each call
-works on a private copy and the stored file is replaced atomically when the site rotated a
-cookie, so two jobs never tear it. An explicit `cookiefile` under `[engine.options]` still
-wins. Remove the file from the same page to go back to anonymous fetches. An agent cannot
+is refused far more often. Each file is stored at `data/engine/cookies/<name>.txt` with mode
+0600 and never shown again; a file with the same name replaces it, another name adds a row.
+The files are merged into `data/engine/cookies.txt`, handed to yt-dlp as `cookiefile` on every
+listing and fetch, in both processes. Each call works on a private copy and the jar is replaced
+atomically when the site rotated a cookie, so two jobs never tear it; every later change to
+the files first carries the jar's rotated cookies back into the file they came from. A jar
+stored before cookie files existed shows as the file `cookies`. An explicit `cookiefile` under
+`[engine.options]` still wins. Remove a file from the same page (`DELETE
+/api/engine/cookies?name=`) to drop its sites back to anonymous fetches. An agent cannot
 read or replace it: the three capabilities have routes but no MCP tools.
 
 What lands in `media/`: mp3 and m4a enclosures and streams are copied byte for byte; AAC in

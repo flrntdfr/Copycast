@@ -8,7 +8,13 @@ from fastapi import APIRouter, Query, Response
 
 from copycast.adapters.api.deps import RebuildGuard, ServicesDep
 from copycast.adapters.api.problems import problem_responses
-from copycast.application.models import FeedList, FeedRead, SelectionResult
+from copycast.application.models import (
+    ClearFeedRequest,
+    ClearFeedResult,
+    FeedList,
+    FeedRead,
+    SelectionResult,
+)
 from copycast.domain.enums import FeedKind, JobTrigger
 
 router = APIRouter(tags=["feeds"])
@@ -146,6 +152,21 @@ async def retry_failed(services: ServicesDep, feed_id: str) -> SelectionResult:
 async def delete_feed(services: ServicesDep, feed_id: str) -> Response:
     await services.delete_feed(feed_id)
     return Response(status_code=204)
+
+
+@router.post(
+    "/feeds/{feed_id}/clear",
+    operation_id="clear_feed",
+    openapi_extra={"x-capability": "clear_feed"},
+    response_model=ClearFeedResult,
+    dependencies=[RebuildGuard],
+    responses=problem_responses(404),
+    summary="Delete every Episode not kept for good, keeping the Feed (dry run by default)",
+)
+async def clear_feed(
+    services: ServicesDep, feed_id: str, body: ClearFeedRequest
+) -> ClearFeedResult:
+    return await services.clear_feed(feed_id, body)
 
 
 __all__ = ["router"]

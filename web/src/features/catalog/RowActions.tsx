@@ -1,4 +1,4 @@
-import { Download, Pause, Play, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Archive, Download, Pause, Play, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import type { ItemRead } from "@/api/types";
@@ -14,20 +14,23 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useArchiveItem, useDeleteItem } from "./mutations";
+import { useArchiveItem, useDeleteItem, useSetArchiveFlag } from "./mutations";
 import { canArchive, canDelete } from "./catalog-state";
+import { cn } from "@/lib/utils";
 import { play, useIsPlaying } from "@/stores/player";
 
 function Action({
   label,
   onClick,
   disabled,
+  pressed,
   children,
   asChild,
 }: {
   label: string;
   onClick?: () => void;
   disabled?: boolean;
+  pressed?: boolean;
   children: React.ReactNode;
   asChild?: boolean;
 }) {
@@ -38,6 +41,7 @@ function Action({
           variant="ghost"
           size="icon-sm"
           aria-label={label}
+          aria-pressed={pressed}
           onClick={onClick}
           disabled={disabled}
           asChild={asChild}
@@ -50,10 +54,11 @@ function Action({
   );
 }
 
-/** Play/Download/Delete for Episodes; Add or Retry for everything archivable. */
+/** Play/Download/Archive flag/Delete for Episodes; Add or Retry for everything archivable. */
 export function RowActions({ item, feedTitle }: { item: ItemRead; feedTitle: string }) {
   const archive = useArchiveItem(item.feed_id);
   const remove = useDeleteItem(item.feed_id);
+  const flag = useSetArchiveFlag(item.feed_id);
   const [confirming, setConfirming] = useState(false);
   const playing = useIsPlaying(item.id);
 
@@ -90,6 +95,21 @@ export function RowActions({ item, feedTitle }: { item: ItemRead; feedTitle: str
             </a>
           </Action>
         </>
+      ) : null}
+      {item.media || item.archive_flag ? (
+        <Action
+          label={item.archive_flag ? "Clear the Archive flag" : "Flag Archive (keep for good)"}
+          pressed={!!item.archive_flag}
+          onClick={() =>
+            flag.mutate({
+              params: { path: { feed_id: item.feed_id, item_id: item.id } },
+              body: { archive_flag: !item.archive_flag },
+            })
+          }
+          disabled={flag.isPending}
+        >
+          <Archive className={cn(item.archive_flag && "text-primary")} />
+        </Action>
       ) : null}
       {canArchive(item) ? (
         <Action
