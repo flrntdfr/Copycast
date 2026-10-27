@@ -42,7 +42,7 @@ export function NewInboxDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button>
+        <Button variant="outline" className="dark:bg-black dark:hover:bg-accent">
           <Plus /> New Inbox
         </Button>
       </DialogTrigger>

@@ -60,7 +60,7 @@ export async function createFixtureMirror(page: Page): Promise<string> {
   expect(defaults.ok()).toBeTruthy();
   await page.goto("/");
   await page.getByLabel("Source URL").fill(FIXTURE_FEED_URL);
-  await page.getByRole("main").getByRole("button", { name: "Add Source" }).click();
+  await page.getByRole("main").getByRole("button", { name: "Mirror", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Mirror created" })).toBeVisible({
     timeout: 60_000,
   });

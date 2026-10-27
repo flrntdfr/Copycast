@@ -34,13 +34,13 @@ export function AddSourceBar({ autoFocus = false }: { autoFocus?: boolean }) {
           inputMode="url"
           autoComplete="off"
           autoFocus={autoFocus}
-          placeholder="Paste a podcast feed, an Apple Podcasts or Spotify link, a YouTube channel or playlist, or a name to search…"
+          placeholder="What to mirror…"
           value={url}
           onChange={(event) => setUrl(event.target.value)}
         />
       </div>
       <Button type="submit" disabled={!url.trim()}>
-        Add Source <ArrowRight />
+        Mirror <ArrowRight />
       </Button>
     </form>
   );
