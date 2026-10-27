@@ -57,7 +57,8 @@ function tabOf(mode: BackfillMode): PolicyTab | LegacyMode {
 
 /**
  * The policy as tabs, Ephemeral and Archive, with the mode's own settings under each.
- * Archive's Backfill switch picks `all` (every episode already published too) or `new`.
+ * Archive's Backfill switch picks `all` (every episode already published too) or `new`;
+ * choosing the Archive tab starts with it off.
  * `legacy` keeps a tab for a Mirror still on a mode no longer offered.
  * `children` renders the extra settings for the active mode.
  */
@@ -83,7 +84,7 @@ export function ModeTabs({
   return (
     <Tabs
       value={tabOf(value)}
-      onValueChange={(next) => onValueChange(next === "archive" ? "all" : (next as BackfillMode))}
+      onValueChange={(next) => onValueChange(next === "archive" ? "new" : (next as BackfillMode))}
     >
       <TabsList
         aria-label="Policy"

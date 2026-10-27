@@ -320,8 +320,10 @@ describe("Mirror page", () => {
       backfill: { mode: "automatic", retention_days: 7 },
     });
 
+    // Choosing Archive starts with Backfill off (the form shows the stored policy again).
+    await user.click(within(form).getByRole("tab", { name: "Ephemeral" }));
     await user.click(within(form).getByRole("tab", { name: "Archive" }));
-    await user.click(within(form).getByRole("switch", { name: /Backfill/ }));
+    expect(within(form).getByRole("switch", { name: /Backfill/ })).not.toBeChecked();
     expect(
       within(form).getByText("Off: only what the Source publishes from now on."),
     ).toBeInTheDocument();

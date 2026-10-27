@@ -187,8 +187,8 @@ Archive; Archive's *Backfill* switch picks between its two modes:
 
 Rolling N and Selection are no longer offered as tabs: a Mirror that uses one keeps a third
 tab for it until switched, and agents still pass them to `create_mirror` and `update_mirror`.
-Switching to Archive without Backfill starts from that moment: nothing listed so far is
-archived. New Mirrors start from the operator's default policy (the Settings page; Ephemeral
+Choosing Archive starts with Backfill off; switching to Archive without Backfill starts from
+that moment: nothing listed so far is archived. New Mirrors start from the operator's default policy (the Settings page; Ephemeral
 with a 7-day retention out of the box), both in the wizard and for an MCP `create_mirror`
 without `backfill`.
 

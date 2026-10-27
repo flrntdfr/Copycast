@@ -81,7 +81,7 @@ A Feed's permanent, opaque identity. For a Mirror it is derived from the Source'
 _Avoid_: Slug, name, feed name
 
 **Backfill**:
-The part of a Mirror's policy that says which items get archived (`backfill.mode`): Archive with or without its backfill (`all`, `new`), Ephemeral (`automatic`), and for agents and the Mirrors already using them a Rolling window or an explicit selection (Latest N remains too). Everything and Latest N apply once, at the first Refresh (immediately for a selection); `new` wants only what is first seen after it was applied. On the Archive tab, *Backfill* is the switch that also archives everything already published.
+The part of a Mirror's policy that says which items get archived (`backfill.mode`): Archive with or without its backfill (`all`, `new`), Ephemeral (`automatic`), and for agents and the Mirrors already using them a Rolling window or an explicit selection (Latest N remains too). Everything and Latest N apply once, at the first Refresh (immediately for a selection); `new` wants only what is first seen after it was applied. On the Archive tab, *Backfill* is the switch that also archives everything already published; it starts off when Archive is chosen.
 _Avoid_: Initial sync, history, catch-up, mode (in prose; the UI shows the policies as tabs)
 
 **Archive**:

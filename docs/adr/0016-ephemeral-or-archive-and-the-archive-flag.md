@@ -19,7 +19,8 @@ an Inbox could not keep one Episode out of its Retention.
   downloaded when a podcast app asks, expiring after its Retention. **Archive** keeps whatever
   it archives. Its **Backfill** switch picks `all` (everything already published, then every
   new item) or the new mode `new` (only items first seen after the policy is applied).
-  Switching to `new` restarts that moment; saving it again does not.
+  Choosing the Archive tab starts with Backfill off (`new`): a backlog is downloaded only
+  when asked for. Switching to `new` restarts that moment; saving it again does not.
 - `rolling`, `selection` and `latest` stay in the API and MCP. A Mirror on one keeps a third
   tab for it until switched.
 - An Episode can be flagged **Archive** (`catalog_items.archive_flag`, `set_archive_flag`).

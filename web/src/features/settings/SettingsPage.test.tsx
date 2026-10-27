@@ -127,20 +127,21 @@ describe("Settings page: Mirrors", () => {
       { timeout: 2000 },
     );
 
+    // Archive starts with Backfill off: only what the Source publishes from now on.
     await user.click(within(form).getByRole("tab", { name: "Archive" }));
     const backfill = within(form).getByRole("switch", { name: /Backfill/ });
-    expect(backfill).toBeChecked();
-    await waitFor(() => expect(state.saved.at(-1)?.backfill).toEqual({ mode: "all" }), {
+    expect(backfill).not.toBeChecked();
+    await waitFor(() => expect(state.saved.at(-1)?.backfill).toEqual({ mode: "new" }), {
       timeout: 2000,
     });
     await user.click(backfill);
-    await waitFor(() => expect(state.saved.at(-1)?.backfill).toEqual({ mode: "new" }), {
+    await waitFor(() => expect(state.saved.at(-1)?.backfill).toEqual({ mode: "all" }), {
       timeout: 2000,
     });
     expect(state.saved.at(-1)).toEqual({
       language: "fr",
       min_duration_seconds: 300,
-      backfill: { mode: "new" },
+      backfill: { mode: "all" },
       refresh_interval_hours: 3,
     });
   });
