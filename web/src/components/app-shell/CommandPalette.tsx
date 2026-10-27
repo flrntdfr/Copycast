@@ -3,6 +3,7 @@ import {
   Info,
   Inbox,
   KeyRound,
+  Keyboard,
   Plus,
   Radio,
   RefreshCw,
@@ -31,9 +32,12 @@ const URL_RE = /^(https?:\/\/|www\.)\S+$/i;
 export function CommandPalette({
   open,
   onOpenChange,
+  onShowShortcuts,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** The shortcuts sheet, reachable here when `?` is switched off. */
+  onShowShortcuts: () => void;
 }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
@@ -114,6 +118,9 @@ export function CommandPalette({
           </CommandItem>
           <CommandItem onSelect={() => go(() => openAddSource({}))}>
             <Plus /> Add a Source
+          </CommandItem>
+          <CommandItem onSelect={() => go(onShowShortcuts)}>
+            <Keyboard /> Keyboard shortcuts
           </CommandItem>
         </CommandGroup>
         {feeds.length ? (

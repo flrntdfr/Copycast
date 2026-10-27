@@ -292,9 +292,24 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   is recorded as a failed asset and its original URL stays in the notes.
 - **OPML.** *Export OPML* on the Settings page (`GET /api/feeds.opml`) lists every feed with
   its credentialed URL, to subscribe to all of them in one go.
-- **Player.** The web player has a seek bar with chapter marks (from the Episode's chapters
-  asset), skip back 15 s / forward 30 s, speed from 0.75× to 2×, volume and mute, and keyboard
-  shortcuts (space, arrows, `m`, `[` and `]`); speed and volume are remembered per browser.
+- **Player.** The web player has a seek bar with chapter marks and the time left, a chapter
+  list under the current chapter's title (from the Episode's chapters asset), skip back 15 s /
+  forward 30 s, and volume and mute (no volume slider on iPhone and iPad, where the hardware
+  buttons own it).
+  - *Speed* goes from 0.5× to 3× in steps of 0.05: the speed chip opens a slider with −/+ and
+    presets, and scrolling over the chip or the slider (mouse wheel or trackpad) changes it.
+  - *Resume.* Each browser remembers where you were in its last 500 Episodes and starts there
+    again, a few seconds earlier after a pause of a minute (3 s), an hour (10 s) or a day
+    (20 s); an Episode starts over when it is Finished (played to the end, or stopped in its
+    last 30 s), barely started or nearly over. After a reload the bar comes back paused.
+  - *Sleep timer* (the moon): pause after 5–60 minutes, with a 10 s fade except on iOS, at the
+    end of the chapter, or at the end of the Episode.
+  - *Lock screen and headphones* (Media Session): play/pause, skip, scrubbing, artwork, and
+    chapter previous/next outside iOS.
+  - *Keyboard*: Space, ← / → (skip), Shift+← / → (chapters), `[` / `]` (speed ±0.1×), `m`
+    (mute), ↑ / ↓ (volume, only while the player has focus). They leave keys alone where the
+    focused control uses them, and *Single-key shortcuts* in the `?` dialog turns them off.
+    Speed, volume and that switch are remembered per browser.
 - **Title.** The pen next to a Mirror's title edits it in place; Enter saves, Escape cancels.
 - **Descriptions on demand.** Expanding a Catalog row without a description asks the Source for
   it (and the exact date and artwork) right there; `fetch_item_metadata` does the same for

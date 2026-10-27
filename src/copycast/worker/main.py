@@ -2,6 +2,7 @@
 
 Startup: layout version, schema (``COPYCAST_AUTO_MIGRATE``), the process-wide
 advisory lock (a second worker exits with a message), the default Inbox, the
+chapters files still in the Engine's shape rewritten as Podcasting 2.0, the
 engine version, then the claim loop, the scheduler, the 30 s heartbeat and the
 health endpoints on ``COPYCAST_WORKER_PORT``. SIGTERM/SIGINT drain the runner
 and flush the debounced descriptor exports before the process exits.
@@ -19,6 +20,7 @@ from copycast.adapters.db.locks import WORKER_LOCK, SessionLock
 from copycast.adapters.db.migrate import SchemaNotCurrent, prepare_schema
 from copycast.adapters.db.uow import uow_of
 from copycast.adapters.sources.http import close_client
+from copycast.adapters.storage.chapters import upgrade_chapter_files
 from copycast.adapters.storage.layout import Layout
 from copycast.app import Container, build_container
 from copycast.application.ports import Engine
@@ -70,6 +72,7 @@ async def main(settings: Settings, *, engine: Engine | None = None) -> int:
 async def _serve(container: Container, settings: Settings) -> int:
     worker_id = default_worker_id()
     await container.services.ensure_default_inbox()
+    await _upgrade_chapters(container.layout)
     version = await asyncio.to_thread(container.engine.version)
     async with uow_of(container.uow_factory()) as uow:
         await uow.telemetry.record_engine_version(
@@ -110,6 +113,21 @@ async def _serve(container: Container, settings: Settings) -> int:
         await asyncio.gather(*background, return_exceptions=True)
     log.info("worker.stopped", exit_code=exit_code, **_stats(runner))
     return exit_code
+
+
+async def _upgrade_chapters(layout: Layout) -> None:
+    """Rewrite chapters archived in the Engine's shape; a failure never stops the worker."""
+    try:
+        upgrade = await asyncio.to_thread(upgrade_chapter_files, layout)
+    except Exception:
+        log.exception("worker.chapters_upgrade_failed")
+        return
+    log.info(
+        "worker.chapters_upgraded",
+        scanned=upgrade.scanned,
+        upgraded=upgrade.upgraded,
+        unreadable=upgrade.unreadable,
+    )
 
 
 async def _heartbeat_loop(container: Container, runner: Runner, state: WorkerState) -> None:

@@ -3,12 +3,13 @@
 RSS items are fetched through a synthesized info dict built from the item's
 ``<item>`` in ``source/feed.xml`` (falling back to the stored
 ``source_item_xml``); everything else is a yt-dlp extraction of the item URL.
-Engine outputs (Artwork, subtitles, chapters) become assets under ``assets/``;
-for RSS items the Source's own chapters, transcripts and image are mirrored
-when the Engine produced none. Asset failures mark the asset ``failed``; the
-job still succeeds. A stream with no recording yet (``NotReady``) puts the
-item back to ``wanted`` without counting the attempt and records its live
-status; once the job has waited ``LIVE_WAIT_MAX`` the item fails for good.
+Engine outputs (Artwork, subtitles, chapters as Podcasting 2.0 JSON) become
+assets under ``assets/``; for RSS items the Source's own chapters, transcripts
+and image are mirrored when the Engine produced none. Asset failures mark the
+asset ``failed``; the job still succeeds. A stream with no recording yet
+(``NotReady``) puts the item back to ``wanted`` without counting the attempt and
+records its live status; once the job has waited ``LIVE_WAIT_MAX`` the item
+fails for good.
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ from copycast.application.ports import (
     TransientError,
 )
 from copycast.application.services.defaults import effective, load_defaults
+from copycast.domain.chapters import podcast_chapters
 from copycast.domain.enums import (
     ArchiveState,
     AssetFormat,
@@ -210,7 +212,8 @@ def _move(src: Path, dst: Path) -> int:
 def place_engine_outputs(
     layout: Layout, feed_id: str, item_id: str, result: FetchResult
 ) -> Produced:
-    """Artwork -> ``assets/{item}.artwork.{ext}``, subtitles -> transcripts, chapters -> JSON."""
+    """Artwork -> ``assets/{item}.artwork.{ext}``, subtitles -> transcripts, chapters ->
+    Podcasting 2.0 JSON (none when no chapter has a usable start)."""
     produced = Produced()
     if result.artwork_path is not None and result.artwork_path.is_file():
         ext = result.artwork_path.suffix.lstrip(".").lower() or "jpg"
@@ -261,10 +264,11 @@ def place_engine_outputs(
                 format=fmt,
             )
         )
-    if result.chapters:
+    chapters = podcast_chapters(result.chapters)
+    if chapters is not None:
         target = layout.chapters_path(feed_id, item_id)
         try:
-            write_json_atomic(target, result.chapters)
+            write_json_atomic(target, chapters)
             produced.assets.append(
                 PlacedAsset(
                     AssetKind.chapters,

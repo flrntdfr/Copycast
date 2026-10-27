@@ -124,7 +124,8 @@ class FetchResult:
     """What a successful fetch produced under ``home_dir``.
 
     ``subtitle_paths`` maps a language code to the subtitle file the engine
-    wrote; ``chapters`` is the ``chapters`` list of the info dict verbatim.
+    wrote; ``chapters`` is the ``chapters`` list of the info dict verbatim (yt-dlp's
+    ``start_time``/``end_time``/``title`` entries; the archive job converts them).
     """
 
     audio_path: Path
