@@ -1,7 +1,9 @@
 name: Engine bump
 
-# Every six hours: pin uv.lock to the newest yt-dlp on the configured channel, run the engine
-# tests, and push the change to main. With a GitHub App configured the push is made with its
+# Every two weeks (the 1st and 15th of the month): pin uv.lock to the newest yt-dlp on the
+# configured channel, run the engine tests, and push the change to main. The app version does
+# not change, so the image it triggers is the same Copycast against a newer engine, tagged
+# :<app>-yt<engine> (image.yml). With a GitHub App configured the push is made with its
 # token, which triggers image.yml like any push. Without one the push is made with
 # GITHUB_TOKEN, which does not trigger other workflows, so the image build is dispatched
 # explicitly afterwards (workflow_dispatch is the one event GITHUB_TOKEN may raise).
@@ -12,7 +14,7 @@ name: Engine bump
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 4 1,15 * *"
   workflow_dispatch:
     inputs:
       channel:

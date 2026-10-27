@@ -133,9 +133,10 @@ Tools cover everything the UI does: `search_podcasts` (iTunes Search, no key nee
 - Everything Copycast knows is either in Postgres or under `data/`; the data directory alone
   is enough to rebuild the database (`copycast rebuild`,
   [ADR 0001](docs/adr/0001-postgres-is-truth-data-dir-rebuildable.md)).
-- The engine (yt-dlp) is pinned in the image and bumped automatically every six hours; every
+- The engine (yt-dlp) is pinned in the image and bumped automatically every two weeks; every
   image is also tagged `<version>-yt<engine>` so you can roll back to a known-good engine
-  ([ADR 0006](docs/adr/0006-image-tags-and-engine-bump-automation.md)).
+  (the registry keeps the three newest images;
+  [ADR 0006](docs/adr/0006-image-tags-and-engine-bump-automation.md)).
 - Kubernetes: a kustomize base with CloudNativePG and a Tailscale Ingress lives in
   [deploy/kubernetes](deploy/kubernetes); see [docs/operations.md](docs/operations.md).
 

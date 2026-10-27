@@ -490,19 +490,24 @@ download counters. Everything else, including item ids and ordinals, comes back 
 
 ## Engine bumps and rollback
 
-The engine (yt-dlp) is pinned in `uv.lock`. `engine-bump.yml` runs every six hours, pins the
-newest release of the configured channel (`vars.ENGINE_CHANNEL`, nightly by default), runs
-the engine tests, and pushes the lock change to `main`; `image.yml` then builds and publishes:
+The engine (yt-dlp) is pinned in `uv.lock`. `engine-bump.yml` runs every two weeks (the 1st
+and 15th of the month, or on demand from the Actions tab), pins the newest release of the
+configured channel (`vars.ENGINE_CHANNEL`, nightly by default), runs the engine tests, and
+pushes the lock change to `main`; `image.yml` then builds and publishes:
 
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
 | `1.4.0` | yes, on every engine bump | "the current 1.4.0" |
-| `1.4.0-yt2026.8.19` | never | exactly this app + engine combination |
+| `1.4.0-yt2026.8.19` | never (until pruned) | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
-Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. To roll back an engine
-that broke a site, pin the previous immutable tag in `.env`
+Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. After each build the
+package is pruned to the three newest tagged images; older images and every untagged manifest
+are deleted, so roll back within that window or pull and keep the image yourself. The prune
+runs with `GITHUB_TOKEN`, which needs the package to grant the repository the Admin role
+(Package settings → Manage Actions access). To roll back an engine that broke a site, pin
+the previous immutable tag in `.env`
 (`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:1.4.0-yt<previous>`) or in the kustomize overlay
 (`images[].newTag`), and `docker compose up -d` / `kubectl apply -k`. The About page and
 `copycast --version` show which engine is running; `jobs.engine_version` records which engine
