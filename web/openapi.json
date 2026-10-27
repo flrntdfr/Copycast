@@ -3,7 +3,7 @@
   "info": {
     "title": "Copycast",
     "description": "Self-hosted podcast mirroring and archiving.",
-    "version": "1.4.0"
+    "version": "2.0.0"
   },
   "paths": {
     "/api/feeds": {
