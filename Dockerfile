@@ -10,7 +10,7 @@
 # The engine layer is installed on its own so that an engine bump (a lock change touching
 # only yt-dlp) invalidates a single small layer instead of the whole dependency set.
 
-ARG APP_VERSION=2.0.0
+ARG APP_VERSION=2.0.1
 ARG ENGINE_VERSION=unknown
 
 # ---- web -------------------------------------------------------------------------------
