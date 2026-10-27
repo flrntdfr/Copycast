@@ -1,0 +1,78 @@
+# Local stack for following work in progress: Postgres, migrate, api and worker in containers,
+# state in named Docker volumes, the source tree bind-mounted so both processes restart on edits.
+# The Vite dev server runs on the host (scripts/local.sh) and proxies to the api on :8080.
+#
+#   scripts/local.sh                                       start everything (Ctrl-C stops)
+#   docker compose -f deploy/compose/docker-compose.local.yml down      stop, keep the data
+#   docker compose -f deploy/compose/docker-compose.local.yml down -v   stop and wipe the data
+#
+# The image carries the dependencies: rebuild (`up --build`, which local.sh does) after a
+# change to pyproject.toml or uv.lock.
+name: copycast-local
+
+x-app: &app
+  image: copycast:local
+  pull_policy: never
+  environment:
+    COPYCAST_CONFIG: /config/copycast.toml
+    COPYCAST_LOG_FORMAT: console
+    COPYCAST_AUTO_MIGRATE: "false"
+    COPYCAST__DATABASE_URL: postgresql+psycopg://copycast:copycast@postgres:5432/copycast
+    COPYCAST__DATA_DIR: /data
+    COPYCAST__BASE_URL: http://localhost:8080
+    # The mounted source wins over the copy installed in the image.
+    PYTHONPATH: /app/src
+    # Bind mounts from macOS do not always deliver inotify events.
+    WATCHFILES_FORCE_POLLING: "true"
+  volumes:
+    - ../../src:/app/src:ro
+    - ../../config/copycast.toml:/config/copycast.toml:ro
+    - data:/data
+  working_dir: /app/src
+  entrypoint: ["tini", "--"]
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:17.11@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
+    environment:
+      POSTGRES_USER: copycast
+      POSTGRES_PASSWORD: copycast
+      POSTGRES_DB: copycast
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U copycast -d copycast"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    <<: *app
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    pull_policy: build
+    command: ["copycast", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app
+    command: ["copycast", "api", "--reload"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+
+  worker:
+    <<: *app
+    command: ["watchfiles", "--filter", "python", "copycast worker", "/app/src"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  data:
