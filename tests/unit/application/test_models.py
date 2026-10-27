@@ -8,10 +8,10 @@ from pydantic import TypeAdapter, ValidationError
 
 from copycast.application.models import (
     BackfillRequest,
+    BucketCreate,
+    BucketRead,
+    BucketUpdate,
     FeedRead,
-    InboxCreate,
-    InboxRead,
-    InboxUpdate,
     MirrorCreate,
     MirrorDefaults,
     MirrorRead,
@@ -37,9 +37,9 @@ MIRROR: dict[str, Any] = {
     "backfill": {"mode": "latest", "latest_n": 5},
     "health": {"status": "never"},
 }
-INBOX: dict[str, Any] = {
+BUCKET: dict[str, Any] = {
     "id": "copycast-abc234",
-    "kind": "inbox",
+    "kind": "bucket",
     "title": "Copycast",
     "name": "Copycast",
     "feed_url": "http://localhost:8080/feeds/copycast-abc234.xml",
@@ -50,19 +50,19 @@ INBOX: dict[str, Any] = {
 def test_feed_read_discriminates_on_kind() -> None:
     adapter = TypeAdapter(FeedRead)
     mirror = adapter.validate_python(MIRROR)
-    inbox = adapter.validate_python(INBOX)
+    bucket = adapter.validate_python(BUCKET)
     assert isinstance(mirror, MirrorRead) and mirror.kind is FeedKind.mirror
-    assert isinstance(inbox, InboxRead) and inbox.kind is FeedKind.inbox
+    assert isinstance(bucket, BucketRead) and bucket.kind is FeedKind.bucket
     assert mirror.counts.listed == 0 and mirror.selection is None
     assert adapter.validate_json(adapter.dump_json(mirror)) == mirror
     with pytest.raises(ValidationError):
-        adapter.validate_python({**INBOX, "kind": "mirror"})
+        adapter.validate_python({**BUCKET, "kind": "mirror"})
 
 
 def test_read_models_are_frozen() -> None:
-    inbox = InboxRead.model_validate(INBOX)
+    bucket = BucketRead.model_validate(BUCKET)
     with pytest.raises(ValidationError):
-        inbox.name = "x"  # type: ignore[misc]
+        bucket.name = "x"  # type: ignore[misc]
 
 
 def test_mirror_create_without_a_policy_takes_the_operator_default() -> None:
@@ -166,13 +166,13 @@ def test_selection_request_needs_something() -> None:
     assert SelectionRequest(item_ids=["a"]).item_ids == ["a"]
 
 
-def test_inbox_names_are_whitespace_normalized() -> None:
-    assert InboxCreate(name="  Read   Later ").name == "Read Later"
+def test_bucket_names_are_whitespace_normalized() -> None:
+    assert BucketCreate(name="  Read   Later ").name == "Read Later"
     with pytest.raises(ValidationError):
-        InboxCreate(name="   ")
+        BucketCreate(name="   ")
     with pytest.raises(ValidationError):
-        InboxCreate(name="x", autoprune_days=0)
-    patch = InboxUpdate.model_validate({"autoprune_days": None})
+        BucketCreate(name="x", autoprune_days=0)
+    patch = BucketUpdate.model_validate({"autoprune_days": None})
     assert patch.model_fields_set == {"autoprune_days"} and patch.autoprune_days is None
 
 

@@ -66,8 +66,8 @@ export function useSetArchiveFlag(feedId: string) {
   });
 }
 
-/** Bulk helpers for the SelectionBar; per-item calls so Inboxes work too. */
-export function useBulkActions(feedId: string, feedKind: "mirror" | "inbox") {
+/** Bulk helpers for the SelectionBar; per-item calls so Buckets work too. */
+export function useBulkActions(feedId: string, feedKind: "mirror" | "bucket") {
   const invalidate = useInvalidateCatalog(feedId);
   const select = $api.useMutation("post", "/api/mirrors/{feed_id}/selections", {
     meta: { silent: true },

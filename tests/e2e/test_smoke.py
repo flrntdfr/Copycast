@@ -1,6 +1,6 @@
 """httpx smoke against the compose stack (docker-compose.yml + docker-compose.ci.yml).
 
-Covers the plan's e2e list: readiness, the default Inbox, a Mirror created from the
+Covers the plan's e2e list: readiness, the default Bucket, a Mirror created from the
 fixtures server that the worker archives for real (yt-dlp + ffmpeg), the public feed and
 media (Range 206 counted once), the MCP endpoint's ``tools/list`` and the About engine
 version against the lockfile. The Mirror is deleted at the end so the Playwright suite
@@ -126,14 +126,14 @@ def test_liveness_and_readiness(http: httpx.Client, stack: Stack) -> None:
     wait_until(worker_seen, timeout=stack.timeout, interval=2.0, what="worker heartbeat")
 
 
-def test_default_inbox_exists(http: httpx.Client, stack: Stack) -> None:
-    response = http.get("/api/inboxes")
+def test_default_bucket_exists(http: httpx.Client, stack: Stack) -> None:
+    response = http.get("/api/buckets")
     assert response.status_code == 200, response.text
     feeds: list[dict[str, Any]] = response.json()["feeds"]
-    inboxes = [feed for feed in feeds if feed["kind"] == "inbox"]
-    assert len(inboxes) >= 1, feeds
-    default = next((inbox for inbox in inboxes if inbox["name"] == "Copycast"), None)
-    assert default is not None, inboxes
+    buckets = [feed for feed in feeds if feed["kind"] == "bucket"]
+    assert len(buckets) >= 1, feeds
+    default = next((bucket for bucket in buckets if bucket["name"] == "Copycast"), None)
+    assert default is not None, buckets
     assert default["feed_url"] == f"{stack.base_url}/feeds/{default['id']}.xml"
 
     feed = http.get(f"/feeds/{default['id']}.xml")
@@ -240,8 +240,8 @@ def test_mcp_lists_tools(http: httpx.Client) -> None:
         "probe_source",
         "create_mirror",
         "archive_episodes",
-        "add_to_inbox",
-        "prune_inbox",
+        "add_to_bucket",
+        "prune_bucket",
         "delete_feed",
         "get_about",
     } <= tools, tools

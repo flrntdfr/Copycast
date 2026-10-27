@@ -1,4 +1,4 @@
-"""Serial Inbox rules: posting dates, numbered titles, progress notes (ADR 0015)."""
+"""Serial Bucket rules: posting dates, numbered titles, progress notes (ADR 0015)."""
 
 from __future__ import annotations
 

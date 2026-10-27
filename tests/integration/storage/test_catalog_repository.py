@@ -17,7 +17,7 @@ from copycast.domain.enums import (
 )
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import item_id
-from tests.integration.storage.conftest import NOW, inbox_row, item_row, mirror_row, seed
+from tests.integration.storage.conftest import NOW, bucket_row, item_row, mirror_row, seed
 from tests.support.factories import EPOCH, listing, listing_item
 
 pytestmark = pytest.mark.integration
@@ -256,8 +256,8 @@ async def test_upsert_sets_public_ext_per_source_kind_and_never_rewrites_it(
         tube = await uow.feeds.add(
             mirror_row("https://www.youtube.com/@show/videos", source_kind=SourceKind.ytdlp)
         )
-        inbox = await uow.feeds.add(inbox_row())
-        tube_id, inbox_id = tube.id, inbox.id
+        bucket = await uow.feeds.add(bucket_row())
+        tube_id, bucket_id = tube.id, bucket.id
     enclosures = listing(4).model_copy(
         update={
             "items": [
@@ -280,14 +280,14 @@ async def test_upsert_sets_public_ext_per_source_kind_and_never_rewrites_it(
     async with uow_factory() as uow:
         await uow.catalog.upsert_listing(rss_id, enclosures)
         await uow.catalog.upsert_listing(tube_id, enclosures)
-        await uow.catalog.upsert_listing(inbox_id, enclosures)
+        await uow.catalog.upsert_listing(bucket_id, enclosures)
         # RSS: the enclosure's MIME type, else its URL's extension, else mp3, as the
         # container the Engine archives it in (an .ogg enclosure is transcoded to mp3).
         assert await exts(uow, rss_id) == {1: "mp3", 2: "m4a", 3: "mp3", 4: "mp3"}
         # A ytdlp Source archives to m4a whatever the listing says.
         assert await exts(uow, tube_id) == {1: "m4a", 2: "m4a", 3: "m4a", 4: "m4a"}
-        # An Inbox is filled by the Engine, unless the Request named a media file.
-        assert await exts(uow, inbox_id) == {1: "mp3", 2: "m4a", 3: "mp3", 4: "m4a"}
+        # A Bucket is filled by the Engine, unless the Request named a media file.
+        assert await exts(uow, bucket_id) == {1: "mp3", 2: "m4a", 3: "mp3", 4: "m4a"}
 
     # The Source changes its enclosures and an item gets archived in another container:
     # known rows keep the URL podcast apps already hold.
@@ -367,8 +367,8 @@ async def test_upsert_with_wanted_reason_marks_new_and_deleted_rows(
     uow_factory: UnitOfWorkFactory,
 ) -> None:
     async with uow_factory() as uow:
-        inbox = await uow.feeds.add(inbox_row())
-        feed_id = inbox.id
+        bucket = await uow.feeds.add(bucket_row())
+        feed_id = bucket.id
         first = await uow.catalog.upsert_listing(
             feed_id, listing(2), wanted_reason=WantedReason.request
         )
@@ -483,12 +483,12 @@ async def test_mark_state_transitions(uow_factory: UnitOfWorkFactory) -> None:
 async def test_tombstone_keeps_row_and_clears_media(uow_factory: UnitOfWorkFactory) -> None:
     async with uow_factory() as uow:
         feed = await uow.feeds.add(mirror_row())
-        inbox = await uow.feeds.add(inbox_row())
+        bucket = await uow.feeds.add(bucket_row())
         episode = item_row(feed, 1, state=ArchiveState.archived, download_count=3)
-        inbox_episode = item_row(inbox, 1, state=ArchiveState.archived)
-        await seed(uow, episode, inbox_episode)
+        bucket_episode = item_row(bucket, 1, state=ArchiveState.archived)
+        await seed(uow, episode, bucket_episode)
         assert await uow.catalog.tombstone(episode.id, listed=True, at=NOW)
-        assert await uow.catalog.tombstone(inbox_episode.id, listed=False)
+        assert await uow.catalog.tombstone(bucket_episode.id, listed=False)
         assert not await uow.catalog.tombstone("0000000000000000", listed=True)
         assert episode.archive_state == ArchiveState.deleted
         assert episode.deleted_at == NOW
@@ -496,11 +496,11 @@ async def test_tombstone_keeps_row_and_clears_media(uow_factory: UnitOfWorkFacto
         assert episode.archived_at is None
         assert episode.listed is True
         assert episode.download_count == 3  # telemetry survives
-        assert inbox_episode.listed is False
+        assert bucket_episode.listed is False
         counts = await uow.catalog.count_by_state(feed.id)
         assert (counts.available, counts.archived) == (1, 0)
-        inbox_counts = await uow.catalog.count_by_state(inbox.id)
-        assert (inbox_counts.available, inbox_counts.archived) == (0, 0)
+        bucket_counts = await uow.catalog.count_by_state(bucket.id)
+        assert (bucket_counts.available, bucket_counts.archived) == (0, 0)
 
 
 async def test_count_by_state_derives_catalog_states(uow_factory: UnitOfWorkFactory) -> None:
@@ -554,9 +554,9 @@ async def test_record_download_counts_only_archived_items(uow_factory: UnitOfWor
 
 async def test_prunable_criteria(uow_factory: UnitOfWorkFactory) -> None:
     async with uow_factory() as uow:
-        inbox = await uow.feeds.add(inbox_row())
+        bucket = await uow.feeds.add(bucket_row())
         old_downloaded = item_row(
-            inbox,
+            bucket,
             1,
             state=ArchiveState.archived,
             first_seen_at=NOW - timedelta(days=30),
@@ -564,30 +564,30 @@ async def test_prunable_criteria(uow_factory: UnitOfWorkFactory) -> None:
             download_count=1,
         )
         old_never = item_row(
-            inbox, 2, state=ArchiveState.archived, first_seen_at=NOW - timedelta(days=30)
+            bucket, 2, state=ArchiveState.archived, first_seen_at=NOW - timedelta(days=30)
         )
         new_downloaded = item_row(
-            inbox,
+            bucket,
             3,
             state=ArchiveState.archived,
             first_seen_at=NOW - timedelta(days=1),
             first_downloaded_at=NOW - timedelta(hours=1),
             download_count=2,
         )
-        not_archived = item_row(inbox, 4, first_seen_at=NOW - timedelta(days=30))
+        not_archived = item_row(bucket, 4, first_seen_at=NOW - timedelta(days=30))
         await seed(uow, old_downloaded, old_never, new_downloaded, not_archived)
 
         with pytest.raises(ValueError, match="criterion"):
-            await uow.catalog.prunable(inbox.id)
-        downloaded = await uow.catalog.prunable(inbox.id, downloaded=True)
+            await uow.catalog.prunable(bucket.id)
+        downloaded = await uow.catalog.prunable(bucket.id, downloaded=True)
         assert [r.id for r in downloaded] == [old_downloaded.id, new_downloaded.id]
-        older = await uow.catalog.prunable(inbox.id, added_before=NOW - timedelta(days=7))
+        older = await uow.catalog.prunable(bucket.id, added_before=NOW - timedelta(days=7))
         assert [r.id for r in older] == [old_downloaded.id, old_never.id]
         both = await uow.catalog.prunable(
-            inbox.id, downloaded=True, added_before=NOW - timedelta(days=7)
+            bucket.id, downloaded=True, added_before=NOW - timedelta(days=7)
         )
         assert [r.id for r in both] == [old_downloaded.id]
-        auto = await uow.catalog.prunable(inbox.id, downloaded_before=NOW - timedelta(days=7))
+        auto = await uow.catalog.prunable(bucket.id, downloaded_before=NOW - timedelta(days=7))
         assert [r.id for r in auto] == [old_downloaded.id]  # never-downloaded rows are exempt
 
 

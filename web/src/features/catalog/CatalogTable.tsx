@@ -157,7 +157,7 @@ export interface CatalogTableProps {
 }
 
 export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps) {
-  const feedKind = feed.kind === "mirror" ? "mirror" : "inbox";
+  const feedKind = feed.kind === "mirror" ? "mirror" : "bucket";
   const filters = useMemo(() => toCatalogFilters(search), [search]);
   // Tombstones that are no longer listed show only under the Deleted facet.
   const pages = useCatalogPages(feed.id, filters, { showHidden: search.state === "deleted" });
@@ -342,7 +342,7 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
               ? "Try another filter or clear the state facet."
               : feed.kind === "mirror"
                 ? "Items appear after the first Refresh lists the Source."
-                : "Items appear once a Request expands."
+                : "Items appear once a Request expands or a file is uploaded."
           }
         />
       ) : (

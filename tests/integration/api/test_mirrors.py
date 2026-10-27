@@ -239,8 +239,8 @@ async def test_archive_item_and_delete_feed(
     assert unknown.status_code == 404 and problem_type(unknown) == "urn:copycast:problem:not-found"
 
 
-async def test_default_inbox_cannot_be_deleted(client: httpx.AsyncClient) -> None:
-    inbox = (await client.get(api("/inboxes"))).json()["feeds"][0]
-    refused = await client.delete(api(f"/feeds/{inbox['id']}"))
+async def test_default_bucket_cannot_be_deleted(client: httpx.AsyncClient) -> None:
+    bucket = (await client.get(api("/buckets"))).json()["feeds"][0]
+    refused = await client.delete(api(f"/feeds/{bucket['id']}"))
     assert refused.status_code == 409
     assert problem_type(refused) == "urn:copycast:problem:conflict"

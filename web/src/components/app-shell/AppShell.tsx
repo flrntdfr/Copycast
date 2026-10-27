@@ -28,10 +28,10 @@ const NAV: {
   { to: "/about", label: "About" },
 ];
 
-/** Feeds covers the page of every Feed and each Mirror's and Inbox's own page. */
+/** Feeds covers the page of every Feed and each Mirror's and Bucket's own page. */
 function isCurrent(to: (typeof NAV)[number]["to"], pathname: string): boolean {
   if (to !== "/") return pathname === to || pathname.startsWith(`${to}/`);
-  return pathname === "/" || /^\/(mirrors|inboxes)(\/|$)/.test(pathname);
+  return pathname === "/" || /^\/(mirrors|buckets)(\/|$)/.test(pathname);
 }
 
 /**

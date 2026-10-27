@@ -57,7 +57,7 @@ def _job() -> JobRead:
         FeedEvent(feed_id="feed1", revision=7, reason="refresh"),
         ItemEvent(feed_id="feed1", item_id="item1", state=ArchiveState.archived),
         RequestEvent(
-            feed_id="inbox1", request_id=uuid4(), status=RequestStatus.expanded, item_count=3
+            feed_id="bucket1", request_id=uuid4(), status=RequestStatus.expanded, item_count=3
         ),
         ResyncEvent(reason="listen reconnected"),
     ],

@@ -107,10 +107,10 @@ def mirror_row(
     return Feed(**fields)
 
 
-def inbox_row(name: str = "Later", *, is_default: bool = False, **overrides: Any) -> Feed:
+def bucket_row(name: str = "Later", *, is_default: bool = False, **overrides: Any) -> Feed:
     fields: dict[str, Any] = {
         "id": f"{name.lower()}-abc234",
-        "kind": FeedKind.inbox.value,
+        "kind": FeedKind.bucket.value,
         "is_default": is_default,
         "title": name,
         "follow": False,
@@ -245,7 +245,7 @@ __all__ = [
     "NOW",
     "SOURCE_URL",
     "asset_row",
-    "inbox_row",
+    "bucket_row",
     "item_row",
     "job_row",
     "mirror_row",

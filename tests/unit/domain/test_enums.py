@@ -48,7 +48,7 @@ def test_tombstone_is_available_again_but_distinguishable() -> None:
 def test_enums_are_plain_strings_for_text_columns() -> None:
     assert ArchiveState.archived == "archived"
     assert f"{JobKind.archive_item}" == "archive_item"
-    assert FeedKind("inbox") is FeedKind.inbox
+    assert FeedKind("bucket") is FeedKind.bucket
     assert set(JobStatus) == {"queued", "running", "succeeded", "failed", "cancelled"}
     assert set(ErrorKind) == {"transient", "permanent", "cancelled", "storage_full"}
     assert set(JobTrigger) == {

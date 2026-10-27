@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useSendToInbox } from "@/features/inboxes/useSendToInbox";
+import { useSendToBucket } from "@/features/buckets/useSendToBucket";
 import { CandidateList } from "./CandidateList";
 import { CreatedStep } from "./CreatedStep";
 import { ProbeStep } from "./ProbeStep";
@@ -61,7 +61,7 @@ function AddSourceFlow({ url, query, sync }: { url: string; query: string; sync:
   const [creating, setCreating] = useState(false);
   const probeAbort = useRef<AbortController | null>(null);
   const createAbort = useRef<AbortController | null>(null);
-  const sendToInbox = useSendToInbox();
+  const sendToBucket = useSendToBucket();
   $api.useQuery("get", "/api/feeds", { params: { query: { kind: "mirror" } } });
 
   const knownMirrors = useCallback(async (): Promise<FeedRead[]> => {
@@ -202,8 +202,8 @@ function AddSourceFlow({ url, query, sync }: { url: string; query: string; sync:
           creating={creating}
           onCancel={closeAddSource}
           onRetry={() => probe(state.url)}
-          onSendToInbox={sendToInbox.target ? () => void sendToInbox.send(state.url) : undefined}
-          sendingToInbox={sendToInbox.isPending}
+          onSendToBucket={sendToBucket.target ? () => void sendToBucket.send(state.url) : undefined}
+          sendingToBucket={sendToBucket.isPending}
         />
       ) : null}
       {state.step === "candidates" ? (
@@ -211,12 +211,12 @@ function AddSourceFlow({ url, query, sync }: { url: string; query: string; sync:
           probe={state.probe}
           onChoose={(candidate) => void create(candidate)}
           choosing={creating}
-          onSendToInbox={
-            sendToInbox.target
-              ? (candidate) => void sendToInbox.send(candidate.source_url)
+          onSendToBucket={
+            sendToBucket.target
+              ? (candidate) => void sendToBucket.send(candidate.source_url)
               : undefined
           }
-          sendingToInbox={sendToInbox.isPending}
+          sendingToBucket={sendToBucket.isPending}
           onBack={closeAddSource}
         />
       ) : null}

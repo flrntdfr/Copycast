@@ -1,19 +1,19 @@
 import { expect, test } from "@playwright/test";
 
-import { FIXTURE_MEDIA_URL, defaultInbox } from "./helpers";
+import { FIXTURE_MEDIA_URL, defaultBucket } from "./helpers";
 
-test.describe("Inbox", () => {
+test.describe("Bucket", () => {
   test("adds a Request and opens the prune dialog with a dry-run preview", async ({
     page,
     request,
   }) => {
-    const inbox = await defaultInbox(request);
+    const bucket = await defaultBucket(request);
     await page.goto("/");
-    await page.getByTestId("inbox-card").filter({ hasText: inbox.title }).first().click();
-    await expect(page).toHaveURL(new RegExp(`/inboxes/${inbox.id}`));
-    await expect(page.getByRole("heading", { name: inbox.title })).toBeVisible();
-    await expect(page.getByRole("textbox", { name: "Inbox Feed URL" })).toHaveValue(
-      new RegExp(`/feeds/${inbox.id}\\.xml$`),
+    await page.getByTestId("bucket-card").filter({ hasText: bucket.title }).first().click();
+    await expect(page).toHaveURL(new RegExp(`/buckets/${bucket.id}`));
+    await expect(page.getByRole("heading", { name: bucket.title })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Bucket Feed URL" })).toHaveValue(
+      new RegExp(`/feeds/${bucket.id}\\.xml$`),
     );
 
     // A media file URL is a valid Request (the worker expands it through the Engine).
@@ -26,9 +26,9 @@ test.describe("Inbox", () => {
     await expect(row).toContainText("UI");
 
     await page.getByRole("tab", { name: "Settings" }).click();
-    await expect(page.getByRole("form", { name: "Inbox settings" })).toBeVisible();
+    await expect(page.getByRole("form", { name: "Bucket settings" })).toBeVisible();
     await page.getByRole("button", { name: "Prune now…" }).click();
-    const dialog = page.getByRole("dialog", { name: "Prune this Inbox" });
+    const dialog = page.getByRole("dialog", { name: "Prune this Bucket" });
     await expect(dialog).toBeVisible();
     const preview = dialog.getByTestId("prune-preview");
     await expect(preview).not.toContainText("Counting", { timeout: 30_000 });

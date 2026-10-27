@@ -1,4 +1,4 @@
-"""MCP tools end to end: search, create_mirror with a selection, archive_episodes, Inbox tools."""
+"""MCP tools end to end: search, create_mirror with a selection, archive_episodes, Bucket tools."""
 
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ async def test_instructions_and_tool_listing(mcp_client: Client[Any]) -> None:
     assert {"search_podcasts", "probe_source", "create_mirror", "archive_episodes"} <= set(tools)
     assert (tools["delete_feed"].meta or {})["capability"] == "delete_feed"
     assert (tools["archive_episodes"].meta or {})["capability"] == "select_items"
-    assert (tools["add_to_inbox"].meta or {})["capability"] == "add_request"
-    for name in ("delete_feed", "delete_item", "prune_inbox"):
+    assert (tools["add_to_bucket"].meta or {})["capability"] == "add_request"
+    for name in ("delete_feed", "delete_item", "prune_bucket"):
         annotations = tools[name].annotations
         assert annotations is not None and annotations.destructive_hint is True, name
     for name in ("get_feed", "list_items", "get_about", "get_status", "search_podcasts"):
@@ -45,8 +45,8 @@ async def test_instructions_and_tool_listing(mcp_client: Client[Any]) -> None:
         assert annotations is not None and annotations.read_only_hint is True, name
         assert annotations.destructive_hint is False
     assert "only copy" in (tools["delete_feed"].description or "")
-    add = tools["add_to_inbox"].input_schema["properties"]
-    assert add["inbox"]["default"] == "Copycast"
+    add = tools["add_to_bucket"].input_schema["properties"]
+    assert add["bucket"]["default"] == "Copycast"
     mirror_schema = tools["create_mirror"].input_schema["properties"]["mirror"]
     assert {"source_url", "backfill", "follow"} <= set(mirror_schema["properties"])
 
@@ -134,15 +134,15 @@ async def test_create_mirror_with_selection_then_archive_episodes(
     assert "outtmpl" in str(rejected.value)
 
 
-async def test_add_to_inbox_defaults_and_prune(
+async def test_add_to_bucket_defaults_and_prune(
     mcp_client: Client[Any], engine: FakeEngine, runner: Runner, container: Container
 ) -> None:
     url = "https://www.youtube.com/watch?v=mcp-video"
     engine.script_listing(url, listing(1, service="YouTube", title="A video"))
-    request = structured(await mcp_client.call_tool("add_to_inbox", {"request": {"url": url}}))
+    request = structured(await mcp_client.call_tool("add_to_bucket", {"request": {"url": url}}))
     assert request["requested_via"] == "mcp" and request["status"] == "queued"
-    default = structured(await mcp_client.call_tool("list_feeds", {"kind": "inbox"}))["feeds"][0]
-    assert default["name"] == "Copycast" and request["inbox_id"] == default["id"]
+    default = structured(await mcp_client.call_tool("list_feeds", {"kind": "bucket"}))["feeds"][0]
+    assert default["name"] == "Copycast" and request["bucket_id"] == default["id"]
 
     await runner.run_until_idle()
     items = structured(await mcp_client.call_tool("list_items", {"feed_id": default["id"]}))
@@ -150,36 +150,36 @@ async def test_add_to_inbox_defaults_and_prune(
 
     nothing = structured(
         await mcp_client.call_tool(
-            "prune_inbox", {"inbox": "Copycast", "prune": {"downloaded": True, "dry_run": True}}
+            "prune_bucket", {"bucket": "Copycast", "prune": {"downloaded": True, "dry_run": True}}
         )
     )
     assert nothing == {"matched": 0, "deleted_count": 0, "bytes_freed": 0, "dry_run": True}
     await container.services.record_download(default["id"], items["items"][0]["id"])
     pruned = structured(
         await mcp_client.call_tool(
-            "prune_inbox", {"inbox": "copycast", "prune": {"downloaded": True}}
+            "prune_bucket", {"bucket": "copycast", "prune": {"downloaded": True}}
         )
     )
     assert pruned["deleted_count"] == 1 and pruned["bytes_freed"] > 0
 
     created = structured(
         await mcp_client.call_tool(
-            "create_inbox", {"inbox": {"name": "Later", "autoprune_days": 3}}
+            "create_bucket", {"bucket": {"name": "Later", "autoprune_days": 3}}
         )
     )
     assert created["name"] == "Later" and created["autoprune_days"] == 3
     renamed = structured(
         await mcp_client.call_tool(
-            "update_inbox", {"inbox_id": created["id"], "patch": {"name": "Sooner"}}
+            "update_bucket", {"bucket_id": created["id"], "patch": {"name": "Sooner"}}
         )
     )
     assert renamed["name"] == "Sooner"
     routed = structured(
-        await mcp_client.call_tool("add_to_inbox", {"request": {"url": url}, "inbox": "sooner"})
+        await mcp_client.call_tool("add_to_bucket", {"request": {"url": url}, "bucket": "sooner"})
     )
-    assert routed["inbox_id"] == created["id"]
+    assert routed["bucket_id"] == created["id"]
     with pytest.raises(ToolError) as missing:
-        await mcp_client.call_tool("add_to_inbox", {"request": {"url": url}, "inbox": "nowhere"})
+        await mcp_client.call_tool("add_to_bucket", {"request": {"url": url}, "bucket": "nowhere"})
     assert "[not-found]" in str(missing.value)
 
 
@@ -205,7 +205,7 @@ async def test_delete_feed_requires_confirm(
         await mcp_client.call_tool("get_feed", {"feed_id": mirror["id"]})
     assert "[not-found]" in str(gone.value)
 
-    default = structured(await mcp_client.call_tool("list_feeds", {"kind": "inbox"}))["feeds"][0]
+    default = structured(await mcp_client.call_tool("list_feeds", {"kind": "bucket"}))["feeds"][0]
     with pytest.raises(ToolError) as protected:
         await mcp_client.call_tool("delete_feed", {"feed_id": default["id"], "confirm": True})
     assert "[conflict]" in str(protected.value)
@@ -264,10 +264,10 @@ async def test_search_videos_tool(mcp_client: Client[Any], engine: FakeEngine) -
     assert [r["url"] for r in result["results"]] == ["https://www.youtube.com/watch?v=abc123"]
     tools = {tool.name: tool for tool in await mcp_client.list_tools()}
     assert (tools["search_videos"].meta or {})["capability"] == "search_videos"
-    assert "add_to_inbox" in (tools["search_videos"].description or "")
+    assert "add_to_bucket" in (tools["search_videos"].description or "")
 
 
-async def test_serial_inbox_from_uploads(
+async def test_serial_bucket_from_uploads(
     mcp_client: Client[Any], client: httpx.AsyncClient, tmp_path: Path
 ) -> None:
     ids: list[str] = []
@@ -282,11 +282,11 @@ async def test_serial_inbox_from_uploads(
         assert read["state"] == "received" and read["tags"]["title"] == name
         ids.append(staged["id"])
 
-    inbox = structured(
+    bucket = structured(
         await mcp_client.call_tool(
-            "create_serial_inbox",
+            "create_serial_bucket",
             {
-                "inbox": {
+                "bucket": {
                     "name": "Audiobook",
                     "number_titles": False,
                     "episodes": [
@@ -297,10 +297,35 @@ async def test_serial_inbox_from_uploads(
             },
         )
     )
-    assert inbox["serial"] is True and inbox["episode_count"] == 2
-    items = structured(await mcp_client.call_tool("list_items", {"feed_id": inbox["id"]}))
+    assert bucket["serial"] is True and bucket["episode_count"] == 2
+    items = structured(await mcp_client.call_tool("list_items", {"feed_id": bucket["id"]}))
     assert [item["title"] for item in items["items"]] == ["Two", "One"]  # newest first
     assert all(item["state"] == "archived" for item in items["items"])
 
     with pytest.raises(ToolError):
         await mcp_client.call_tool("create_upload", {"upload": {"filename": "a.wav"}})
+
+
+async def test_add_uploads_to_an_existing_bucket(
+    mcp_client: Client[Any], client: httpx.AsyncClient, tmp_path: Path
+) -> None:
+    ids: list[str] = []
+    for name in ("Chapter 10.mp3", "Chapter 9.mp3"):
+        staged = structured(
+            await mcp_client.call_tool("create_upload", {"upload": {"filename": name}})
+        )
+        put = await client.put(
+            urlsplit(staged["upload_url"]).path, content=tagged_mp3(tmp_path, name)
+        )
+        assert put.status_code == 200, put.text
+        ids.append(staged["id"])
+
+    bucket = structured(
+        await mcp_client.call_tool(
+            "add_uploads", {"bucket": "Copycast", "uploads": {"upload_ids": ids}}
+        )
+    )
+    assert bucket["serial"] is False and bucket["episode_count"] == 2
+    items = structured(await mcp_client.call_tool("list_items", {"feed_id": bucket["id"]}))
+    titles = [item["title"] for item in items["items"]]
+    assert titles == ["Chapter 10", "Chapter 9"]  # newest first: 9 arrived before 10

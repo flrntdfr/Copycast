@@ -7,7 +7,7 @@ import { StorageDot } from "@/components/common/StorageDot";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { count } from "@/lib/labels";
 
-/** A captured YouTube playlist among the Inboxes: storage dot, name, sync status, Episode count. */
+/** A captured YouTube playlist among the Buckets: storage dot, name, sync status, Episode count. */
 export function CaptureFeedCard({ feed }: { feed: MirrorRead }) {
   return (
     <Link

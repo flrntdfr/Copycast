@@ -1,7 +1,7 @@
 # Operating Copycast
 
 This is the runbook: first run, configuration, Kubernetes, backup and restore, rebuilding the
-database from disk, and engine bumps and rollbacks. The product language (Mirror, Inbox,
+database from disk, and engine bumps and rollbacks. The product language (Mirror, Bucket,
 Refresh, ...) is defined in [AGENTS.md](../AGENTS.md).
 
 ## Shape of a deployment
@@ -130,8 +130,8 @@ Apple Podcasts fetches the feed but not the audio.
 
 **API keys.** Minted and revoked on the *API keys* page (`/api/keys`), shown once, stored as a
 SHA-256 digest, with a scope: `read` (read-only tools), `write` (everything but deletions) or
-`full` (everything, including `delete_feed`, `delete_item`, `prune_inbox`, and setting an
-Inbox's Retention through `create_inbox` or `update_inbox`, since autoprune deletes). Every tool
+`full` (everything, including `delete_feed`, `delete_item`, `prune_bucket`, and setting a
+Bucket's Retention through `create_bucket` or `update_bucket`, since autoprune deletes). Every tool
 checks the scope before running and refuses with a `ToolError` naming the scope it needs.
 `last_used_at` is updated at most once a minute per key. Keys cannot mint keys: the key
 capabilities have no MCP tools. For Claude Code:
@@ -202,7 +202,7 @@ without `backfill`.
 
 An Episode flagged **Archive** (the archive button on its Catalog row, `PUT
 /api/feeds/{id}/items/{item}/archive-flag`, the `set_archive_flag` tool) is kept for good:
-Ephemeral and Inbox Retention, a Rolling window and Sync skip it. The admin purge does not.
+Ephemeral and Bucket Retention, a Rolling window and Sync skip it. The admin purge does not.
 
 Switching modes previews the change (`POST /api/mirrors/{id}/preview`) and asks for
 confirmation when archived Episodes would be deleted; rolled-out and expired Episodes leave
@@ -245,9 +245,9 @@ that is later, but never past the job's 48 h ceiling) without counting an attemp
 goes back to *Queued* with the reason as its last error and the badge explaining why, and this
 repeats for up to 48 h after the job was created; then the job and the item fail for good
 ("still not published after 48 h") and *Retry N failed* starts the wait over. A stream pushed
-into an Inbox as a Request is wanted at once whatever its status, because an Inbox has no
+into a Bucket as a Request is wanted at once whatever its status, because a Bucket has no
 Refresh that would notice the recording later: the row shows *Queued* with the *Live* or
-*Upcoming* badge and its archive job waits as above (`add_to_inbox` of a stream on air archives
+*Upcoming* badge and its archive job waits as above (`add_to_bucket` of a stream on air archives
 the recording once YouTube publishes it). YouTube lists nothing for a stream or premiere that
 has not started, so a Request for one alone fails at expansion with YouTube's own reason ("This
 live event will begin in 2 hours"): push it again once it is live or recorded; a playlist
@@ -282,7 +282,7 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   The check is skipped while the Mirror is Paused and within the cooldown
   (`refresh.fetch_cooldown_minutes`, 5 by default) after any Refresh, full or light; it is
   capped at 8 s, after which the feed is served as it is and the run is recorded as failed. A
-  Source error never degrades the feed either. `HEAD` requests and Inbox feeds never check.
+  Source error never degrades the feed either. `HEAD` requests and Bucket feeds never check.
   The Mirror header shows *Checked on fetch*; the runs are `refresh_runs` rows flagged `light`
   and never touch the Mirror's health, `last_error` or its last-Refresh stamps. Only a full
   Refresh (scheduled or *Refresh now*) Delists a channel's items.
@@ -292,13 +292,19 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   from). `probe_source` and `create_mirror` accept both, so agents can too.
 - **Playlists kept in sync.** A Mirror with *Stay in sync with the Source* deletes an Episode
   when its item leaves the Source instead of Delisting it (a Tombstone, so the video comes back
-  as Available if re-added). The *Capture a YouTube playlist* dropdown of the Inboxes lists the
+  as Available if re-added). The *Capture a YouTube playlist* dropdown of the Buckets lists the
   signed-in account's playlists through the engine when it opens (`GET /api/youtube/playlists`,
   the cookie file required, Watch Later first) and captures any of them with a click: a synced
-  Mirror in Automatic mode flagged `playlist_capture`, which is listed among the Inboxes rather
+  Mirror in Automatic mode flagged `playlist_capture`, which is listed among the Buckets rather
   than with the Mirrors. Agents get the same through `list_youtube_playlists` and `create_mirror`.
-- **The Feeds page** (`/`) lists every Feed: the Mirrors table first, then the Inboxes and the
-  captured playlists. `/mirrors` and `/inboxes` redirect there.
+- **The Feeds page** (`/`) lists every Feed: the Mirrors table first, then the Buckets and the
+  captured playlists. `/mirrors` and `/buckets` redirect there, and so do the `/inboxes` links
+  from before Inboxes were renamed Buckets (ADR 0018).
+- **Uploading files into a Bucket**: *Upload files…* on a Bucket's page takes mp3, m4a and m4b
+  files, sends them one by one in natural file-name order (Part 2 before Part 10) with a
+  progress bar each, then adds them as archived Episodes dated by arrival, one second apart
+  (`create_upload`, the `PUT` to its `upload_url`, then `add_uploads`). Agents use the same
+  three steps; `create_serial_bucket` stays the way to publish a work in an order they choose.
 - **Adding a Source** happens in a dialog from the Feeds page bar (a URL, an Apple Podcasts or
   Spotify link, or a name to search) or the command palette; the Mirror takes the operator's
   default policy, changed afterwards in its Settings tab.
@@ -341,7 +347,7 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   Mirror Feed and MCP and survives Refreshes (`title_override`; the Source's title stays in
   `source_title`); *Use Source title* clears it.
 - Artwork assets (`/feeds/{id}/assets/*.artwork.*`) and the Copycast logo
-  (`/feeds/copycast-artwork.png`, the artwork of an Inbox feed without its own) answer without
+  (`/feeds/copycast-artwork.png`, the artwork of a Bucket feed without its own) answer without
   credentials even while authentication is on: podcast apps fetch images bare, and the URLs
   stay unguessable. Media, feeds, chapters and transcripts keep the feed's pair.
 - `/robots.txt` disallows everything and every response carries
@@ -355,11 +361,11 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
 The Settings page saves every change as it is made, with no Save button. *Authentications*
 shows YouTube, Twitch, Vimeo and Mixcloud with a green check once a stored cookie file covers
 them (see below). *Buckets* lists every Feed's storage, the Mirrors in the Feeds page's order,
-then the Inboxes and captured playlists, each with its size and a trash button. A bucket
+then the Buckets and captured playlists, each with its size and a trash button. A bucket
 holding Episodes flagged Archive warns first and offers *Delete the rest* (`POST
 /api/feeds/{id}/clear`, the `clear_feed` tool: a dry run by default, it deletes every archived
 Episode not kept for good and keeps the feed) next to *Delete everything*. Every Episode of a
-Mirror on the Archive policy counts as kept. The default Inbox can only be emptied.
+Mirror on the Archive policy counts as kept. The default Bucket can only be emptied.
 
 The *Mirrors* half holds defaults that live in the data directory (`data/engine/defaults.json`,
 `PUT /api/settings/defaults`) rather than in the environment, because they are policy the
@@ -377,12 +383,12 @@ diverges from the default, and offers *Use default*, which clears the override (
 `null`). Changing a default applies from each Mirror's next Refresh. Both capabilities have
 routes but no MCP tools.
 
-Engine-sourced Episodes (YouTube, SoundCloud, Inbox Requests) carry the Source's page URL at
+Engine-sourced Episodes (YouTube, SoundCloud, Bucket Requests) carry the Source's page URL at
 the end of their description, since most podcast apps never show the item's `<link>`.
 
 `search_videos` (`GET /api/search/videos`, an MCP tool, and the wizard's search step) finds
 videos on YouTube through the engine; an agent asked for "the last WWDC live from Gruber"
-searches, picks the newest hit and pushes its URL with `add_to_inbox`.
+searches, picks the newest hit and pushes its URL with `add_to_bucket`.
 
 ## YouTube and other sites that need a login
 
@@ -470,7 +476,7 @@ worker before touching files under `data/feeds/*/media`.
 `copycast rebuild` reconstructs feeds, items, assets and requests from `feed.json` and the
 sidecars, reconciles `media/` with the item rows (audio present ⇒ archived; file without a
 row ⇒ a row from its `.info.json` / `.item.xml`), stats the assets, recounts storage and
-recreates the default Inbox. It is idempotent and refuses to run while the worker holds its
+recreates the default Bucket. It is idempotent and refuses to run while the worker holds its
 lock, so stop the worker first.
 
 ```bash
@@ -523,7 +529,7 @@ To bump something by hand: `uv add "name==x.y.z"` (never edit the `==` pin witho
 ## Logs and events
 
 Both processes log structured lines (JSON in the image) with `process`, `request_id`
-(echoed as `X-Request-ID`), `job_id`, `mirror_id` and `inbox_id` bound where applicable.
+(echoed as `X-Request-ID`), `job_id`, `mirror_id` and `bucket_id` bound where applicable.
 Job progress and state changes are also streamed to the UI over `GET /api/events` (SSE) and
 stored per job in `job_log_lines` for the Jobs page.
 

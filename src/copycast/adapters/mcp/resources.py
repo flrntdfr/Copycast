@@ -20,7 +20,7 @@ def register_resources(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         return report.model_dump_json()
 
     async def feeds() -> str:
-        """Every Feed (Mirrors and Inboxes) with its feed_url."""
+        """Every Feed (Mirrors and Buckets) with its feed_url."""
         page = await container.services.list_feeds()
         return page.model_dump_json()
 

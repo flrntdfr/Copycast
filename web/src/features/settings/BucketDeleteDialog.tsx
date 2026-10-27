@@ -2,7 +2,7 @@ import { Loader2, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 
 import { $api } from "@/api/client";
-import { isInbox, type FeedRead } from "@/api/types";
+import { isBucket, type FeedRead } from "@/api/types";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -21,7 +21,7 @@ import { useClearFeed } from "./mutations";
 /**
  * The trash button's confirmation. A dry run of clearing the bucket says what is flagged
  * Archive: with nothing flagged it is the plain "delete the Feed" question; with flagged
- * Episodes it warns and offers to delete only the rest. The default Inbox is never deleted,
+ * Episodes it warns and offers to delete only the rest. The default Bucket is never deleted,
  * only emptied.
  */
 export function BucketDeleteDialog({
@@ -51,8 +51,8 @@ function Body({ feed, onClose }: { feed: FeedRead; onClose: () => void }) {
   const { deleteFeed, isPending: deletingFeed } = useDeleteFeed();
   const [error, setError] = useState<string | null>(null);
   const busy = clear.isPending || deletingFeed;
-  const fixed = isInbox(feed) && feed.is_default;
-  const noun = isInbox(feed) ? "Inbox" : "Mirror";
+  const fixed = isBucket(feed) && feed.is_default;
+  const noun = isBucket(feed) ? "Bucket" : "Mirror";
   const kept = preview.data?.kept_count ?? 0;
   const rest = preview.data?.matched ?? 0;
   const warn = kept > 0;
@@ -74,7 +74,7 @@ function Body({ feed, onClose }: { feed: FeedRead; onClose: () => void }) {
       <AlertDialogHeader>
         <AlertDialogTitle className="flex items-center gap-2">
           {warn ? <TriangleAlert className="size-5 text-warning" aria-hidden /> : null}
-          {fixed ? `Empty the Inbox “${feed.title}”?` : `Delete ${noun} “${feed.title}”?`}
+          {fixed ? `Empty the Bucket “${feed.title}”?` : `Delete ${noun} “${feed.title}”?`}
         </AlertDialogTitle>
         <AlertDialogDescription asChild>
           <div className="space-y-2">
@@ -98,7 +98,7 @@ function Body({ feed, onClose }: { feed: FeedRead; onClose: () => void }) {
               </>
             ) : fixed ? (
               <p>
-                The default Inbox cannot be deleted. Emptying it removes its{" "}
+                The default Bucket cannot be deleted. Emptying it removes its{" "}
                 {count(rest, "Episode")} ({formatMegabytes(preview.data?.bytes_freed)}) and keeps
                 the feed.
               </p>
@@ -122,7 +122,7 @@ function Body({ feed, onClose }: { feed: FeedRead; onClose: () => void }) {
             onClick={clearRest}
           >
             {clear.isPending ? <Loader2 className="animate-spin" /> : null}
-            {fixed && !warn ? "Empty the Inbox" : "Delete the rest"}
+            {fixed && !warn ? "Empty the Bucket" : "Delete the rest"}
           </Button>
         ) : null}
         {fixed ? null : (

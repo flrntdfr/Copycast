@@ -91,17 +91,17 @@ async def test_json_responses_are_no_store(client: httpx.AsyncClient) -> None:
     assert body["version"] == APP_VERSION
     assert body["engine"]["name"] == "fake-engine"
     assert body["layout_version"] == "1"
-    assert body["totals"]["feeds"] == 1  # the default Inbox
+    assert body["totals"]["feeds"] == 1  # the default Bucket
 
 
-async def test_default_inbox_exists_after_lifespan(client: httpx.AsyncClient) -> None:
-    response = await client.get(api("/inboxes"))
+async def test_default_bucket_exists_after_lifespan(client: httpx.AsyncClient) -> None:
+    response = await client.get(api("/buckets"))
     assert response.status_code == 200
     feeds = response.json()["feeds"]
     assert len(feeds) == 1
-    inbox = feeds[0]
-    assert inbox["kind"] == "inbox" and inbox["name"] == "Copycast"
-    assert inbox["feed_url"].endswith(f"/feeds/{inbox['id']}.xml")
+    bucket = feeds[0]
+    assert bucket["kind"] == "bucket" and bucket["name"] == "Copycast"
+    assert bucket["feed_url"].endswith(f"/feeds/{bucket['id']}.xml")
 
 
 async def test_mcp_is_mounted_stateless(client: httpx.AsyncClient) -> None:
@@ -121,7 +121,7 @@ async def test_mcp_is_mounted_stateless(client: httpx.AsyncClient) -> None:
     else:
         message = response.json()
     names = {tool["name"] for tool in message["result"]["tools"]}
-    assert {"search_podcasts", "create_mirror", "add_to_inbox", "delete_feed"} <= names
+    assert {"search_podcasts", "create_mirror", "add_to_bucket", "delete_feed"} <= names
 
 
 async def test_status_without_a_worker(client: httpx.AsyncClient) -> None:

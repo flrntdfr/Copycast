@@ -68,7 +68,7 @@ export function MirrorsTable(props: MirrorsTableProps) {
     params: { query: { kind: "mirror", sort, order } },
   });
   const refreshing = useRunningRefreshFeedIds();
-  // Playlist captures are listed with the Inboxes, below the Mirrors.
+  // Playlist captures are listed with the Buckets, below the Mirrors.
   const mirrors: MirrorRead[] = (query.data?.feeds ?? [])
     .filter(isMirror)
     .filter((feed) => !feed.playlist_capture);

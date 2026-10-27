@@ -9,17 +9,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-/** Push one URL into an Inbox (`add_request`). */
+/** Push one URL into a Bucket (`add_request`). */
 export function AddRequestForm({
-  inboxId,
+  bucketId,
   initialUrl = "",
 }: {
-  inboxId: string;
+  bucketId: string;
   initialUrl?: string;
 }) {
   const [url, setUrl] = useState(initialUrl);
   const queryClient = useQueryClient();
-  const mutation = $api.useMutation("post", "/api/inboxes/{inbox_id}/requests", {
+  const mutation = $api.useMutation("post", "/api/buckets/{bucket_id}/requests", {
     onSuccess: (request) => {
       toast.success("Request queued", { description: request.url });
       setUrl("");
@@ -28,11 +28,11 @@ export function AddRequestForm({
         queryKey: [
           OPS.list_requests[0],
           OPS.list_requests[1],
-          { params: { path: { inbox_id: inboxId } } },
+          { params: { path: { bucket_id: bucketId } } },
         ],
       });
       void queryClient.invalidateQueries({
-        queryKey: [OPS.get_feed[0], OPS.get_feed[1], { params: { path: { feed_id: inboxId } } }],
+        queryKey: [OPS.get_feed[0], OPS.get_feed[1], { params: { path: { feed_id: bucketId } } }],
       });
     },
   });
@@ -40,7 +40,7 @@ export function AddRequestForm({
     event.preventDefault();
     const trimmed = url.trim();
     if (!trimmed) return;
-    mutation.mutate({ params: { path: { inbox_id: inboxId } }, body: { url: trimmed } });
+    mutation.mutate({ params: { path: { bucket_id: bucketId } }, body: { url: trimmed } });
   };
   return (
     <form onSubmit={submit} className="flex flex-col gap-1.5">

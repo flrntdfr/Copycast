@@ -136,9 +136,9 @@ def runner(container: Container) -> Iterator[Runner]:
 
 
 @pytest.fixture
-async def default_inbox(container: Container) -> AsyncIterator[str]:
-    inbox = await container.services.ensure_default_inbox()
-    yield inbox.id
+async def default_bucket(container: Container) -> AsyncIterator[str]:
+    bucket = await container.services.ensure_default_bucket()
+    yield bucket.id
 
 
 def uow(container: Container) -> UnitOfWork:

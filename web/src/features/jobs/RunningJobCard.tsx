@@ -43,9 +43,11 @@ export function RunningJobCard({
                 <span aria-hidden>·</span>
                 {job.feed_id && episodeTitle ? (
                   <Link
-                    to={feed?.kind === "inbox" ? "/inboxes/$inboxId" : "/mirrors/$mirrorId"}
+                    to={feed?.kind === "bucket" ? "/buckets/$bucketId" : "/mirrors/$mirrorId"}
                     params={
-                      feed?.kind === "inbox" ? { inboxId: job.feed_id } : { mirrorId: job.feed_id }
+                      feed?.kind === "bucket"
+                        ? { bucketId: job.feed_id }
+                        : { mirrorId: job.feed_id }
                     }
                     search={{ q: episodeTitle }}
                     className="truncate hover:underline"
@@ -62,8 +64,8 @@ export function RunningJobCard({
               <>
                 <span aria-hidden>·</span>
                 <Link
-                  to="/inboxes/$inboxId"
-                  params={{ inboxId: job.feed_id }}
+                  to="/buckets/$bucketId"
+                  params={{ bucketId: job.feed_id }}
                   search={{ tab: "requests" }}
                   className="hover:underline"
                 >

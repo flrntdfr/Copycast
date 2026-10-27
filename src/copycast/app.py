@@ -340,7 +340,7 @@ class FeedHead:
 
 @dataclass(frozen=True, slots=True)
 class RenderedFeedDocument:
-    """A rendered Mirror or Inbox Feed (``adapters.feeds.render.RenderedFeed`` re-shaped)."""
+    """A rendered Mirror or Bucket Feed (``adapters.feeds.render.RenderedFeed`` re-shaped)."""
 
     body: bytes
     last_modified: datetime

@@ -68,7 +68,7 @@ describe("keysForEvent", () => {
     expect(keys[0]).toEqual([
       OPS.list_requests[0],
       OPS.list_requests[1],
-      { params: { path: { inbox_id: "in1" } } },
+      { params: { path: { bucket_id: "in1" } } },
     ]);
   });
 

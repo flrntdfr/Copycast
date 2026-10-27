@@ -7,7 +7,12 @@ from enum import StrEnum
 
 class FeedKind(StrEnum):
     mirror = "mirror"
-    inbox = "inbox"
+    bucket = "bucket"
+
+    @classmethod
+    def _missing_(cls, value: object) -> FeedKind | None:
+        # A Bucket was called an Inbox before ADR 0018, and an old `feed.json` may still say so.
+        return cls.bucket if value == "inbox" else None
 
 
 class SourceKind(StrEnum):

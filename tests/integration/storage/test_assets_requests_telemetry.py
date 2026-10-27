@@ -21,7 +21,14 @@ from copycast.domain.enums import (
 )
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import asset_id
-from tests.integration.storage.conftest import NOW, asset_row, inbox_row, item_row, mirror_row, seed
+from tests.integration.storage.conftest import (
+    NOW,
+    asset_row,
+    bucket_row,
+    item_row,
+    mirror_row,
+    seed,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -112,11 +119,11 @@ async def test_asset_marks_lookups_and_deletion(uow_factory: UnitOfWorkFactory) 
 
 async def test_requests_lifecycle(uow_factory: UnitOfWorkFactory) -> None:
     async with uow_factory() as uow:
-        inbox = await uow.feeds.add(inbox_row())
-        other = await uow.feeds.add(inbox_row("Other"))
-        items = [item_row(inbox, 1), item_row(inbox, 2)]
+        bucket = await uow.feeds.add(bucket_row())
+        other = await uow.feeds.add(bucket_row("Other"))
+        items = [item_row(bucket, 1), item_row(bucket, 2)]
         await seed(uow, *items)
-        request = await uow.requests.add(inbox.id, "https://x.example/playlist", RequestedVia.mcp)
+        request = await uow.requests.add(bucket.id, "https://x.example/playlist", RequestedVia.mcp)
         assert request.status == "queued" and request.item_count == 0
         assert (await uow.requests.require(request.id)).id == request.id
         with pytest.raises(NotFound):
@@ -135,15 +142,15 @@ async def test_requests_lifecycle(uow_factory: UnitOfWorkFactory) -> None:
         assert await uow.requests.request_ids_for_items([]) == {}
         await uow.requests.mark_expanded(request.id, 2, at=NOW)
         assert (request.status, request.item_count, request.expanded_at) == ("expanded", 2, NOW)
-        failed = await uow.requests.add(inbox.id, "https://x.example/rss", RequestedVia.ui)
+        failed = await uow.requests.add(bucket.id, "https://x.example/rss", RequestedVia.ui)
         await uow.requests.mark_failed(failed.id, "use create_mirror")
         assert (failed.status, failed.error) == ("failed", "use create_mirror")
         # Both rows share the transaction's created_at, so only the set is deterministic.
-        assert {r.id for r in await uow.requests.for_feed(inbox.id)} == {request.id, failed.id}
-        page, total = await uow.requests.list_page(inbox.id, limit=1)
+        assert {r.id for r in await uow.requests.for_feed(bucket.id)} == {request.id, failed.id}
+        page, total = await uow.requests.list_page(bucket.id, limit=1)
         assert total == 2 and len(page) == 1
-        counts = await uow.requests.count_for_feeds([inbox.id, other.id])
-        assert counts == {inbox.id: 2, other.id: 0}
+        counts = await uow.requests.count_for_feeds([bucket.id, other.id])
+        assert counts == {bucket.id: 2, other.id: 0}
         assert await uow.requests.count_for_feeds([]) == {}
 
 

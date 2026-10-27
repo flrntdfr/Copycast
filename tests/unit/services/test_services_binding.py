@@ -37,10 +37,10 @@ def test_every_capability_has_a_service_and_a_bound_method() -> None:
     bound = services.build_services(SimpleNamespace())  # type: ignore[arg-type]
     for name in CAPABILITY_NAMES - INTERNAL - {"subscribe_events"}:
         assert callable(getattr(bound, name)), name
-    assert callable(bound.ensure_default_inbox) and callable(bound.resolve_inbox)
+    assert callable(bound.ensure_default_bucket) and callable(bound.resolve_bucket)
     assert CAPABILITIES["create_mirror"].request_model is MirrorCreate
     assert CAPABILITIES["select_items"].request_model is SelectionRequest
-    assert CAPABILITIES["prune_inbox"].request_model is PruneRequest
+    assert CAPABILITIES["prune_bucket"].request_model is PruneRequest
     assert CAPABILITIES["delete_feed"].destructive
     assert CAPABILITIES["about"].description.startswith("Versions and totals")
 

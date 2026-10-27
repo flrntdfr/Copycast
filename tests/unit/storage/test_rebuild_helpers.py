@@ -179,7 +179,7 @@ def test_draft_from_sidecars_prefers_item_xml(data_dir: Path) -> None:
 def test_restored_public_ext_mirrors_migration_0010(data_dir: Path) -> None:
     """As written; else the media file's (the URL apps hold); else by Source kind alone,
     the rule migration 0010 applied to pre-1.3 rows in Postgres: mp3 for RSS (the 1.2
-    placeholder), m4a for an Engine Source and for an Inbox."""
+    placeholder), m4a for an Engine Source and for a Bucket."""
     layout = Layout(data_dir)
     layout.ensure_feed_dirs(FEED)
     stamp = datetime(2024, 1, 1, tzinfo=UTC)

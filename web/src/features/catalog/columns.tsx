@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 export interface CatalogColumnContext {
   feedId: string;
   feedTitle: string;
-  feedKind: "mirror" | "inbox";
+  feedKind: "mirror" | "bucket";
   /** The Mirror's effective minimum length, and where it comes from; null when none. */
   minimum?: { seconds: number; source: "mirror" | "default" } | null;
   /** Shift-click range selection needs the last row toggled. */

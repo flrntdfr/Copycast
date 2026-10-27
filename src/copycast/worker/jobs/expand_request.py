@@ -1,11 +1,11 @@
-"""The expand job: turn one Inbox Request into Catalog items and archive jobs.
+"""The expand job: turn one Bucket Request into Catalog items and archive jobs.
 
 A podcast feed URL is refused ("use create_mirror"); a URL serving
 ``audio/*`` or ``video/*`` becomes one item; anything else is listed by the
 Engine (leaves capped at 1000). Every leaf is upserted ``wanted`` with
 ``wanted_reason=request`` (a deleted row flips back), linked to the Request
 and queued for archiving: a stream that is upcoming or live included, since
-an Inbox has no Refresh to notice its recording later, so its archive job
+a Bucket has no Refresh to notice its recording later, so its archive job
 waits for the recording (``NotReady``) instead.
 """
 
@@ -106,7 +106,7 @@ def want_streams(listing: SourceListing) -> SourceListing:
 
     A listing marks an upcoming or live stream not archivable so no policy
     wants it before its recording exists; a Mirror's next Refresh flips it.
-    A Request is an explicit push into an Inbox, which never Refreshes, so
+    A Request is an explicit push into a Bucket, which never Refreshes, so
     the item is wanted at once and its archive job waits for the recording
     (``NotReady``: 30 minutes between tries, for up to 48 h) like any archive
     that meets a stream. The status itself is kept so the UI says why.
@@ -141,9 +141,9 @@ def expand(
 
 
 async def relist_hidden(uow: UnitOfWork, feed_id: str) -> int:
-    """Undo the delisting ``upsert_listing`` applies to Inbox rows absent from one Request.
+    """Undo the delisting ``upsert_listing`` applies to Bucket rows absent from one Request.
 
-    An Inbox has no Source listing: every Request adds items, so the only rows
+    A Bucket has no Source listing: every Request adds items, so the only rows
     that stay hidden are the tombstones (``deleted``).
     """
     result = await uow.session.execute(
@@ -169,8 +169,8 @@ async def run(ctx: JobContext) -> JobOutcome:
     async with ctx.uow() as uow:
         request = await uow.requests.require(request_id)
         feed = await uow.feeds.require(request.feed_id)
-        if feed.kind != FeedKind.inbox:
-            raise PermanentError(f"feed {feed.id!r} is not an Inbox")
+        if feed.kind != FeedKind.bucket:
+            raise PermanentError(f"feed {feed.id!r} is not a Bucket")
         feed_id, url = feed.id, request.url
         options = engine_options_for(
             ctx.container.settings,

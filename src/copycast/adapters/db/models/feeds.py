@@ -1,4 +1,4 @@
-"""The ``feeds`` table: one row per Mirror or Inbox."""
+"""The ``feeds`` table: one row per Mirror or Bucket."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from copycast.domain.enums import BackfillMode, FeedKind, SourceKind
 KIND_SHAPE = (
     "(kind = 'mirror' AND source_url IS NOT NULL AND source_dedup_key IS NOT NULL "
     "AND source_kind IS NOT NULL AND backfill_mode IS NOT NULL AND autoprune_days IS NULL) "
-    "OR (kind = 'inbox' AND source_url IS NULL AND source_dedup_key IS NULL "
+    "OR (kind = 'bucket' AND source_url IS NULL AND source_dedup_key IS NULL "
     "AND source_kind IS NULL AND backfill_mode IS NULL)"
 )
 
@@ -74,7 +74,7 @@ class Feed(TimestampMixin, Base):
     playlist_capture: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
-    """A YouTube playlist captured from the Inboxes: listed among them, not with the Mirrors."""
+    """A YouTube playlist captured from the Buckets: listed among them, not with the Mirrors."""
     follow: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true"), default=True
     )
@@ -86,11 +86,11 @@ class Feed(TimestampMixin, Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
     )
 
-    # Inbox only
+    # Bucket only
     serial: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
-    """A Serial Inbox: Episodes dated in the order given at creation, published as serial."""
+    """A Serial Bucket: Episodes dated in the order given at creation, published as serial."""
     autoprune_days: Mapped[int | None] = mapped_column(Integer)
     last_autoprune_at: Mapped[datetime | None] = mapped_column(TZDateTime)
 
@@ -143,8 +143,8 @@ class Feed(TimestampMixin, Base):
         return self.kind == FeedKind.mirror
 
     @property
-    def is_inbox(self) -> bool:
-        return self.kind == FeedKind.inbox
+    def is_bucket(self) -> bool:
+        return self.kind == FeedKind.bucket
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<Feed {self.id} {self.kind} {self.title!r}>"

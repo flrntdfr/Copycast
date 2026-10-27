@@ -1,7 +1,7 @@
 """``copycast worker``: startup sequence, WORKER_LOCK, heartbeat, health server, shutdown.
 
 Startup: layout version, schema (``COPYCAST_AUTO_MIGRATE``), the process-wide
-advisory lock (a second worker exits with a message), the default Inbox, the
+advisory lock (a second worker exits with a message), the default Bucket, the
 chapters files still in the Engine's shape rewritten as Podcasting 2.0, the
 engine version, then the claim loop, the scheduler, the 30 s heartbeat and the
 health endpoints on ``COPYCAST_WORKER_PORT``. SIGTERM/SIGINT drain the runner
@@ -71,7 +71,7 @@ async def main(settings: Settings, *, engine: Engine | None = None) -> int:
 
 async def _serve(container: Container, settings: Settings) -> int:
     worker_id = default_worker_id()
-    await container.services.ensure_default_inbox()
+    await container.services.ensure_default_bucket()
     await _upgrade_chapters(container.layout)
     version = await asyncio.to_thread(container.engine.version)
     async with uow_of(container.uow_factory()) as uow:

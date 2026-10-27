@@ -13,7 +13,7 @@ from typing import Any
 
 from copycast.application.models import (
     BackfillRequest,
-    InboxCreate,
+    BucketCreate,
     MirrorCreate,
     PruneRequest,
     RequestCreate,
@@ -139,8 +139,8 @@ def selection_request(
     )
 
 
-def inbox_create(name: str = "Later", autoprune_days: int | None = None) -> InboxCreate:
-    return InboxCreate(name=name, autoprune_days=autoprune_days)
+def bucket_create(name: str = "Later", autoprune_days: int | None = None) -> BucketCreate:
+    return BucketCreate(name=name, autoprune_days=autoprune_days)
 
 
 def request_create(url: str = "https://www.youtube.com/watch?v=dQw4w9WgXcQ") -> RequestCreate:

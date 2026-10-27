@@ -4,7 +4,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import type { ClearFeedResult, EngineCookiesWrite, FeedRead, MirrorDefaults } from "@/api/types";
-import { about, cookieFile, engineCookies, inbox, mirror, mirrorDefaults } from "@/test/factories";
+import { about, cookieFile, engineCookies, bucket, mirror, mirrorDefaults } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
@@ -22,7 +22,7 @@ function baseHandlers(feeds: FeedRead[] = []) {
 }
 
 describe("Settings page: Authentications", () => {
-  it("unlocks a service from a pasted cookie file and removes the file after confirmation", async () => {
+  it("unlocks a service from a picked cookie file and removes the file after confirmation", async () => {
     const state = {
       stored: engineCookies(),
       written: [] as EngineCookiesWrite[],
@@ -55,13 +55,12 @@ describe("Settings page: Authentications", () => {
     expect(screen.queryByLabelText("Locked")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add cookies.txt…" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Paste…" }));
-    const form = await screen.findByRole("form", { name: "Paste a cookie file" });
-    await user.type(within(form).getByLabelText("Name"), "youtube");
-    await user.click(within(form).getByLabelText("Cookie file (Netscape cookies.txt)"));
-    await user.paste(COOKIES);
-    await user.click(within(form).getByRole("button", { name: "Store cookies" }));
-    await waitFor(() => expect(state.written).toEqual([{ content: COOKIES, name: "youtube" }]));
+    expect(screen.queryByRole("button", { name: "Paste…" })).not.toBeInTheDocument();
+    await user.upload(
+      screen.getByLabelText("Pick a cookies.txt file"),
+      new File([COOKIES], "youtube.txt", { type: "text/plain" }),
+    );
+    await waitFor(() => expect(state.written).toEqual([{ content: COOKIES, name: "youtube.txt" }]));
     await waitFor(() => expect(youtube).toHaveAttribute("data-authenticated", "true"));
     expect(screen.getByTestId("cookie-file-youtube")).toHaveTextContent(
       "data/engine/cookies/youtube.txt",
@@ -156,8 +155,8 @@ describe("Settings page: Buckets", () => {
     playlist_capture: true,
     storage_bytes: 1_000_000,
   });
-  const box = inbox({ id: "i-default", title: "Copycast", is_default: true, storage_bytes: 0 });
-  const agent = inbox({ id: "i-agent", title: "Audiobooks", storage_bytes: 50_000_000 });
+  const box = bucket({ id: "i-default", title: "Copycast", is_default: true, storage_bytes: 0 });
+  const agent = bucket({ id: "i-agent", title: "Audiobooks", storage_bytes: 50_000_000 });
 
   function handlers(state: { cleared: boolean[]; deleted: string[] }, preview: ClearFeedResult) {
     return [
@@ -183,7 +182,7 @@ describe("Settings page: Buckets", () => {
     ];
   }
 
-  it("lists the Mirrors first, then the Inboxes and captured playlists, with sizes", async () => {
+  it("lists the Mirrors first, then the Buckets and captured playlists, with sizes", async () => {
     server.use(
       ...handlers(
         { cleared: [], deleted: [] },
@@ -252,7 +251,7 @@ describe("Settings page: Buckets", () => {
     const user = userEvent.setup();
     renderApp("/settings");
     await user.click(await screen.findByRole("button", { name: "Delete Audiobooks" }));
-    const dialog = await screen.findByRole("alertdialog", { name: "Delete Inbox “Audiobooks”?" });
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete Bucket “Audiobooks”?" });
     expect(await within(dialog).findByTestId("bucket-archive-warning")).toHaveTextContent(
       "1 Episode flagged Archive (10 MB)",
     );
@@ -263,7 +262,7 @@ describe("Settings page: Buckets", () => {
     expect(await screen.findByText("4 Episodes deleted")).toBeInTheDocument();
   });
 
-  it("never offers to delete the default Inbox, only to empty it", async () => {
+  it("never offers to delete the default Bucket, only to empty it", async () => {
     const state = { cleared: [] as boolean[], deleted: [] as string[] };
     server.use(
       ...handlers(state, {
@@ -278,9 +277,9 @@ describe("Settings page: Buckets", () => {
     const user = userEvent.setup();
     renderApp("/settings");
     await user.click(await screen.findByRole("button", { name: "Delete Copycast" }));
-    const dialog = await screen.findByRole("alertdialog", { name: "Empty the Inbox “Copycast”?" });
+    const dialog = await screen.findByRole("alertdialog", { name: "Empty the Bucket “Copycast”?" });
     expect(within(dialog).queryByRole("button", { name: /Delete/ })).not.toBeInTheDocument();
-    await user.click(await within(dialog).findByRole("button", { name: "Empty the Inbox" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Empty the Bucket" }));
     await waitFor(() => expect(state.cleared).toEqual([true, false]));
   });
 });

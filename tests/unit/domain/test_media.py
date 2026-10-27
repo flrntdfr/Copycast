@@ -62,7 +62,7 @@ from copycast.domain.media import (
         (SourceKind.rss, "text/html", "https://x/y.pdf", "mp3"),
         (SourceKind.rss, None, "https://x/y.zip", "mp3"),
         (SourceKind.rss, None, None, "mp3"),
-        # An Inbox (no Source) is filled by the Engine, unless the Request named a media file.
+        # A Bucket (no Source) is filled by the Engine, unless the Request named a media file.
         (None, None, None, "m4a"),
         (None, "audio/mpeg", None, "mp3"),
         (None, None, "https://x/talk.mp3", "mp3"),

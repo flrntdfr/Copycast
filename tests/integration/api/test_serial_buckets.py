@@ -1,4 +1,4 @@
-"""Uploads and Serial Inboxes through the API (ADR 0015)."""
+"""Uploads and Serial Buckets through the API (ADR 0015)."""
 
 from __future__ import annotations
 
@@ -64,14 +64,14 @@ async def test_upload_refuses_formats_and_non_audio(client: httpx.AsyncClient) -
     assert (await client.get(api("/uploads/nope"))).status_code == 404
 
 
-async def test_serial_inbox_plays_in_the_given_order(
+async def test_serial_bucket_plays_in_the_given_order(
     client: httpx.AsyncClient, tmp_path: Path
 ) -> None:
     names = ["c.mp3", "a.mp3", "b.mp3"]
     uploads = [await upload(client, n, tagged_mp3(tmp_path, n, title=n)) for n in names]
     pending = (await client.post(api("/uploads"), json={"filename": "z.mp3"})).json()
     refused = await client.post(
-        api("/serial-inboxes"),
+        api("/serial-buckets"),
         json={"name": "Voyage", "episodes": [{"upload_id": pending["id"], "title": "z"}]},
     )
     assert refused.status_code == 409
@@ -89,14 +89,14 @@ async def test_serial_inbox_plays_in_the_given_order(
         },
     ]
     created = await client.post(
-        api("/serial-inboxes"),
+        api("/serial-buckets"),
         json={"name": "Voyage", "author": "A. Writer", "episodes": episodes},
     )
     assert created.status_code == 201, created.text
-    inbox = created.json()
-    assert inbox["kind"] == "inbox" and inbox["serial"] is True and inbox["episode_count"] == 3
+    bucket = created.json()
+    assert bucket["kind"] == "bucket" and bucket["serial"] is True and bucket["episode_count"] == 3
 
-    feed = await client.get(FEED_URL(inbox["id"]))
+    feed = await client.get(FEED_URL(bucket["id"]))
     assert feed.status_code == 200
     channel = etree.fromstring(feed.content).find("channel")
     assert channel is not None
@@ -121,3 +121,35 @@ async def test_serial_inbox_plays_in_the_given_order(
 
     used = await client.get(api(f"/uploads/{uploads[0]['id']}"))
     assert used.status_code == 404
+
+
+async def test_uploads_join_a_bucket_in_natural_file_name_order(
+    client: httpx.AsyncClient, tmp_path: Path
+) -> None:
+    """ADR 0018: sorted by file name, Part 2 before Part 10, dated by arrival."""
+    files = {"Part 10.mp3": "Ten", "part 2.mp3": None, "Part 1.mp3": "One"}
+    uploads = [
+        await upload(client, name, tagged_mp3(tmp_path, name, **({"title": t} if t else {})))
+        for name, t in files.items()
+    ]
+    ids = [u["id"] for u in uploads]
+    pending = (await client.post(api("/uploads"), json={"filename": "z.mp3"})).json()
+    refused = await client.post(
+        api("/buckets/Copycast/uploads"), json={"upload_ids": [*ids, pending["id"]]}
+    )
+    assert refused.status_code == 409
+    missing = await client.post(api("/buckets/nope/uploads"), json={"upload_ids": ids})
+    assert missing.status_code == 404
+
+    added = await client.post(api("/buckets/copycast/uploads"), json={"upload_ids": ids})
+    assert added.status_code == 200, added.text
+    bucket = added.json()
+    assert bucket["serial"] is False and bucket["episode_count"] == 3
+
+    channel = etree.fromstring((await client.get(FEED_URL(bucket["id"]))).content).find("channel")
+    assert channel is not None and channel.findtext(f"{{{ITUNES}}}type") != "serial"
+    items = channel.findall("item")
+    assert [item.findtext("title") for item in items] == ["Ten", "part 2", "One"]  # newest first
+    dates = [parsedate_to_datetime(item.findtext("pubDate") or "") for item in items]
+    assert dates == sorted(dates, reverse=True) and len(set(dates)) == 3
+    assert (await client.get(api(f"/uploads/{ids[0]}"))).status_code == 404

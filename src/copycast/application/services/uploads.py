@@ -1,12 +1,13 @@
-"""Uploads and Serial Inboxes (ADR 0015).
+"""Uploads and Serial Buckets (ADR 0015).
 
 An upload is staged on disk, not in Postgres: ``create_upload`` writes
 ``uploads/<id>/upload.json`` with a digest of a one-time token and returns the
 upload URL; ``put_upload`` streams the bytes to ``uploads/<id>/file.<ext>`` and
-reads the file's tags; ``create_serial_inbox`` moves every named upload into a
-new Inbox as an archived Episode, in the order the agent gave, and removes the
-staging directory. Staged uploads older than :data:`UPLOAD_TTL` are swept on
-the next ``create_upload``.
+reads the file's tags; ``create_serial_bucket`` moves every named upload into a
+new Bucket as an archived Episode, in the order the agent gave, and removes the
+staging directory; ``add_uploads`` does the same into an existing Bucket, in
+natural file-name order, dated by arrival (ADR 0018). Staged uploads older
+than :data:`UPLOAD_TTL` are swept on the next ``create_upload``.
 """
 
 from __future__ import annotations
@@ -27,19 +28,22 @@ from copycast.application.capabilities import capability
 from copycast.application.events import FeedEvent
 from copycast.application.models import (
     AudioTags,
-    InboxRead,
+    BucketRead,
+    SerialBucketCreate,
     SerialEpisode,
-    SerialInboxCreate,
     UploadCreate,
     UploadRead,
+    UploadsAdd,
 )
+from copycast.application.services.buckets import bucket_read_for
 from copycast.application.services.context import ServiceContext
-from copycast.application.services.inboxes import inbox_read_for
+from copycast.application.services.feeds import require_bucket
 from copycast.domain.enums import ArchiveState, FeedKind, ListingOrder
 from copycast.domain.exceptions import Conflict, NotFound, Unsupported
-from copycast.domain.ids import inbox_id
+from copycast.domain.ids import bucket_id
 from copycast.domain.listing import SourceListing, SourceListingItem
 from copycast.domain.media import MPEG4_CONTAINERS, PODCAST_EXTS, mime_for_ext
+from copycast.domain.ordering import natural_key
 from copycast.domain.serial import SerialEntry, numbered_title, posting_dates, progress_notes
 from copycast.logging import get_logger
 
@@ -197,28 +201,37 @@ async def get_upload(ctx: ServiceContext, upload_id: str) -> UploadRead:
     return _read(ctx, _Staged(ctx.layout.uploads_dir, upload_id).load())
 
 
-def _duration(meta: dict[str, Any]) -> int | None:
+def _tags(meta: dict[str, Any]) -> AudioTags:
     tags = meta.get("tags")
-    return AudioTags.model_validate(tags).duration_seconds if tags is not None else None
+    return AudioTags.model_validate(tags) if tags is not None else AudioTags()
+
+
+def _duration(meta: dict[str, Any]) -> int | None:
+    return _tags(meta).duration_seconds
+
+
+def _received(root: Path, upload_ids: list[str]) -> list[tuple[_Staged, dict[str, Any], str]]:
+    """Each named upload with its metadata and served extension; 409 until its PUT."""
+    staged: list[tuple[_Staged, dict[str, Any], str]] = []
+    for upload_id in upload_ids:
+        upload = _Staged(root, upload_id)
+        meta = upload.load()
+        if meta["state"] != "received":
+            raise Conflict(f"upload {upload_id} has no file yet; PUT it first")
+        ext = served_ext(str(meta["filename"]))
+        assert ext is not None  # create_upload refused anything else
+        staged.append((upload, meta, ext))
+    return staged
 
 
 def _description(progress: str, episode: SerialEpisode) -> str:
     return f"{progress}\n\n{episode.description}" if episode.description else progress
 
 
-@capability("create_serial_inbox", request=SerialInboxCreate, response=InboxRead)
-async def create_serial_inbox(ctx: ServiceContext, body: SerialInboxCreate) -> InboxRead:
-    """A new Inbox holding the given uploads as Episodes, in exactly the given order."""
-    root = ctx.layout.uploads_dir
-    staged: list[tuple[_Staged, dict[str, Any], str]] = []
-    for episode in body.episodes:
-        upload = _Staged(root, episode.upload_id)
-        meta = upload.load()
-        if meta["state"] != "received":
-            raise Conflict(f"upload {episode.upload_id} has no file yet; PUT it first")
-        ext = served_ext(str(meta["filename"]))
-        assert ext is not None  # create_upload refused anything else
-        staged.append((upload, meta, ext))
+@capability("create_serial_bucket", request=SerialBucketCreate, response=BucketRead)
+async def create_serial_bucket(ctx: ServiceContext, body: SerialBucketCreate) -> BucketRead:
+    """A new Bucket holding the given uploads as Episodes, in exactly the given order."""
+    staged = _received(ctx.layout.uploads_dir, [episode.upload_id for episode in body.episodes])
 
     now = _now()
     durations = [_duration(meta) for _, meta, _ in staged]
@@ -264,8 +277,8 @@ async def create_serial_inbox(ctx: ServiceContext, body: SerialInboxCreate) -> I
     async with ctx.uow_factory() as uow:
         feed = await uow.feeds.add(
             ctx.rows.feed(
-                id=inbox_id(body.name),
-                kind=FeedKind.inbox.value,
+                id=bucket_id(body.name),
+                kind=FeedKind.bucket.value,
                 title=body.name,
                 author=body.author,
                 description=body.description,
@@ -296,8 +309,57 @@ async def create_serial_inbox(ctx: ServiceContext, body: SerialInboxCreate) -> I
         await uow.publish(FeedEvent(feed_id=feed.id, revision=revision, reason="created"))
         dirs = [upload.dir for upload, _, _ in staged]
         uow.after_commit(lambda: _remove_all(dirs))
-        read = await inbox_read_for(uow, ctx, feed)
-    log.info("serial_inbox.created", feed_id=read.id, episodes=total)
+        read = await bucket_read_for(uow, ctx, feed)
+    log.info("serial_bucket.created", feed_id=read.id, episodes=total)
+    return read
+
+
+@capability("add_uploads", request=UploadsAdd, response=BucketRead)
+async def add_uploads(ctx: ServiceContext, bucket: str, body: UploadsAdd) -> BucketRead:
+    """Received uploads as archived Episodes of an existing Bucket, in natural file-name order."""
+    staged = _received(ctx.layout.uploads_dir, body.upload_ids)
+    staged.sort(key=lambda entry: natural_key(str(entry[1]["filename"])))
+    now = _now()
+    layout = ctx.layout
+    async with ctx.uow_factory() as uow:
+        feed = await require_bucket(uow, bucket)
+        layout.ensure_feed_dirs(feed.id)
+        total = len(staged)
+        for index, (upload, meta, ext) in enumerate(staged):
+            # A Bucket dates Episodes by arrival: one second apart, the last one now.
+            arrived = now - timedelta(seconds=total - 1 - index)
+            tags = _tags(meta)
+            filename = str(meta["filename"])
+            item = SourceListingItem(
+                source_key=f"upload:{upload.id}",
+                title=tags.title or filename.rpartition(".")[0] or filename,
+                published_at=arrived,
+                duration_seconds=tags.duration_seconds,
+                author=tags.artist,
+                enclosure_url=f"file.{ext}",
+            )
+            listing = SourceListing(service=UPLOAD_SERVICE, title=feed.title, items=[item])
+            # partial: a Bucket has no listing to delist the rows it already holds against.
+            upsert = await uow.catalog.upsert_listing(feed.id, listing, now=arrived, partial=True)
+            [row] = await uow.catalog.get_many(upsert.seen_item_ids)
+            target = layout.media_path(feed.id, row.id, ext)
+            await asyncio.to_thread(os.replace, upload.file(meta), target)
+            await uow.catalog.mark_state(
+                row.id,
+                ArchiveState.archived,
+                media_path=layout.relative(feed.id, target),
+                media_mime=mime_for_ext(ext),
+                media_bytes=int(meta["size_bytes"]),
+                duration_seconds=row.duration_seconds,
+                archived_at=now,
+            )
+        await uow.feeds.recount_storage(feed.id)
+        _, revision = await uow.update_intent(feed.id)
+        await uow.publish(FeedEvent(feed_id=feed.id, revision=revision, reason="uploads"))
+        dirs = [upload.dir for upload, _, _ in staged]
+        uow.after_commit(lambda: _remove_all(dirs))
+        read = await bucket_read_for(uow, ctx, feed)
+    log.info("bucket.uploads_added", feed_id=read.id, episodes=total)
     return read
 
 
@@ -310,7 +372,8 @@ __all__ = [
     "MAX_UPLOAD_BYTES",
     "UPLOAD_PATH",
     "UPLOAD_TTL",
-    "create_serial_inbox",
+    "add_uploads",
+    "create_serial_bucket",
     "create_upload",
     "get_upload",
     "put_upload",

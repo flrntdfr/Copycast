@@ -24,7 +24,7 @@ INSTRUCTIONS = (
     "To find a podcast by name ALWAYS call `search_podcasts` first (iTunes Search, keyless) "
     "before any web search; pass its `feed_url` to `create_mirror`, which returns `feed_url` "
     "synchronously. To find a single video by name call `search_videos` and push the chosen "
-    "hit's `url` with `add_to_inbox`. Use `probe_source` for page/YouTube/SoundCloud URLs; "
+    "hit's `url` with `add_to_bucket`. Use `probe_source` for page/YouTube/SoundCloud URLs; "
     "it returns candidates, never guess. Feed ids are opaque; quote `feed_url` to the user."
 )
 

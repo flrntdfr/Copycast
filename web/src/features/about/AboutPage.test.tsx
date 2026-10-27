@@ -4,13 +4,13 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import { describeWorkerSeen, workerSeenOf } from "./worker-status";
-import { about, inbox, mirror, ready } from "@/test/factories";
+import { about, bucket, mirror, ready } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
 const feeds = [
   mirror({ id: "mirror-1", title: "Example Podcast", storage_bytes: 900_000_000 }),
-  inbox({ id: "inbox-1", name: "Copycast", title: "Copycast", storage_bytes: 12_000 }),
+  bucket({ id: "bucket-1", name: "Copycast", title: "Copycast", storage_bytes: 12_000 }),
 ];
 
 function handlers(readiness = ready(), readyStatus = 200) {
@@ -79,7 +79,7 @@ describe("AboutPage", () => {
       "href",
       "/mirrors/mirror-1",
     );
-    expect(rows[1]).toHaveTextContent("Inbox");
+    expect(rows[1]).toHaveTextContent("Bucket");
     expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute(
       "href",
       "https://github.com/flrntdfr/Copycast",

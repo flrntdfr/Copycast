@@ -36,7 +36,7 @@ EXPECTED_TABLES = {
     "engine_versions",
     "api_keys",
 }
-HEAD = "0013"
+HEAD = "0014"
 
 
 def _table_names(conn: Connection) -> set[str]:
@@ -179,7 +179,7 @@ async def test_0010_backfills_public_ext_from_the_media_file_else_the_source_kin
     db_engine: AsyncEngine,
 ) -> None:
     """Archived rows keep their file's extension (the URL apps hold); the rest follow the
-    Source: mp3 for RSS (the 1.2 placeholder), m4a for an Engine Source and for an Inbox.
+    Source: mp3 for RSS (the 1.2 placeholder), m4a for an Engine Source and for a Bucket.
     A media_path the extractor's pattern does not match (a dot only in a directory) falls
     through to the Source rule instead of aborting the upgrade with a NULL."""
     await downgrade_schema(db_engine, "0009")
@@ -235,3 +235,31 @@ async def test_0010_backfills_public_ext_from_the_media_file_else_the_source_kin
         "6666666666666666": "m4a",  # an Inbox is filled by the Engine (predicted_ext(None))
     }
     assert await schema_is_current(db_engine)
+
+
+async def test_0014_turns_inboxes_into_buckets(db_engine: AsyncEngine) -> None:
+    """The kind changes, the id and title stay; a downgrade turns them back."""
+    await downgrade_schema(db_engine, "0013")
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO feeds (id, kind, title, auth_username, auth_password) "
+                "VALUES ('inbox-old', 'inbox', 'Old', 'u', 'p')"
+            )
+        )
+    await ensure_schema(db_engine)
+    select = text("SELECT kind, title FROM feeds WHERE id = 'inbox-old'")
+    async with db_engine.connect() as conn:
+        assert tuple((await conn.execute(select)).one()) == ("bucket", "Old")
+    async with db_engine.begin() as conn:
+        with pytest.raises(Exception, match="ck_feeds_kind"):
+            await conn.execute(
+                text(
+                    "INSERT INTO feeds (id, kind, title, auth_username, auth_password) "
+                    "VALUES ('legacy', 'inbox', 'Legacy', 'u', 'p')"
+                )
+            )
+    await downgrade_schema(db_engine, "0013")
+    async with db_engine.connect() as conn:
+        assert tuple((await conn.execute(select)).one()) == ("inbox", "Old")
+    await ensure_schema(db_engine)

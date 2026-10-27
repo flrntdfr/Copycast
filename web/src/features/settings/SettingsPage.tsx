@@ -1,6 +1,6 @@
 import { PageHeader } from "@/components/common/PageHeader";
 import { AuthenticationsSection } from "./AuthenticationsSection";
-import { BucketsSection } from "./BucketsSection";
+import { StorageSection } from "./StorageSection";
 import { MirrorDefaultsSection } from "./MirrorDefaultsSection";
 
 /**
@@ -15,7 +15,7 @@ export function SettingsPage() {
         <AuthenticationsSection />
         <div className="grid gap-10 lg:grid-cols-2">
           <MirrorDefaultsSection />
-          <BucketsSection />
+          <StorageSection />
         </div>
       </div>
     </>

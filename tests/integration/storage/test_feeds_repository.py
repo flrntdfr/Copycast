@@ -1,4 +1,4 @@
-"""FeedRepository: default Inbox, counters, storage recount, scheduling queries."""
+"""FeedRepository: default Bucket, counters, storage recount, scheduling queries."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from copycast.adapters.db.repositories import DEFAULT_INBOX_TITLE, FeedRepository
+from copycast.adapters.db.repositories import DEFAULT_BUCKET_TITLE, FeedRepository
 from copycast.adapters.db.uow import UnitOfWorkFactory
 from copycast.domain.enums import ArchiveState, AssetKind, AssetState, FeedKind
 from copycast.domain.exceptions import NotFound
@@ -17,7 +17,7 @@ from tests.integration.storage.conftest import (
     NOW,
     SOURCE_URL,
     asset_row,
-    inbox_row,
+    bucket_row,
     item_row,
     mirror_row,
     seed,
@@ -43,26 +43,26 @@ async def test_try_get_for_update_skips_a_row_another_transaction_holds(
         await other.rollback()
 
 
-async def test_ensure_default_inbox_is_idempotent(uow_factory: UnitOfWorkFactory) -> None:
+async def test_ensure_default_bucket_is_idempotent(uow_factory: UnitOfWorkFactory) -> None:
     async with uow_factory() as uow:
-        first = await uow.feeds.ensure_default_inbox()
+        first = await uow.feeds.ensure_default_bucket()
     async with uow_factory() as uow:
-        second = await uow.feeds.ensure_default_inbox()
-        assert (await uow.feeds.count(FeedKind.inbox)) == 1
+        second = await uow.feeds.ensure_default_bucket()
+        assert (await uow.feeds.count(FeedKind.bucket)) == 1
     assert first.id == second.id
-    assert first.title == DEFAULT_INBOX_TITLE
+    assert first.title == DEFAULT_BUCKET_TITLE
     assert first.is_default is True
-    assert first.kind == FeedKind.inbox
+    assert first.kind == FeedKind.bucket
     assert FEED_ID_RE.match(first.id)
     assert first.id.startswith("copycast-")
 
 
-async def test_ensure_default_inbox_under_concurrency(
+async def test_ensure_default_bucket_under_concurrency(
     sessionmaker: async_sessionmaker[AsyncSession],
 ) -> None:
     async def _create() -> str:
         async with sessionmaker() as session, session.begin():
-            return (await FeedRepository(session).ensure_default_inbox()).id
+            return (await FeedRepository(session).ensure_default_bucket()).id
 
     ids = await asyncio.gather(*(_create() for _ in range(4)))
     assert len(set(ids)) == 1
@@ -86,27 +86,27 @@ async def test_get_require_and_dedup_lookup(uow_factory: UnitOfWorkFactory) -> N
         assert locked.id == feed.id
 
 
-async def test_find_inbox_by_id_or_case_insensitive_name(uow_factory: UnitOfWorkFactory) -> None:
+async def test_find_bucket_by_id_or_case_insensitive_name(uow_factory: UnitOfWorkFactory) -> None:
     async with uow_factory() as uow:
-        default = await uow.feeds.ensure_default_inbox()
-        later = await uow.feeds.add(inbox_row("Later"))
+        default = await uow.feeds.ensure_default_bucket()
+        later = await uow.feeds.add(bucket_row("Later"))
         mirror = await uow.feeds.add(mirror_row())
     async with uow_factory() as uow:
-        assert (await uow.feeds.find_inbox(later.id)) is not None
-        by_name = await uow.feeds.find_inbox("copycast")
+        assert (await uow.feeds.find_bucket(later.id)) is not None
+        by_name = await uow.feeds.find_bucket("copycast")
         assert by_name is not None and by_name.id == default.id
-        by_name = await uow.feeds.find_inbox("LATER")
+        by_name = await uow.feeds.find_bucket("LATER")
         assert by_name is not None and by_name.id == later.id
-        assert await uow.feeds.find_inbox(mirror.id) is None
-        assert await uow.feeds.find_inbox("Test Podcast") is None
-        assert await uow.feeds.find_inbox("unknown") is None
+        assert await uow.feeds.find_bucket(mirror.id) is None
+        assert await uow.feeds.find_bucket("Test Podcast") is None
+        assert await uow.feeds.find_bucket("unknown") is None
 
 
 async def test_list_sorting_and_kind_filter(uow_factory: UnitOfWorkFactory) -> None:
     async with uow_factory() as uow:
         await uow.feeds.add(mirror_row("https://a.example/feed", title="beta"))
         await uow.feeds.add(mirror_row("https://b.example/feed", title="Alpha"))
-        await uow.feeds.add(inbox_row("Zulu"))
+        await uow.feeds.add(bucket_row("Zulu"))
     async with uow_factory() as uow:
         titles = [f.title for f in await uow.feeds.list()]
         assert titles == ["Alpha", "beta", "Zulu"]
@@ -115,7 +115,7 @@ async def test_list_sorting_and_kind_filter(uow_factory: UnitOfWorkFactory) -> N
         mirrors = await uow.feeds.list(FeedKind.mirror)
         assert {f.kind for f in mirrors} == {"mirror"} and len(mirrors) == 2
         assert await uow.feeds.count() == 3
-        assert await uow.feeds.count(FeedKind.inbox) == 1
+        assert await uow.feeds.count(FeedKind.bucket) == 1
         assert len(await uow.feeds.ids()) == 3
 
 
@@ -179,13 +179,13 @@ async def test_scheduler_queries(uow_factory: UnitOfWorkFactory) -> None:
                 last_refresh_attempt_at=NOW - timedelta(days=9),
             )
         )
-        prune_me = await uow.feeds.add(inbox_row("Prune", autoprune_days=3))
-        await uow.feeds.add(inbox_row("Recent", autoprune_days=3, last_autoprune_at=NOW))
-        await uow.feeds.add(inbox_row("Off"))
+        prune_me = await uow.feeds.add(bucket_row("Prune", autoprune_days=3))
+        await uow.feeds.add(bucket_row("Recent", autoprune_days=3, last_autoprune_at=NOW))
+        await uow.feeds.add(bucket_row("Off"))
     async with uow_factory() as uow:
         due = await uow.feeds.mirrors_due(NOW - timedelta(hours=24))
         assert [f.id for f in due] == [never.id, stale.id]
-        prunable = await uow.feeds.inboxes_due_autoprune(NOW - timedelta(hours=24))
+        prunable = await uow.feeds.buckets_due_autoprune(NOW - timedelta(hours=24))
         assert [f.id for f in prunable] == [prune_me.id]
 
 

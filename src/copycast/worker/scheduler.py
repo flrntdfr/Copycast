@@ -104,7 +104,7 @@ class Scheduler:
         count = 0
         async with uow_of(self._container.uow_factory()) as uow:
             due = [
-                *await uow.feeds.inboxes_due_autoprune(now - AUTOPRUNE_INTERVAL),
+                *await uow.feeds.buckets_due_autoprune(now - AUTOPRUNE_INTERVAL),
                 *await uow.feeds.mirrors_due_expiry(now - AUTOPRUNE_INTERVAL),
             ]
             for feed in due:

@@ -47,18 +47,19 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "preview_mirror_update",
         "archive_available",
         "retry_failed",
-        # inboxes and requests
-        "create_inbox",
-        "update_inbox",
+        # buckets and requests
+        "create_bucket",
+        "update_bucket",
         "add_request",
         "list_requests",
         "get_request",
-        "prune_inbox",
-        # uploads and Serial Inboxes
+        "prune_bucket",
+        # uploads and Serial Buckets
         "create_upload",
         "put_upload",
         "get_upload",
-        "create_serial_inbox",
+        "create_serial_bucket",
+        "add_uploads",
         # jobs
         "list_jobs",
         "get_job",
@@ -82,8 +83,8 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "set_mirror_defaults",
         # internal
         "record_download",
-        "ensure_default_inbox",
-        "resolve_inbox",
+        "ensure_default_bucket",
+        "resolve_bucket",
         "authenticate_api_key",
     }
 )
@@ -123,8 +124,8 @@ INTERNAL: Final[frozenset[str]] = frozenset(
     {
         "record_download",
         "subscribe_events",
-        "ensure_default_inbox",
-        "resolve_inbox",
+        "ensure_default_bucket",
+        "resolve_bucket",
         "authenticate_api_key",
     }
 )
@@ -133,7 +134,7 @@ INTERNAL: Final[frozenset[str]] = frozenset(
 ROUTED_INTERNAL: Final[frozenset[str]] = frozenset({"subscribe_events"})
 
 DESTRUCTIVE: Final[frozenset[str]] = frozenset(
-    {"delete_feed", "clear_feed", "delete_item", "prune_inbox"}
+    {"delete_feed", "clear_feed", "delete_item", "prune_bucket"}
 )
 """Tools that carry the MCP destructive hint."""
 

@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { MirrorCreate } from "@/api/types";
 import {
   candidate,
-  inbox,
+  bucket,
   job,
   mirror,
   mirrorDefaults,
@@ -21,7 +21,7 @@ const bonusUrl = "https://bonus.example/feed.xml";
 
 function baseHandlers(created: MirrorCreate[] = []) {
   return [
-    http.get("/api/feeds", () => HttpResponse.json({ feeds: [inbox({ id: "inbox-1" })] })),
+    http.get("/api/feeds", () => HttpResponse.json({ feeds: [bucket({ id: "bucket-1" })] })),
     http.get("/api/settings/defaults", () => HttpResponse.json(mirrorDefaults())),
     http.get("/api/jobs", () =>
       HttpResponse.json({
@@ -76,7 +76,7 @@ function baseHandlers(created: MirrorCreate[] = []) {
 
 async function submitBar(user: ReturnType<typeof userEvent.setup>, text: string) {
   await user.type(await screen.findByLabelText("Source URL"), text);
-  await user.click(within(screen.getByRole("main")).getByRole("button", { name: "Add Source" }));
+  await user.click(within(screen.getByRole("main")).getByRole("button", { name: "Mirror" }));
 }
 
 describe("Add Source dialog", () => {
@@ -119,7 +119,7 @@ describe("Add Source dialog", () => {
     expect(screen.getByText(/Refresh · Running/)).toBeInTheDocument();
   });
 
-  it("asks before mirroring a lone video, offering the Inbox instead", async () => {
+  it("asks before mirroring a lone video, offering the Bucket instead", async () => {
     server.use(
       http.post("/api/probe", () =>
         HttpResponse.json(
@@ -133,7 +133,7 @@ describe("Add Source dialog", () => {
     await submitBar(user, feedUrl);
     const dialog = await screen.findByRole("dialog", { name: "Choose a Source" });
     expect(
-      within(dialog).getByRole("button", { name: /Send to Inbox instead/ }),
+      within(dialog).getByRole("button", { name: /Send to Bucket instead/ }),
     ).toBeInTheDocument();
   });
 
@@ -177,7 +177,7 @@ describe("Add Source dialog", () => {
       http.post("/api/probe", () =>
         HttpResponse.json(
           problem("source-unsupported", 422, {
-            detail: "Looks like a media file; send it to an Inbox.",
+            detail: "Looks like a media file; send it to a Bucket.",
           }),
           { status: 422, headers: { "Content-Type": "application/problem+json" } },
         ),
@@ -186,13 +186,13 @@ describe("Add Source dialog", () => {
     await user.click(screen.getByRole("link", { name: "Feeds" }));
     await submitBar(user, "https://media.example/file.mp3");
     expect(await screen.findByText("This URL cannot be mirrored")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Send to Inbox instead/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Send to Bucket instead/ })).toBeInTheDocument();
   });
 
   it("captures playlists from the dropdown, several in a row", async () => {
     const created: MirrorCreate[] = [];
     server.use(
-      http.get("/api/inboxes/:inboxId/requests", () =>
+      http.get("/api/buckets/:bucketId/requests", () =>
         HttpResponse.json({ requests: [], total: 0, limit: 1, offset: 0 }),
       ),
       http.get("/api/youtube/playlists", () =>
@@ -248,7 +248,7 @@ describe("Add Source dialog", () => {
 
   it("explains what to do when the playlists cannot be listed", async () => {
     server.use(
-      http.get("/api/inboxes/:inboxId/requests", () =>
+      http.get("/api/buckets/:bucketId/requests", () =>
         HttpResponse.json({ requests: [], total: 0, limit: 1, offset: 0 }),
       ),
       http.get("/api/youtube/playlists", () =>

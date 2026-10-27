@@ -8,7 +8,7 @@
 # 1000, then checks:
 #   - /healthz/ready answers 200 on the api (8080) and the worker (8081)
 #   - /api/about reports the engine version pinned in uv.lock and a working ffmpeg
-#   - /api/inboxes contains the default Inbox "Copycast"
+#   - /api/buckets contains the default Bucket "Copycast"
 #   - `copycast --version` prints the application version
 #   - negative: a root-owned, empty bind mount makes `copycast api` exit 2 with the chown hint
 #
@@ -131,10 +131,10 @@ ffmpeg=$(jq -r '.ffmpeg_version // .engine.ffmpeg_version // empty' <<<"$about")
 [ -n "$ffmpeg" ] || fail "/api/about reports no ffmpeg: $about"
 log "about: engine $engine, ffmpeg $ffmpeg"
 
-inboxes=$(curl -fsS "http://127.0.0.1:$API_PORT/api/inboxes")
-jq -e '[.. | objects | select((.kind? == "inbox") and ((.name? == "Copycast") or (.title? == "Copycast")))] | length > 0' \
-  <<<"$inboxes" >/dev/null || fail "/api/inboxes does not contain the default Inbox: $inboxes"
-log "default Inbox present"
+buckets=$(curl -fsS "http://127.0.0.1:$API_PORT/api/buckets")
+jq -e '[.. | objects | select((.kind? == "bucket") and ((.name? == "Copycast") or (.title? == "Copycast")))] | length > 0' \
+  <<<"$buckets" >/dev/null || fail "/api/buckets does not contain the default Bucket: $buckets"
+log "default Bucket present"
 
 version_out=$(docker run --rm "$IMAGE" --version)
 grep -q '^copycast ' <<<"$version_out" || fail "copycast --version printed: $version_out"

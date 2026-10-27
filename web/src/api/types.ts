@@ -5,9 +5,9 @@ export type Schemas = components["schemas"];
 export type Paths = paths;
 export type Operations = operations;
 
-export type FeedRead = Schemas["MirrorRead"] | Schemas["InboxRead"];
+export type FeedRead = Schemas["MirrorRead"] | Schemas["BucketRead"];
 export type MirrorRead = Schemas["MirrorRead"];
-export type InboxRead = Schemas["InboxRead"];
+export type BucketRead = Schemas["BucketRead"];
 export type FeedList = Schemas["FeedList"];
 export type ItemRead = Schemas["ItemRead"];
 export type ItemPage = Schemas["ItemPage"];
@@ -30,8 +30,8 @@ export type YouTubePlaylist = Schemas["YouTubePlaylist"];
 export type SelectionRequest = Schemas["SelectionRequest"];
 export type SelectionResult = Schemas["SelectionResult"];
 export type SelectionSummary = Schemas["SelectionSummary"];
-export type InboxCreate = Schemas["InboxCreate"];
-export type InboxUpdate = Schemas["InboxUpdate"];
+export type BucketCreate = Schemas["BucketCreate"];
+export type BucketUpdate = Schemas["BucketUpdate"];
 export type RequestCreate = Schemas["RequestCreate"];
 export type RequestRead = Schemas["RequestRead"];
 export type RequestPage = Schemas["RequestPage"];
@@ -88,6 +88,6 @@ export function isMirror(feed: FeedRead): feed is MirrorRead {
   return feed.kind === "mirror";
 }
 
-export function isInbox(feed: FeedRead): feed is InboxRead {
-  return feed.kind === "inbox";
+export function isBucket(feed: FeedRead): feed is BucketRead {
+  return feed.kind === "bucket";
 }

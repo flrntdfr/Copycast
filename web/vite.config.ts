@@ -7,7 +7,7 @@ import { fileURLToPath, URL } from "node:url";
 const backend = process.env.COPYCAST_DEV_BACKEND ?? "http://127.0.0.1:8080";
 
 /** Every backend prefix is proxied unbuffered so SSE and media ranges pass through. */
-const proxied = ["/api", "/feeds", "/mcp", "/healthz"] as const;
+const proxied = ["/api", "/feeds", "/uploads", "/mcp", "/healthz"] as const;
 
 export default defineConfig({
   plugins: [

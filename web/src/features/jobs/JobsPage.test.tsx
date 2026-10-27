@@ -5,14 +5,14 @@ import { describe, expect, it } from "vitest";
 
 import { applyEvent, Invalidator } from "@/api/events";
 import type { JobRead } from "@/api/types";
-import { inbox, item, job, mirror } from "@/test/factories";
+import { bucket, item, job, mirror } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 import { recordProgress, resetProgress } from "@/stores/progress";
 
 const feeds = [
   mirror({ id: "mirror-1", title: "Example Podcast" }),
-  inbox({ id: "inbox-1", title: "Copycast", name: "Copycast" }),
+  bucket({ id: "bucket-1", title: "Copycast", name: "Copycast" }),
 ];
 
 function jobsHandlers(jobs: JobRead[], cancelled: string[] = []) {
@@ -59,7 +59,7 @@ describe("JobsPage", () => {
       id: "00000000-0000-4000-8000-000000000002",
       kind: "refresh",
       status: "queued",
-      feed_id: "inbox-1",
+      feed_id: "bucket-1",
       trigger: "scheduled",
       attempt: 1,
       error: "HTTP 503",
@@ -110,7 +110,7 @@ describe("JobsPage", () => {
     expect(queuedRow).toHaveTextContent("retry 1: HTTP 503");
     expect(within(queuedRow).getByRole("link", { name: "Copycast" })).toHaveAttribute(
       "href",
-      "/inboxes/inbox-1",
+      "/buckets/bucket-1",
     );
 
     const row = await screen.findByTestId("job-row");

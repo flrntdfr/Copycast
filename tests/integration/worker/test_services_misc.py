@@ -173,25 +173,27 @@ async def test_update_mirror_retarget_and_policy_changes(
 
 
 async def test_manual_prune_job_payload_and_rebuild_dedup(
-    container: Container, default_inbox: str, runner: Runner, engine: FakeEngine
+    container: Container, default_bucket: str, runner: Runner, engine: FakeEngine
 ) -> None:
     url = "https://www.youtube.com/playlist?list=PLmanual"
     engine.script_listing(url, listing(2, service="YouTube"))
-    await container.services.add_request(default_inbox, RequestCreate(url=url), via=RequestedVia.ui)
+    await container.services.add_request(
+        default_bucket, RequestCreate(url=url), via=RequestedVia.ui
+    )
     await runner.run_until_idle()
     async with uow(container) as unit:
-        rows = await unit.catalog.for_feed(default_inbox)
+        rows = await unit.catalog.for_feed(default_bucket)
         await unit.catalog.record_download(rows[0].id)
         job = await unit.jobs.enqueue(
             JobKind.prune,
             JobTrigger.manual,
-            feed_id=default_inbox,
+            feed_id=default_bucket,
             payload={"mode": PruneMode.manual.value, "downloaded": True, "older_than_days": 0},
-            dedup=f"prune:{default_inbox}",
+            dedup=f"prune:{default_bucket}",
         )
         assert job is not None
         bad = await unit.jobs.enqueue(
-            JobKind.prune, JobTrigger.manual, feed_id=default_inbox, payload={"mode": "manual"}
+            JobKind.prune, JobTrigger.manual, feed_id=default_bucket, payload={"mode": "manual"}
         )
         assert bad is not None
     await runner.run_until_idle()

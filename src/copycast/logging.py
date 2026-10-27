@@ -1,7 +1,7 @@
 """structlog configuration shared by the api and worker processes.
 
 Every record carries the contextvars bound with :func:`bind_context`
-(``process``, ``request_id``, ``job_id``, ``mirror_id``, ``inbox_id``).
+(``process``, ``request_id``, ``job_id``, ``mirror_id``, ``bucket_id``).
 Stdlib loggers (uvicorn, sqlalchemy, alembic, yt_dlp) are routed through the
 same processor chain so both processes emit one format. The request log is
 Copycast's own ``http.request`` line (``adapters.api.middleware``); uvicorn's

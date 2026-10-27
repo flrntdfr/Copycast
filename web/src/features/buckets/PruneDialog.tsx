@@ -53,18 +53,18 @@ export function describePrune(result: PruneResult): string {
   return `Deletes ${count(result.matched, "Episode")} (${formatBytes(result.bytes_freed)})`;
 }
 
-/** Prune an Inbox on demand: criteria, a debounced dry-run preview, then a confirmation. */
+/** Prune a Bucket on demand: criteria, a debounced dry-run preview, then a confirmation. */
 export function PruneDialog({
-  inboxId,
+  bucketId,
   open,
   onOpenChange,
 }: {
-  inboxId: string;
+  bucketId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const ids = useId();
-  const invalidate = useInvalidateCatalog(inboxId);
+  const invalidate = useInvalidateCatalog(bucketId);
   const [downloaded, setDownloaded] = useState(true);
   const [olderEnabled, setOlderEnabled] = useState(false);
   const [olderDays, setOlderDays] = useState("30");
@@ -80,7 +80,7 @@ export function PruneDialog({
   /** The preview counts only while it describes the current criteria. */
   const preview = previewFor?.key === key ? previewFor.result : null;
 
-  const dryRun = $api.useMutation("post", "/api/inboxes/{inbox_id}/prune", {
+  const dryRun = $api.useMutation("post", "/api/buckets/{bucket_id}/prune", {
     meta: { silent: true },
   });
   const close = () => {
@@ -88,7 +88,7 @@ export function PruneDialog({
     setPreviewFor(null);
     onOpenChange(false);
   };
-  const prune = $api.useMutation("post", "/api/inboxes/{inbox_id}/prune", {
+  const prune = $api.useMutation("post", "/api/buckets/{bucket_id}/prune", {
     onSuccess: (result) => {
       invalidate();
       toast.success(`Deleted ${count(result.deleted_count, "Episode")}`, {
@@ -108,7 +108,7 @@ export function PruneDialog({
     let cancelled = false;
     const timer = setTimeout(() => {
       runDryRun({
-        params: { path: { inbox_id: inboxId } },
+        params: { path: { bucket_id: bucketId } },
         body: toPruneRequest(JSON.parse(key) as PruneCriteria, true),
       })
         .then((result) => {
@@ -120,15 +120,15 @@ export function PruneDialog({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [open, key, usable, inboxId, runDryRun, resetDryRun]);
+  }, [open, key, usable, bucketId, runDryRun, resetDryRun]);
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Prune this Inbox</DialogTitle>
+          <DialogTitle>Prune this Bucket</DialogTitle>
           <DialogDescription>
-            Delete Episodes matching every criterion below. Deleted Episodes leave the Inbox Feed;
+            Delete Episodes matching every criterion below. Deleted Episodes leave the Bucket Feed;
             their Requests stay.
           </DialogDescription>
         </DialogHeader>
@@ -231,7 +231,7 @@ export function PruneDialog({
                 className="bg-destructive text-white hover:bg-destructive/90"
                 onClick={() =>
                   prune.mutate({
-                    params: { path: { inbox_id: inboxId } },
+                    params: { path: { bucket_id: bucketId } },
                     body: toPruneRequest(criteria, false),
                   })
                 }

@@ -10,7 +10,7 @@ from copycast.adapters.storage.layout import Layout
 from copycast.application.services.episodes import delete_episode
 from copycast.domain.enums import ArchiveState, AssetKind, AssetState, DeleteReason
 from copycast.domain.exceptions import NotFound
-from tests.integration.storage.conftest import NOW, inbox_row, item_row, mirror_row, seed
+from tests.integration.storage.conftest import NOW, bucket_row, item_row, mirror_row, seed
 
 pytestmark = pytest.mark.integration
 
@@ -67,12 +67,12 @@ async def test_delete_episode_mirror(uow_factory: UnitOfWorkFactory, layout: Lay
     assert states[episode.id] is ArchiveState.deleted
 
 
-async def test_delete_episode_inbox_hides_row_and_prune_reason(
+async def test_delete_episode_bucket_hides_row_and_prune_reason(
     uow_factory: UnitOfWorkFactory, layout: Layout
 ) -> None:
     async with uow_factory() as uow:
-        inbox = await uow.feeds.add(inbox_row())
-        episode = item_row(inbox, 1, state=ArchiveState.archived)
+        bucket = await uow.feeds.add(bucket_row())
+        episode = item_row(bucket, 1, state=ArchiveState.archived)
         await seed(uow, episode)
     async with uow_factory() as uow:
         result = await delete_episode(uow, episode.id, DeleteReason.prune)
@@ -80,7 +80,7 @@ async def test_delete_episode_inbox_hides_row_and_prune_reason(
     async with uow_factory() as uow:
         row = await uow.catalog.require(episode.id)
         assert row.archive_state == ArchiveState.deleted and row.listed is False
-        counts = await uow.catalog.count_by_state(inbox.id)
+        counts = await uow.catalog.count_by_state(bucket.id)
         assert counts.available == 0
 
 

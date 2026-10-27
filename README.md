@@ -8,7 +8,7 @@ working even if the original disappears.**
 
 Agents get the same powers through a built-in [MCP](https://modelcontextprotocol.io) server:
 find a podcast by name and mirror it, archive exactly the episodes you name ("1-42, 180"),
-or drop arbitrary URLs into an Inbox feed that prunes itself.
+or drop arbitrary URLs into a Bucket feed that prunes itself.
 
 ## Quick start (Docker Compose)
 
@@ -80,12 +80,12 @@ stay in your feed — that is the point. **Pause** stops downloads without touch
 archive; **Delete** removes a Mirror and its files for good, and is the only thing that ever
 deletes from a Mirror ([ADR 0009](docs/adr/0009-never-delete-tombstones.md)).
 
-### Inboxes
+### Buckets
 
-An **Inbox** is a feed without a Source: you (or an agent) push URLs into it — a single
+An **Bucket** is a feed without a Source: you (or an agent) push URLs into it — a single
 YouTube video, a SoundCloud set, a talk on a conference site — and each becomes an episode of
-the Inbox feed. Inboxes can prune themselves N days after an episode's first download
-(never-downloaded episodes are kept), or on demand by criterion. A default Inbox named
+the Bucket feed. Buckets can prune themselves N days after an episode's first download
+(never-downloaded episodes are kept), or on demand by criterion. A default Bucket named
 **Copycast** always exists.
 
 ### MCP
@@ -103,7 +103,7 @@ static header work; see above):
 ```
 
 Tools cover everything the UI does: `search_podcasts` (iTunes Search, no key needed),
-`probe_source`, `create_mirror`, `archive_episodes`, `add_to_inbox`, `prune_inbox`,
+`probe_source`, `create_mirror`, `archive_episodes`, `add_to_bucket`, `prune_bucket`,
 `list_feeds`, `list_items`, `refresh_mirror`, `set_mirror_paused`, `delete_feed`
 (requires `confirm=true`), and the job tools. Typical exchanges:
 
@@ -115,11 +115,11 @@ Tools cover everything the UI does: `search_podcasts` (iTunes Search, no key nee
   episodes roll out as new ones arrive. "Just make this channel playable" →
   `backfill.mode = automatic`: episodes download when your app first plays them and expire a
   week after the last listen (both need a `full` key, since they delete).
-- "Save this talk for my commute" → `add_to_inbox` → it lands in the Copycast Inbox feed.
+- "Save this talk for my commute" → `add_to_bucket` → it lands in the Copycast Bucket feed.
 - "Mirror this show" with an Apple Podcasts or Spotify link → `probe_source` resolves the feed
   behind it (Spotify by the show's name in Apple's directory) → `create_mirror`.
-- "Add the last WWDC live from Gruber to the inbox" → `search_videos` ("The Talk Show live
-  WWDC") → `add_to_inbox` with the video's URL → downloaded once, in your Inbox feed.
+- "Add the last WWDC live from Gruber to the bucket" → `search_videos` ("The Talk Show live
+  WWDC") → `add_to_bucket` with the video's URL → downloaded once, in your Bucket feed.
 - "Download every episode of that channel now" → `archive_available` (queues everything
   Available, whatever the Mirror's mode); "retry what failed" → `retry_failed`.
 

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { inbox, mirror } from "@/test/factories";
+import { bucket, mirror } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 import { resetPlayerForTests, setShortcuts } from "@/stores/player";
@@ -16,7 +16,7 @@ function handlers() {
   return [
     http.get("/api/feeds", () =>
       HttpResponse.json({
-        feeds: [mirror({ id: "mirror-1", title: "Example Podcast" }), inbox({ id: "inbox-1" })],
+        feeds: [mirror({ id: "mirror-1", title: "Example Podcast" }), bucket({ id: "bucket-1" })],
       }),
     ),
     http.get("/api/feeds/:feedId/items", () =>
@@ -62,7 +62,7 @@ describe("AppShell", () => {
     expect(history.location.pathname).toBe("/about");
   });
 
-  it("offers Mirror / Send to Inbox for a URL and jumps to feeds", async () => {
+  it("offers Mirror / Send to Bucket for a URL and jumps to feeds", async () => {
     server.use(...handlers());
     const user = userEvent.setup();
     const { history } = renderApp("/about");
@@ -74,7 +74,7 @@ describe("AppShell", () => {
     expect(within(palette).getByText("Mirror this URL")).toBeInTheDocument();
     // The banner holds theme, palette and the live-update dot; no Add Source button.
     expect(screen.queryByRole("button", { name: /Add Source/ })).not.toBeInTheDocument();
-    await user.click(within(palette).getByText("Send to Inbox…"));
+    await user.click(within(palette).getByText("Send to Bucket…"));
     await waitFor(() => expect(history.location.pathname).toBe("/"));
     expect(history.location.search).toContain("url=https%3A%2F%2Fx.example%2Ff");
 

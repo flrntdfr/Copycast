@@ -106,12 +106,14 @@ export function keysForEvent(event: CopycastEvent): QueryKey[] {
         [
           OPS.list_requests[0],
           OPS.list_requests[1],
-          { params: { path: { inbox_id: event.data.feed_id } } },
+          { params: { path: { bucket_id: event.data.feed_id } } },
         ],
         [
           OPS.get_request[0],
           OPS.get_request[1],
-          { params: { path: { inbox_id: event.data.feed_id, request_id: event.data.request_id } } },
+          {
+            params: { path: { bucket_id: event.data.feed_id, request_id: event.data.request_id } },
+          },
         ],
         feedKey(event.data.feed_id),
       ];

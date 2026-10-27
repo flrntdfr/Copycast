@@ -2,7 +2,7 @@
   <channel>
     <title>Copycast</title>
     <link>http://testserver/</link>
-    <description>Episodes saved to the Copycast Inbox with Copycast.</description>
+    <description>Episodes saved to the Copycast Bucket with Copycast.</description>
     <language>en</language>
     <itunes:author xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Copycast</itunes:author>
     <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/feeds/copycast-artwork.png"/>

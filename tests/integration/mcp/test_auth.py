@@ -154,26 +154,28 @@ async def test_tools_are_gated_by_the_key_scope(
         assert about["auth_enabled"] is True
         tools = {t.name: t for t in await mcp.list_tools()}
         assert (tools["get_about"].meta or {})["scope"] == "read"
-        assert (tools["create_inbox"].meta or {})["scope"] == "write"
+        assert (tools["create_bucket"].meta or {})["scope"] == "write"
         assert (tools["delete_feed"].meta or {})["scope"] == "full"
-        with pytest.raises(ToolError, match="create_inbox needs an API key with scope 'write'"):
-            await mcp.call_tool("create_inbox", {"inbox": {"name": "Nope"}})
+        with pytest.raises(ToolError, match="create_bucket needs an API key with scope 'write'"):
+            await mcp.call_tool("create_bucket", {"bucket": {"name": "Nope"}})
         # The resource is read-only and open to every key.
         listing = await mcp.read_resource("copycast://feeds")
         assert listing and "Copycast" in str(listing[0])
 
     async with _Session(mcp_over_http(write)) as mcp:
-        inbox = structured(await mcp.call_tool("create_inbox", {"inbox": {"name": "Later"}}))
-        assert inbox["name"] == "Later"
+        bucket = structured(await mcp.call_tool("create_bucket", {"bucket": {"name": "Later"}}))
+        assert bucket["name"] == "Later"
         with pytest.raises(ToolError, match="delete_feed needs an API key with scope 'full'"):
-            await mcp.call_tool("delete_feed", {"feed_id": inbox["id"], "confirm": True})
+            await mcp.call_tool("delete_feed", {"feed_id": bucket["id"], "confirm": True})
         # Retention deletes, so switching it on is a full-key action; renaming is not.
-        with pytest.raises(ToolError, match=r"update_inbox \(autoprune_days\) needs .* 'full'"):
+        with pytest.raises(ToolError, match=r"update_bucket \(autoprune_days\) needs .* 'full'"):
             await mcp.call_tool(
-                "update_inbox", {"inbox_id": inbox["id"], "patch": {"autoprune_days": 7}}
+                "update_bucket", {"bucket_id": bucket["id"], "patch": {"autoprune_days": 7}}
             )
-        with pytest.raises(ToolError, match=r"create_inbox \(autoprune_days\) needs .* 'full'"):
-            await mcp.call_tool("create_inbox", {"inbox": {"name": "Pruned", "autoprune_days": 7}})
+        with pytest.raises(ToolError, match=r"create_bucket \(autoprune_days\) needs .* 'full'"):
+            await mcp.call_tool(
+                "create_bucket", {"bucket": {"name": "Pruned", "autoprune_days": 7}}
+            )
         # So are the Mirror modes that delete on their own.
         with pytest.raises(ToolError, match=r"update_mirror \(backfill.mode rolling\) needs"):
             await mcp.call_tool(
@@ -192,7 +194,7 @@ async def test_tools_are_gated_by_the_key_scope(
             )
         renamed = structured(
             await mcp.call_tool(
-                "update_inbox", {"inbox_id": inbox["id"], "patch": {"name": "Soon"}}
+                "update_bucket", {"bucket_id": bucket["id"], "patch": {"name": "Soon"}}
             )
         )
         assert renamed["name"] == "Soon" and renamed["autoprune_days"] is None
@@ -200,17 +202,17 @@ async def test_tools_are_gated_by_the_key_scope(
     async with _Session(mcp_over_http(full)) as mcp:
         pruned = structured(
             await mcp.call_tool(
-                "update_inbox", {"inbox_id": inbox["id"], "patch": {"autoprune_days": 7}}
+                "update_bucket", {"bucket_id": bucket["id"], "patch": {"autoprune_days": 7}}
             )
         )
         assert pruned["autoprune_days"] == 7
 
     async with _Session(mcp_over_http(full)) as mcp:
         deleted = structured(
-            await mcp.call_tool("delete_feed", {"feed_id": inbox["id"], "confirm": True})
+            await mcp.call_tool("delete_feed", {"feed_id": bucket["id"], "confirm": True})
         )
-        assert deleted == {"deleted": True, "feed_id": inbox["id"]}
+        assert deleted == {"deleted": True, "feed_id": bucket["id"]}
 
     # Nothing was left behind by the read key's refused call.
-    feeds = (await client.get(api("/inboxes"), headers=operator_headers)).json()["feeds"]
+    feeds = (await client.get(api("/buckets"), headers=operator_headers)).json()["feeds"]
     assert [f["name"] for f in feeds] == ["Copycast"]

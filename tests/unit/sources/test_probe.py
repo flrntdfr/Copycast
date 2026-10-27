@@ -94,10 +94,10 @@ def test_nothing_fits_is_unsupported(engine: FakeEngine) -> None:
         probe("   ", engine=engine)
 
 
-def test_media_url_is_refused_with_an_inbox_hint(origin: Origin, engine: FakeEngine) -> None:
+def test_media_url_is_refused_with_an_bucket_hint(origin: Origin, engine: FakeEngine) -> None:
     with pytest.raises(Unsupported) as excinfo:
         probe(origin.url_for("/media/tiny.mp3"), engine=engine)
-    assert "Inbox" in str(excinfo.value)
+    assert "Bucket" in str(excinfo.value)
 
 
 def test_bare_youtube_channel_normalizes_to_videos_tab(engine: FakeEngine) -> None:

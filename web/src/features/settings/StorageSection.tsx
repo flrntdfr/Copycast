@@ -1,8 +1,8 @@
-import { Inbox, ListVideo, Radio, Trash2 } from "lucide-react";
+import { ListVideo, PaintBucket, Radio, Trash2 } from "lucide-react";
 import { Fragment, useState } from "react";
 
 import { $api, asError } from "@/api/client";
-import { isInbox, isMirror, type FeedRead } from "@/api/types";
+import { isBucket, isMirror, type FeedRead } from "@/api/types";
 import { SectionHeader } from "@/components/common/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,10 +19,10 @@ import { HelpTip } from "./HelpTip";
 import { BucketDeleteDialog } from "./BucketDeleteDialog";
 
 /**
- * Every Feed's storage: the Mirrors in the Feeds page's order, then the Inboxes and the
+ * Every Feed's storage: the Mirrors in the Feeds page's order, then the Buckets and the
  * captured YouTube playlists, each with its size and a trash button.
  */
-export function BucketsSection() {
+export function StorageSection() {
   // The same queries as the Feeds page, so the order is the one shown there.
   const mirrors = $api.useQuery("get", "/api/feeds", {
     params: { query: { kind: "mirror", sort: "title", order: "asc" } },
@@ -37,12 +37,12 @@ export function BucketsSection() {
     .filter((feed) => !feed.playlist_capture);
   const all = feeds.data?.feeds ?? [];
   const individual: FeedRead[] = [
-    ...all.filter(isInbox),
+    ...all.filter(isBucket),
     ...all.filter(isMirror).filter((feed) => feed.playlist_capture),
   ];
   const groups = [
     { id: "mirrors", label: "Mirrors", rows: mirrorRows },
-    { id: "individual", label: "Inboxes and playlists", rows: individual },
+    { id: "individual", label: "Buckets and playlists", rows: individual },
   ];
   const total = [...mirrorRows, ...individual].reduce(
     (sum, feed) => sum + (feed.storage_bytes ?? 0),
@@ -117,7 +117,7 @@ export function BucketsSection() {
 }
 
 function BucketRow({ feed, onDelete }: { feed: FeedRead; onDelete: () => void }) {
-  const Icon = isInbox(feed) ? Inbox : feed.playlist_capture ? ListVideo : Radio;
+  const Icon = isBucket(feed) ? PaintBucket : feed.playlist_capture ? ListVideo : Radio;
   return (
     <TableRow data-testid={`bucket-${feed.id}`}>
       <TableCell className="w-full max-w-0">

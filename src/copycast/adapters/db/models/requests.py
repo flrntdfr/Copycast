@@ -1,4 +1,4 @@
-"""The ``requests`` and ``request_items`` tables: URLs pushed into an Inbox and their items."""
+"""The ``requests`` and ``request_items`` tables: URLs pushed into a Bucket and their items."""
 
 from __future__ import annotations
 

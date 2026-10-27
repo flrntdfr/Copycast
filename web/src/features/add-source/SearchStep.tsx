@@ -8,11 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSendToInbox } from "@/features/inboxes/useSendToInbox";
+import { useSendToBucket } from "@/features/buckets/useSendToBucket";
 import { formatDate, formatDuration } from "@/lib/format";
 import { count } from "@/lib/labels";
 
-/** iTunes search (`search_podcasts`) prefilling the wizard, plus YouTube hits (`search_videos`) to send to an Inbox. */
+/** iTunes search (`search_podcasts`) prefilling the wizard, plus YouTube hits (`search_videos`) to send to a Bucket. */
 export function SearchStep({
   query,
   onPick,
@@ -34,7 +34,7 @@ export function SearchStep({
     { params: { query: { query: term, limit: 8 } } },
     { enabled: term.trim().length > 0 },
   );
-  const inbox = useSendToInbox();
+  const bucket = useSendToBucket();
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -132,10 +132,10 @@ export function SearchStep({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={inbox.isPending}
-                  onClick={() => void inbox.send(video.url)}
+                  disabled={bucket.isPending}
+                  onClick={() => void bucket.send(video.url)}
                 >
-                  Send to Inbox
+                  Send to Bucket
                 </Button>
               </li>
             ))}

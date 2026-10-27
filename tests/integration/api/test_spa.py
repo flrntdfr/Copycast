@@ -45,7 +45,7 @@ async def test_spa_is_served_only_when_web_dir_is_set(settings: Settings) -> Non
 
 async def test_spa_routes(spa_settings: Settings) -> None:
     async with await spa_client(spa_settings) as client:
-        for path in ("/", "/mirrors", "/mirrors/abc?tab=catalog", "/inboxes/x/y/z"):
+        for path in ("/", "/mirrors", "/mirrors/abc?tab=catalog", "/buckets/x/y/z"):
             page = await client.get(path)
             assert page.status_code == 200, path
             assert page.headers["content-type"].startswith("text/html")

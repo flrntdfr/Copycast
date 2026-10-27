@@ -1,4 +1,4 @@
-import { Inbox, Loader2 } from "lucide-react";
+import { PaintBucket, Loader2 } from "lucide-react";
 import { useState } from "react";
 
 import type { ProbeCandidate, ProbeResult } from "@/api/types";
@@ -14,16 +14,16 @@ export function CandidateList({
   probe,
   onChoose,
   choosing = false,
-  onSendToInbox,
-  sendingToInbox,
+  onSendToBucket,
+  sendingToBucket,
   onBack,
 }: {
   probe: ProbeResult;
   onChoose: (candidate: ProbeCandidate) => void;
   /** A Mirror is being created from the chosen Source. */
   choosing?: boolean;
-  onSendToInbox?: (candidate: ProbeCandidate) => void;
-  sendingToInbox?: boolean;
+  onSendToBucket?: (candidate: ProbeCandidate) => void;
+  sendingToBucket?: boolean;
   onBack: () => void;
 }) {
   const [token, setToken] = useState<string>(probe.candidates[0]?.candidate_token ?? "");
@@ -98,9 +98,13 @@ export function CandidateList({
         <Button onClick={() => chosen && onChoose(chosen)} disabled={!chosen || choosing}>
           {choosing ? <Loader2 className="animate-spin" /> : null} Mirror this Source
         </Button>
-        {chosen?.item_count === 1 && onSendToInbox ? (
-          <Button variant="outline" onClick={() => onSendToInbox(chosen)} disabled={sendingToInbox}>
-            <Inbox /> Send to Inbox instead
+        {chosen?.item_count === 1 && onSendToBucket ? (
+          <Button
+            variant="outline"
+            onClick={() => onSendToBucket(chosen)}
+            disabled={sendingToBucket}
+          >
+            <PaintBucket /> Send to Bucket instead
           </Button>
         ) : null}
         <Button variant="ghost" onClick={onBack}>

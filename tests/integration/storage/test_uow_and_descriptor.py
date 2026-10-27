@@ -26,7 +26,7 @@ from copycast.application.events import CHANNEL, FeedEvent, parse
 from copycast.domain.enums import ArchiveState, AssetKind, LiveStatus, RequestedVia
 from copycast.domain.exceptions import ConcurrentUpdate
 from copycast.settings import Settings
-from tests.integration.storage.conftest import asset_row, inbox_row, item_row, mirror_row, seed
+from tests.integration.storage.conftest import asset_row, bucket_row, item_row, mirror_row, seed
 from tests.support.factories import listing
 
 pytestmark = pytest.mark.integration
@@ -75,7 +75,7 @@ async def test_hooks_run_after_commit_only(uow_factory: UnitOfWorkFactory) -> No
     calls.clear()
     with pytest.raises(RuntimeError, match="boom"):
         async with uow_factory() as uow:
-            await uow.feeds.add(inbox_row())
+            await uow.feeds.add(bucket_row())
             uow.after_commit(lambda: calls.append("never"))
             raise RuntimeError("boom")
     assert calls == []
@@ -192,14 +192,14 @@ async def test_publish_delivers_notify_on_commit(
 
 async def test_descriptor_carries_intent_not_telemetry(uow_factory: UnitOfWorkFactory) -> None:
     async with uow_factory() as uow:
-        inbox = await uow.feeds.add(inbox_row(autoprune_days=7))
+        bucket = await uow.feeds.add(bucket_row(autoprune_days=7))
         item = item_row(
-            inbox, 1, state=ArchiveState.archived, download_count=5, live_status="was_live"
+            bucket, 1, state=ArchiveState.archived, download_count=5, live_status="was_live"
         )
-        await seed(uow, item, asset_row(inbox, item, AssetKind.artwork))
-        request = await uow.requests.add(inbox.id, "https://x.example/v", RequestedVia.mcp)
+        await seed(uow, item, asset_row(bucket, item, AssetKind.artwork))
+        request = await uow.requests.add(bucket.id, "https://x.example/v", RequestedVia.mcp)
         await uow.requests.link_items(request.id, [item.id])
-        descriptor = await build_descriptor(uow.session, inbox.id)
+        descriptor = await build_descriptor(uow.session, bucket.id)
     assert descriptor is not None
     assert descriptor.policy.autoprune_days == 7
     assert descriptor.items[0].archive_state is ArchiveState.archived
@@ -248,7 +248,7 @@ async def test_deadlock_surfaces_as_concurrent_update(uow_factory: UnitOfWorkFac
     """Two transactions locking two feeds in opposite orders: Postgres aborts one with
     40P01, which the unit of work rolls back and raises as ``ConcurrentUpdate``."""
     async with uow_factory() as uow:
-        await seed(uow, inbox_row("One"), inbox_row("Two"))
+        await seed(uow, bucket_row("One"), bucket_row("Two"))
     first_locked = asyncio.Event()
     second_locked = asyncio.Event()
 

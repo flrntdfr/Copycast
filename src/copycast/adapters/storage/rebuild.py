@@ -111,7 +111,7 @@ class RebuildReport(BaseModel):
     would_delete_items: int = 0
     would_delete_assets: int = 0
     skipped: list[SkippedDir] = Field(default_factory=list[SkippedDir])
-    default_inbox_id: str = ""
+    default_bucket_id: str = ""
 
 
 class _Counters:
@@ -214,11 +214,11 @@ async def _rebuild(
                 counters.deleted_feeds.append(feed_id)
             else:
                 counters.would_delete_feeds.append(feed_id)
-        default = await feeds.ensure_default_inbox()
-        counters.data["default_inbox_id"] = default.id
+        default = await feeds.ensure_default_bucket()
+        counters.data["default_bucket_id"] = default.id
 
     async with sessionmaker() as session:
-        for feed_id in [*rebuilt, counters.data["default_inbox_id"]]:
+        for feed_id in [*rebuilt, counters.data["default_bucket_id"]]:
             if not feed_id:
                 continue
             if feed_id in stale_pair or not layout.descriptor_path(feed_id).is_file():
@@ -425,7 +425,7 @@ def _restored_public_ext(
     Descriptors written before 1.3 carry no ``public_ext``; the media file (when there
     is one) is what apps have been downloading, so its extension is the URL they hold.
     The rest get ``predicted_ext`` by Source kind alone (``mp3`` for RSS, the 1.2
-    placeholder; ``m4a`` for an Engine Source and an Inbox), the rule migration 0010
+    placeholder; ``m4a`` for an Engine Source and a Bucket), the rule migration 0010
     applied to the same rows in Postgres, so a rebuild advertises the same URLs.
     """
     if item.public_ext:

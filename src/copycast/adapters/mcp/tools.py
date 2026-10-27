@@ -24,13 +24,13 @@ from copycast.application.models import (
     AboutRead,
     ArchiveFlagUpdate,
     BackfillRequest,
+    BucketCreate,
+    BucketRead,
+    BucketUpdate,
     ClearFeedRequest,
     ClearFeedResult,
     FeedList,
     FeedRead,
-    InboxCreate,
-    InboxRead,
-    InboxUpdate,
     ItemPage,
     ItemRead,
     JobPage,
@@ -47,10 +47,11 @@ from copycast.application.models import (
     RequestRead,
     SelectionRequest,
     SelectionResult,
-    SerialInboxCreate,
+    SerialBucketCreate,
     StatusRead,
     UploadCreate,
     UploadRead,
+    UploadsAdd,
     VideoSearchPage,
     YouTubePlaylistList,
 )
@@ -66,7 +67,7 @@ from copycast.domain.enums import (
     RequestedVia,
 )
 
-DEFAULT_INBOX = "Copycast"
+DEFAULT_BUCKET = "Copycast"
 DELETE_FEED_WARNING = (
     "Refused: deleting a Feed removes its archived media, which may be the only copy. "
     "Call delete_feed again with confirm=true to proceed."
@@ -123,16 +124,16 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         """The signed-in YouTube account's playlists, Watch Later first (needs the cookie file).
 
         Each ``url`` can go to ``create_mirror`` with ``sync_deletions`` and
-        ``playlist_capture`` true to capture it among the Inboxes.
+        ``playlist_capture`` true to capture it among the Buckets.
         """
         return await container.services.list_youtube_playlists()
 
     async def search_videos(query: str, limit: int = 10) -> VideoSearchPage:
         """Find videos by name on YouTube (no key needed); each hit's ``url`` can be pushed
-        into an Inbox with ``add_to_inbox`` or probed with ``probe_source``.
+        into a Bucket with ``add_to_bucket`` or probed with ``probe_source``.
 
         For "add the last X from channel Y" search for the channel and the topic, pick
-        the newest matching hit by ``published_at``, then call ``add_to_inbox``.
+        the newest matching hit by ``published_at``, then call ``add_to_bucket``.
         """
         return await container.services.search_videos(query, limit)
 
@@ -163,7 +164,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         return await container.services.create_mirror(mirror, trigger=JobTrigger.mcp)
 
     async def list_feeds(kind: FeedKind | None = None) -> FeedList:
-        """List Feeds (Mirrors and Inboxes), optionally one kind."""
+        """List Feeds (Mirrors and Buckets), optionally one kind."""
         return await container.services.list_feeds(kind)
 
     async def get_feed(feed_id: str) -> FeedRead:
@@ -173,7 +174,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
     async def delete_feed(feed_id: str, confirm: bool = False) -> dict[str, Any]:
         """Delete a Feed and its archived media, which may be the only copy.
 
-        Refuses unless ``confirm`` is true; the default Inbox cannot be deleted.
+        Refuses unless ``confirm`` is true; the default Bucket cannot be deleted.
         """
         if not confirm:
             raise refuse(DELETE_FEED_WARNING, feed_id=feed_id)
@@ -268,47 +269,47 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         _check_deleting_mode(patch.backfill, "update_mirror")
         return await container.services.update_mirror(feed_id, patch)
 
-    # ------------------------------------------------------------------ inboxes
+    # ------------------------------------------------------------------ buckets
 
-    async def create_inbox(inbox: InboxCreate) -> InboxRead:
-        """Create an Inbox: a feed fed by Requests, prunable on demand or automatically.
+    async def create_bucket(bucket: BucketCreate) -> BucketRead:
+        """Create a Bucket: a feed fed by Requests, prunable on demand or automatically.
 
         Setting ``autoprune_days`` schedules deletions, so it needs a ``full`` key.
         """
-        if inbox.autoprune_days is not None:
-            check_scope(KeyScope.full, "create_inbox (autoprune_days)")
-        return await container.services.create_inbox(inbox)
+        if bucket.autoprune_days is not None:
+            check_scope(KeyScope.full, "create_bucket (autoprune_days)")
+        return await container.services.create_bucket(bucket)
 
-    async def update_inbox(inbox_id: str, patch: InboxUpdate) -> InboxRead:
-        """Rename an Inbox or change ``autoprune_days`` (null switches autoprune off).
+    async def update_bucket(bucket_id: str, patch: BucketUpdate) -> BucketRead:
+        """Rename a Bucket or change ``autoprune_days`` (null switches autoprune off).
 
         Switching Retention on schedules deletions, so it needs a ``full`` key.
         """
         if patch.autoprune_days is not None:
-            check_scope(KeyScope.full, "update_inbox (autoprune_days)")
-        return await container.services.update_inbox(inbox_id, patch)
+            check_scope(KeyScope.full, "update_bucket (autoprune_days)")
+        return await container.services.update_bucket(bucket_id, patch)
 
-    async def add_to_inbox(request: RequestCreate, inbox: str = DEFAULT_INBOX) -> RequestRead:
-        """Push any URL (video, playlist, page) into an Inbox by id or name (default "Copycast").
+    async def add_to_bucket(request: RequestCreate, bucket: str = DEFAULT_BUCKET) -> RequestRead:
+        """Push any URL (video, playlist, page) into a Bucket by id or name (default "Copycast").
 
         A stream that is live is archived once YouTube publishes its recording (the item
         waits, Queued, up to 48 h); one that has not started yet cannot be listed and the
         Request fails with YouTube's reason: push it again once it is live or recorded.
         """
-        return await container.services.add_request(inbox, request, via=RequestedVia.mcp)
+        return await container.services.add_request(bucket, request, via=RequestedVia.mcp)
 
-    async def prune_inbox(inbox: str, prune: PruneRequest) -> PruneResult:
-        """Delete Inbox Episodes matching every given criterion.
+    async def prune_bucket(bucket: str, prune: PruneRequest) -> PruneResult:
+        """Delete Bucket Episodes matching every given criterion.
 
         Criteria: ``downloaded`` (at least once), ``older_than_days`` (since
         added); ``dry_run`` previews the count and bytes.
         """
-        return await container.services.prune_inbox(inbox, prune)
+        return await container.services.prune_bucket(bucket, prune)
 
     # ------------------------------------------------------------------ uploads
 
     async def create_upload(upload: UploadCreate) -> UploadRead:
-        """Stage one local audio file (mp3, m4a, m4b) for a Serial Inbox.
+        """Stage one local audio file (mp3, m4a, m4b) for a Serial Bucket.
 
         Returns ``upload_url``: send the file's bytes there with an HTTP PUT, for example
         ``curl -sf -T "<file>" "<upload_url>"`` (no other credential; usable once). The
@@ -321,8 +322,8 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         """A staged upload: ``state`` (pending until its PUT, then received) and its tags."""
         return await container.services.get_upload(upload_id)
 
-    async def create_serial_inbox(inbox: SerialInboxCreate) -> InboxRead:
-        """Create an Inbox from received uploads, Episodes in exactly the order of ``episodes``.
+    async def create_serial_bucket(bucket: SerialBucketCreate) -> BucketRead:
+        """Create a Bucket from received uploads, Episodes in exactly the order of ``episodes``.
 
         Use it for an audiobook or any work split into files. You decide the listening
         order: read every upload's tags and file name (disc, then track, then natural
@@ -330,12 +331,22 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         disagree), then list ``episodes`` first to last. Give each one a clean ``title``
         (the chapter's name, not the file name; Copycast prefixes "07 · " unless
         ``number_titles`` is false), ``part``/``part_title`` for books or parts,
-        ``chapter`` when it has one, and ``author`` only when it differs from the Inbox's.
+        ``chapter`` when it has one, and ``author`` only when it differs from the Bucket's.
         The feed is published ``itunes:type serial``, one Episode per day at a playful
         posting time so every app plays it in order; each description starts with the
         Episode's place in the work. Quote the returned ``feed_url`` to the user.
         """
-        return await container.services.create_serial_inbox(inbox)
+        return await container.services.create_serial_bucket(bucket)
+
+    async def add_uploads(bucket: str, uploads: UploadsAdd) -> BucketRead:
+        """Add received uploads to an existing Bucket (id or name) as archived Episodes.
+
+        Copycast orders them by file name, naturally ("Part 2" before "Part 10"), and dates
+        them by arrival, after everything already in the Bucket. Titles come from the files'
+        tags, else their names. For a work whose order you decide, use
+        ``create_serial_bucket`` instead.
+        """
+        return await container.services.add_uploads(bucket, uploads)
 
     # ------------------------------------------------------------------ jobs and about
 
@@ -389,13 +400,14 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         (refresh_mirror, "refresh_mirror", "request_refresh", False),
         (set_mirror_paused, "set_mirror_paused", "set_paused", False),
         (update_mirror, "update_mirror", "update_mirror", False),
-        (create_inbox, "create_inbox", "create_inbox", False),
-        (update_inbox, "update_inbox", "update_inbox", False),
-        (add_to_inbox, "add_to_inbox", "add_request", False),
-        (prune_inbox, "prune_inbox", "prune_inbox", False),
+        (create_bucket, "create_bucket", "create_bucket", False),
+        (update_bucket, "update_bucket", "update_bucket", False),
+        (add_to_bucket, "add_to_bucket", "add_request", False),
+        (prune_bucket, "prune_bucket", "prune_bucket", False),
         (create_upload, "create_upload", "create_upload", False),
         (get_upload, "get_upload", "get_upload", True),
-        (create_serial_inbox, "create_serial_inbox", "create_serial_inbox", False),
+        (create_serial_bucket, "create_serial_bucket", "create_serial_bucket", False),
+        (add_uploads, "add_uploads", "add_uploads", False),
         (get_job, "get_job", "get_job", True),
         (list_jobs, "list_jobs", "list_jobs", True),
         (cancel_job, "cancel_job", "cancel_job", False),
@@ -412,4 +424,4 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         )
 
 
-__all__ = ["DEFAULT_INBOX", "DELETE_FEED_WARNING", "ToolFn", "register_tools", "with_scope"]
+__all__ = ["DEFAULT_BUCKET", "DELETE_FEED_WARNING", "ToolFn", "register_tools", "with_scope"]

@@ -20,7 +20,7 @@ export function useFeedIndex(): Map<string, FeedSummary> {
   return index;
 }
 
-/** Link to a Mirror or an Inbox page; falls back to the raw id until the index has it. */
+/** Link to a Mirror or a Bucket page; falls back to the raw id until the index has it. */
 export function FeedLink({
   feedId,
   feed,
@@ -41,7 +41,7 @@ export function FeedLink({
       {feed.title}
     </Link>
   ) : (
-    <Link to="/inboxes/$inboxId" params={{ inboxId: feed.id }} className={classes}>
+    <Link to="/buckets/$bucketId" params={{ bucketId: feed.id }} className={classes}>
       {feed.title}
     </Link>
   );

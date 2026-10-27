@@ -1,4 +1,4 @@
-"""Feeds: listing, reading and deleting Mirrors and Inboxes; the default Inbox."""
+"""Feeds: listing, reading and deleting Mirrors and Buckets; the default Bucket."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from lxml import etree
 
 from copycast.application.capabilities import capability
 from copycast.application.events import FeedEvent
-from copycast.application.models import FeedList, FeedRead, InboxRead
+from copycast.application.models import BucketRead, FeedList, FeedRead
 from copycast.application.services.context import (
     FeedRow,
     FeedSort,
@@ -17,7 +17,7 @@ from copycast.application.services.context import (
     ServiceContext,
     UnitOfWorkPort,
 )
-from copycast.application.services.readmodels import feed_reads, inbox_read, one_feed_read
+from copycast.application.services.readmodels import bucket_read, feed_reads, one_feed_read
 from copycast.application.services.retry import retry_concurrent
 from copycast.domain.credentials import new_feed_password, new_feed_username
 from copycast.domain.enums import FeedKind
@@ -56,17 +56,17 @@ async def require_mirror(uow: UnitOfWorkPort, feed_id: str) -> FeedRow:
     return feed
 
 
-async def require_inbox(uow: UnitOfWorkPort, ident: str) -> FeedRow:
-    """An Inbox by id or case-insensitive name."""
-    feed = await uow.feeds.find_inbox(ident)
+async def require_bucket(uow: UnitOfWorkPort, ident: str) -> FeedRow:
+    """A Bucket by id or case-insensitive name."""
+    feed = await uow.feeds.find_bucket(ident)
     if feed is None:
-        raise NotFound("inbox", ident)
+        raise NotFound("bucket", ident)
     return feed
 
 
 @capability("delete_feed")
 async def delete_feed(ctx: ServiceContext, feed_id: str) -> None:
-    """Delete a Feed and its data directory; the default Inbox is refused (409).
+    """Delete a Feed and its data directory; the default Bucket is refused (409).
 
     Active jobs are cancelled first; the files go once the transaction committed.
     The transaction is retried when it loses a deadlock against a running job of
@@ -77,7 +77,7 @@ async def delete_feed(ctx: ServiceContext, feed_id: str) -> None:
         async with ctx.uow_factory() as uow:
             feed = await uow.feeds.require(feed_id)
             if feed.is_default:
-                raise Conflict("the default Inbox cannot be deleted; rename it instead")
+                raise Conflict("the default Bucket cannot be deleted; rename it instead")
             await uow.jobs.cancel_for_feed(feed_id)
             revision = feed.revision
             await uow.feeds.delete(feed_id)
@@ -108,39 +108,39 @@ async def rotate_feed_credentials(ctx: ServiceContext, feed_id: str) -> FeedRead
     return read
 
 
-@capability("ensure_default_inbox", response=InboxRead)
-async def ensure_default_inbox(ctx: ServiceContext) -> InboxRead:
-    """The one default Inbox "Copycast", created on first call (api lifespan, worker start)."""
+@capability("ensure_default_bucket", response=BucketRead)
+async def ensure_default_bucket(ctx: ServiceContext) -> BucketRead:
+    """The one default Bucket "Copycast", created on first call (api lifespan, worker start)."""
     async with ctx.uow_factory() as uow:
-        existed = await uow.feeds.default_inbox()
-        feed = await uow.feeds.ensure_default_inbox()
+        existed = await uow.feeds.default_bucket()
+        feed = await uow.feeds.ensure_default_bucket()
         if existed is None:
             await uow.update_intent(feed.id)
             ctx.layout.ensure_feed_dirs(feed.id)
-            log.info("inbox.default_created", feed_id=feed.id)
+            log.info("bucket.default_created", feed_id=feed.id)
         counts = await uow.catalog.count_by_state(feed.id)
         request_count = (await uow.requests.count_for_feeds([feed.id])).get(feed.id, 0)
-        return inbox_read(feed, ctx.urls, counts=counts, request_count=request_count)
+        return bucket_read(feed, ctx.urls, counts=counts, request_count=request_count)
 
 
-@capability("resolve_inbox", response=InboxRead)
-async def resolve_inbox(ctx: ServiceContext, ident: str) -> InboxRead:
-    """An Inbox by id or case-insensitive name (MCP's ``inbox="Copycast"`` default)."""
+@capability("resolve_bucket", response=BucketRead)
+async def resolve_bucket(ctx: ServiceContext, ident: str) -> BucketRead:
+    """A Bucket by id or case-insensitive name (MCP's ``bucket="Copycast"`` default)."""
     async with ctx.uow_factory() as uow:
-        feed = await require_inbox(uow, ident)
+        feed = await require_bucket(uow, ident)
         counts = await uow.catalog.count_by_state(feed.id)
         request_count = (await uow.requests.count_for_feeds([feed.id])).get(feed.id, 0)
-        return inbox_read(feed, ctx.urls, counts=counts, request_count=request_count)
+        return bucket_read(feed, ctx.urls, counts=counts, request_count=request_count)
 
 
 __all__ = [
     "delete_feed",
-    "ensure_default_inbox",
+    "ensure_default_bucket",
     "get_feed",
     "list_feeds",
-    "require_inbox",
+    "require_bucket",
     "require_mirror",
-    "resolve_inbox",
+    "resolve_bucket",
     "rotate_feed_credentials",
 ]
 

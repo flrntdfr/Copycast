@@ -387,9 +387,9 @@ def test_ytdlp_synthesized() -> None:
     check_golden("ytdlp_synthesized", rendered)
 
 
-def test_inbox() -> None:
+def test_bucket() -> None:
     feed = FeedView(
-        id="copycast-abc234", kind=FeedKind.inbox, title="Copycast", revision=2, last_modified=NOW
+        id="copycast-abc234", kind=FeedKind.bucket, title="Copycast", revision=2, last_modified=NOW
     )
     items = [
         item(
@@ -419,7 +419,7 @@ def test_inbox() -> None:
     _, channel = channel_of(rendered)
     assert channel.findtext("title") == "Copycast"
     assert channel.findtext("link") == f"{BASE_URL}/"
-    assert channel.findtext("description") == "Episodes saved to the Copycast Inbox with Copycast."
+    assert channel.findtext("description") == "Episodes saved to the Copycast Bucket with Copycast."
     assert channel.findtext(tag(NS_ITUNES, "author")) == "Copycast"
     logo = channel.find(tag(NS_ITUNES, "image"))
     assert logo is not None and logo.get("href") == f"{BASE_URL}/feeds/copycast-artwork.png"
@@ -430,7 +430,7 @@ def test_inbox() -> None:
     pubdates = [i.findtext("pubDate") for i in channel.findall("item")]
     assert pubdates == ["Tue, 20 Feb 2024 09:30:00 GMT", "Wed, 21 Feb 2024 09:30:00 GMT"]
     assert [i.findtext(tag(NS_ITUNES, "episode")) for i in channel.findall("item")] == ["1", "1"]
-    check_golden("inbox", rendered)
+    check_golden("bucket", rendered)
 
 
 def test_transcripts_mirrored_wins() -> None:
@@ -658,7 +658,7 @@ def test_automatic_feed_lists_unarchived_items_under_their_stable_url() -> None:
 
 
 def test_order_is_published_desc_nulls_last_then_ordinal_desc() -> None:
-    feed = FeedView(id="f", kind=FeedKind.inbox, title="F")
+    feed = FeedView(id="f", kind=FeedKind.bucket, title="F")
     items = [
         item("a", 1, "a", published_at=NOW - timedelta(days=2)),
         item("b", 2, "b", published_at=None),

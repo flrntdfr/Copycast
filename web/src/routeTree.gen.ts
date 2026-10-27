@@ -14,6 +14,8 @@ import { Route as AboutRouteImport } from "./routes/about";
 import { Route as JobsRouteImport } from "./routes/jobs";
 import { Route as KeysRouteImport } from "./routes/keys";
 import { Route as SettingsRouteImport } from "./routes/settings";
+import { Route as BucketsIndexRouteImport } from "./routes/buckets/index";
+import { Route as BucketsBucketIdRouteImport } from "./routes/buckets/$bucketId";
 import { Route as InboxesIndexRouteImport } from "./routes/inboxes/index";
 import { Route as InboxesInboxIdRouteImport } from "./routes/inboxes/$inboxId";
 import { Route as MirrorsIndexRouteImport } from "./routes/mirrors/index";
@@ -44,6 +46,16 @@ const SettingsRoute = SettingsRouteImport.update({
   path: "/settings",
   getParentRoute: () => rootRouteImport,
 } as any);
+const BucketsIndexRoute = BucketsIndexRouteImport.update({
+  id: "/buckets/",
+  path: "/buckets/",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const BucketsBucketIdRoute = BucketsBucketIdRouteImport.update({
+  id: "/buckets/$bucketId",
+  path: "/buckets/$bucketId",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const InboxesIndexRoute = InboxesIndexRouteImport.update({
   id: "/inboxes/",
   path: "/inboxes/",
@@ -71,8 +83,10 @@ export interface FileRoutesByFullPath {
   "/jobs": typeof JobsRoute;
   "/keys": typeof KeysRoute;
   "/settings": typeof SettingsRoute;
+  "/buckets/$bucketId": typeof BucketsBucketIdRoute;
   "/inboxes/$inboxId": typeof InboxesInboxIdRoute;
   "/mirrors/$mirrorId": typeof MirrorsMirrorIdRoute;
+  "/buckets/": typeof BucketsIndexRoute;
   "/inboxes/": typeof InboxesIndexRoute;
   "/mirrors/": typeof MirrorsIndexRoute;
 }
@@ -82,8 +96,10 @@ export interface FileRoutesByTo {
   "/jobs": typeof JobsRoute;
   "/keys": typeof KeysRoute;
   "/settings": typeof SettingsRoute;
+  "/buckets/$bucketId": typeof BucketsBucketIdRoute;
   "/inboxes/$inboxId": typeof InboxesInboxIdRoute;
   "/mirrors/$mirrorId": typeof MirrorsMirrorIdRoute;
+  "/buckets": typeof BucketsIndexRoute;
   "/inboxes": typeof InboxesIndexRoute;
   "/mirrors": typeof MirrorsIndexRoute;
 }
@@ -94,8 +110,10 @@ export interface FileRoutesById {
   "/jobs": typeof JobsRoute;
   "/keys": typeof KeysRoute;
   "/settings": typeof SettingsRoute;
+  "/buckets/$bucketId": typeof BucketsBucketIdRoute;
   "/inboxes/$inboxId": typeof InboxesInboxIdRoute;
   "/mirrors/$mirrorId": typeof MirrorsMirrorIdRoute;
+  "/buckets/": typeof BucketsIndexRoute;
   "/inboxes/": typeof InboxesIndexRoute;
   "/mirrors/": typeof MirrorsIndexRoute;
 }
@@ -107,8 +125,10 @@ export interface FileRouteTypes {
     | "/jobs"
     | "/keys"
     | "/settings"
+    | "/buckets/$bucketId"
     | "/inboxes/$inboxId"
     | "/mirrors/$mirrorId"
+    | "/buckets/"
     | "/inboxes/"
     | "/mirrors/";
   fileRoutesByTo: FileRoutesByTo;
@@ -118,8 +138,10 @@ export interface FileRouteTypes {
     | "/jobs"
     | "/keys"
     | "/settings"
+    | "/buckets/$bucketId"
     | "/inboxes/$inboxId"
     | "/mirrors/$mirrorId"
+    | "/buckets"
     | "/inboxes"
     | "/mirrors";
   id:
@@ -129,8 +151,10 @@ export interface FileRouteTypes {
     | "/jobs"
     | "/keys"
     | "/settings"
+    | "/buckets/$bucketId"
     | "/inboxes/$inboxId"
     | "/mirrors/$mirrorId"
+    | "/buckets/"
     | "/inboxes/"
     | "/mirrors/";
   fileRoutesById: FileRoutesById;
@@ -141,8 +165,10 @@ export interface RootRouteChildren {
   JobsRoute: typeof JobsRoute;
   KeysRoute: typeof KeysRoute;
   SettingsRoute: typeof SettingsRoute;
+  BucketsBucketIdRoute: typeof BucketsBucketIdRoute;
   InboxesInboxIdRoute: typeof InboxesInboxIdRoute;
   MirrorsMirrorIdRoute: typeof MirrorsMirrorIdRoute;
+  BucketsIndexRoute: typeof BucketsIndexRoute;
   InboxesIndexRoute: typeof InboxesIndexRoute;
   MirrorsIndexRoute: typeof MirrorsIndexRoute;
 }
@@ -184,6 +210,20 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SettingsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/buckets/": {
+      id: "/buckets/";
+      path: "/buckets";
+      fullPath: "/buckets/";
+      preLoaderRoute: typeof BucketsIndexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/buckets/$bucketId": {
+      id: "/buckets/$bucketId";
+      path: "/buckets/$bucketId";
+      fullPath: "/buckets/$bucketId";
+      preLoaderRoute: typeof BucketsBucketIdRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/inboxes/": {
       id: "/inboxes/";
       path: "/inboxes";
@@ -221,8 +261,10 @@ const rootRouteChildren: RootRouteChildren = {
   JobsRoute: JobsRoute,
   KeysRoute: KeysRoute,
   SettingsRoute: SettingsRoute,
+  BucketsBucketIdRoute: BucketsBucketIdRoute,
   InboxesInboxIdRoute: InboxesInboxIdRoute,
   MirrorsMirrorIdRoute: MirrorsMirrorIdRoute,
+  BucketsIndexRoute: BucketsIndexRoute,
   InboxesIndexRoute: InboxesIndexRoute,
   MirrorsIndexRoute: MirrorsIndexRoute,
 };

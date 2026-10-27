@@ -142,7 +142,7 @@ def predicted_ext(
 
     A ytdlp Source archives to the Engine's container (``m4a``) whatever the listing
     says. An RSS enclosure is archived in the container :func:`archived_ext_for` gives
-    for its MIME type, else for its URL's known extension, else ``mp3``. An Inbox (no
+    for its MIME type, else for its URL's known extension, else ``mp3``. A Bucket (no
     Source) is filled by the Engine too, unless the Request named a media file whose
     type or URL says otherwise.
     """

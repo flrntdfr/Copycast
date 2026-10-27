@@ -144,7 +144,7 @@ async def test_artwork_logo_and_robots_are_public(
     # Other assets keep the feed's pair.
     chapters = next(a for a in archived[0]["assets"] if a["kind"] == "chapters")
     assert (await client.get(chapters["url"])).status_code == 401
-    # The logo an Inbox feed shows, and robots.txt, are open too.
+    # The logo a Bucket feed shows, and robots.txt, are open too.
     logo = await client.get("/feeds/copycast-artwork.png")
     assert logo.status_code == 200 and logo.headers["content-type"] == "image/png"
     robots = await client.get("/robots.txt")

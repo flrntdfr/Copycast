@@ -14,10 +14,10 @@ from copycast.application.models import (
     ApiKeyRead,
     AssetRead,
     BackfillPolicy,
+    BucketRead,
     CatalogCounts,
     FeedHealth,
     FeedRead,
-    InboxRead,
     ItemMedia,
     ItemRead,
     JobRead,
@@ -128,10 +128,10 @@ def mirror_read(
     )
 
 
-def inbox_read(
+def bucket_read(
     feed: FeedRow, urls: PublicUrls, *, counts: CatalogCounts, request_count: int = 0
-) -> InboxRead:
-    return InboxRead(
+) -> BucketRead:
+    return BucketRead(
         id=feed.id,
         title=feed.title,
         name=feed.title,
@@ -158,8 +158,8 @@ def feed_read(
     request_count: int = 0,
     selected_count: int = 0,
 ) -> FeedRead:
-    if feed.kind == FeedKind.inbox:
-        return inbox_read(feed, urls, counts=counts, request_count=request_count)
+    if feed.kind == FeedKind.bucket:
+        return bucket_read(feed, urls, counts=counts, request_count=request_count)
     return mirror_read(feed, urls, counts=counts, selected_count=selected_count)
 
 
@@ -181,9 +181,9 @@ async def feed_reads(
 ) -> list[FeedRead]:
     ids = [feed.id for feed in feeds]
     counts = await uow.catalog.count_by_state_many(ids)
-    inbox_ids = [feed.id for feed in feeds if feed.kind == FeedKind.inbox]
+    bucket_ids = [feed.id for feed in feeds if feed.kind == FeedKind.bucket]
     request_counts: Mapping[str, int] = (
-        await uow.requests.count_for_feeds(inbox_ids) if inbox_ids else {}
+        await uow.requests.count_for_feeds(bucket_ids) if bucket_ids else {}
     )
     selected = await selected_counts(uow, feeds)
     return [
@@ -319,7 +319,7 @@ async def request_read(
     job = await uow.jobs.latest_for_request(request.id)
     return RequestRead(
         id=request.id,
-        inbox_id=request.feed_id,
+        bucket_id=request.feed_id,
         url=request.url,
         requested_via=RequestedVia(request.requested_via),
         status=RequestStatus(request.status),
@@ -335,10 +335,10 @@ __all__ = [
     "SELECTED_STATES",
     "api_key_read",
     "asset_read",
+    "bucket_read",
     "feed_health",
     "feed_read",
     "feed_reads",
-    "inbox_read",
     "item_read",
     "item_reads",
     "job_read",

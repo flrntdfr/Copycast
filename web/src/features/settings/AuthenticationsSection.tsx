@@ -1,5 +1,5 @@
-import { CircleCheck, ClipboardPaste, Loader2, Trash2, Upload } from "lucide-react";
-import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { CircleCheck, Loader2, Trash2, Upload } from "lucide-react";
+import { useRef, useState, type ChangeEvent } from "react";
 
 import { $api } from "@/api/client";
 import type { CookieServiceRead, EngineCookieFileRead } from "@/api/types";
@@ -18,16 +18,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
   Table,
   TableBody,
   TableCell,
@@ -35,7 +25,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { HelpTip } from "./HelpTip";
@@ -49,7 +38,6 @@ export function AuthenticationsSection() {
   const cookies = $api.useQuery("get", "/api/engine/cookies");
   const save = useSetCookies();
   const fileInput = useRef<HTMLInputElement>(null);
-  const [pasting, setPasting] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const services = cookies.data?.services ?? [];
   const files = (cookies.data?.files ?? []).filter((file) => (file.cookie_count ?? 0) > 0);
@@ -76,26 +64,14 @@ export function AuthenticationsSection() {
             </HelpTip>
           </span>
         }
-        actions={
-          <>
-            <input
-              ref={fileInput}
-              type="file"
-              accept=".txt,text/plain"
-              className="sr-only"
-              aria-label="Pick a cookies.txt file"
-              onChange={pickFile}
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-10 md:h-8"
-              onClick={() => setPasting(true)}
-            >
-              <ClipboardPaste /> Paste…
-            </Button>
-          </>
-        }
+      />
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".txt,text/plain"
+        className="sr-only"
+        aria-label="Pick a cookies.txt file"
+        onChange={pickFile}
       />
       <ul className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5" aria-label="Services">
         <li>
@@ -128,7 +104,6 @@ export function AuthenticationsSection() {
       ) : files.length > 0 ? (
         <CookieFilesTable files={files} onRemove={setRemoving} />
       ) : null}
-      <PasteDialog open={pasting} onOpenChange={setPasting} />
       <RemoveDialog name={removing} onClose={() => setRemoving(null)} />
     </section>
   );
@@ -237,80 +212,6 @@ function CookieFilesTable({
 /** Where a cookie file lives in the data directory (`data/engine/cookies/{name}.txt`). */
 function cookieFilePath(name: string): string {
   return `data/engine/cookies/${name}.txt`;
-}
-
-function PasteDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-}) {
-  const save = useSetCookies();
-  const [name, setName] = useState("");
-  const [content, setContent] = useState("");
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (!content.trim()) return;
-    save.mutate(
-      { body: { content, name: name.trim() || "cookies" } },
-      {
-        onSuccess: () => {
-          setContent("");
-          setName("");
-          onOpenChange(false);
-        },
-      },
-    );
-  };
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
-        <form onSubmit={submit} aria-label="Paste a cookie file" className="space-y-4">
-          <DialogHeader>
-            <DialogTitle>Paste a cookie file</DialogTitle>
-            <DialogDescription>
-              The Netscape cookies.txt text a browser extension exported. A name already in the
-              table replaces that file.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-1.5">
-            <Label htmlFor="cookie-name">Name</Label>
-            <Input
-              id="cookie-name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="youtube"
-              maxLength={64}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="cookie-content">Cookie file (Netscape cookies.txt)</Label>
-            <Textarea
-              id="cookie-content"
-              value={content}
-              onChange={(event) => setContent(event.target.value)}
-              rows={8}
-              spellCheck={false}
-              placeholder={
-                "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1790000000\tSID\t…"
-              }
-              className="font-mono text-xs"
-            />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!content.trim() || save.isPending}>
-              {save.isPending ? <Loader2 className="animate-spin" /> : <Upload />}
-              Store cookies
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 function RemoveDialog({ name, onClose }: { name: string | null; onClose: () => void }) {

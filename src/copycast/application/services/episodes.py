@@ -140,8 +140,8 @@ async def delete_episode(
             files.append(uow.layout.resolve(feed_id, asset.local_path))
             bytes_freed += asset.size_bytes or 0
 
-    # Inbox deletions hide the row; Mirror tombstones stay visible as Available.
-    listed = feed.kind != FeedKind.inbox
+    # Bucket deletions hide the row; Mirror tombstones stay visible as Available.
+    listed = feed.kind != FeedKind.bucket
     await uow.catalog.tombstone(item_id, listed=listed)
     await uow.feeds.recount_storage(feed_id)
     intent_version, revision = await uow.update_intent(feed_id)

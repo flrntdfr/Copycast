@@ -1,8 +1,8 @@
 """Deterministic identifiers.
 
 Mirror, item and asset ids are hashes of their natural keys so that
-``copycast rebuild`` reproduces them from disk; Inbox ids carry a random
-suffix because two Inboxes may share a name.
+``copycast rebuild`` reproduces them from disk; Bucket ids carry a random
+suffix because two Buckets may share a name.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ import secrets
 from typing import Final
 
 FEED_ID_RE: Final = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
-INBOX_ALPHABET: Final = "abcdefghjkmnpqrstuvwxyz23456789"
-INBOX_SUFFIX_LEN: Final = 6
+BUCKET_ALPHABET: Final = "abcdefghjkmnpqrstuvwxyz23456789"
+BUCKET_SUFFIX_LEN: Final = 6
 SLUG_MAX_LEN: Final = 40
 HASH_ID_LEN: Final = 16
 
@@ -30,7 +30,7 @@ def slug(name: str, max_len: int = SLUG_MAX_LEN) -> str:
     text = name.lower().encode("ascii", "ignore").decode("ascii")
     text = _NON_SLUG.sub("-", text).strip("-")
     text = text[:max_len].rstrip("-")
-    return text or "inbox"
+    return text or "bucket"
 
 
 def mirror_id(dedup_key: str) -> str:
@@ -38,9 +38,9 @@ def mirror_id(dedup_key: str) -> str:
     return _short_hash(dedup_key)
 
 
-def inbox_id(name: str) -> str:
+def bucket_id(name: str) -> str:
     """``slug(name)[:40] + '-' + 6 chars`` from the unambiguous alphabet."""
-    suffix = "".join(secrets.choice(INBOX_ALPHABET) for _ in range(INBOX_SUFFIX_LEN))
+    suffix = "".join(secrets.choice(BUCKET_ALPHABET) for _ in range(BUCKET_SUFFIX_LEN))
     return f"{slug(name)}-{suffix}"
 
 

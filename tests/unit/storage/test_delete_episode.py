@@ -156,8 +156,8 @@ async def test_mirror_deletion_tombstones_listed_and_unlinks_after_commit(tmp_pa
     uow.commit()  # unlinking again is harmless
 
 
-async def test_inbox_deletion_hides_the_row(tmp_path: Path) -> None:
-    uow, _ = _uow(tmp_path, FeedKind.inbox)
+async def test_bucket_deletion_hides_the_row(tmp_path: Path) -> None:
+    uow, _ = _uow(tmp_path, FeedKind.bucket)
     result = await delete_episode(uow, "i1", DeleteReason.prune)
     assert result.reason is DeleteReason.prune
     assert uow.catalog.tombstoned == [("i1", False)]

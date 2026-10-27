@@ -1,4 +1,4 @@
-import { Inbox, Loader2 } from "lucide-react";
+import { PaintBucket, Loader2 } from "lucide-react";
 
 import { ApiProblem, describeProblem } from "@/api/problem";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -11,8 +11,8 @@ export function ProbeStep({
   creating = false,
   onCancel,
   onRetry,
-  onSendToInbox,
-  sendingToInbox,
+  onSendToBucket,
+  sendingToBucket,
 }: {
   url: string;
   error: unknown;
@@ -20,8 +20,8 @@ export function ProbeStep({
   creating?: boolean;
   onCancel: () => void;
   onRetry: () => void;
-  onSendToInbox?: () => void;
-  sendingToInbox?: boolean;
+  onSendToBucket?: () => void;
+  sendingToBucket?: boolean;
 }) {
   if (error) {
     const aborted = ApiProblem.is(error) && error.slug === "aborted";
@@ -42,9 +42,9 @@ export function ProbeStep({
         </Alert>
         <div className="flex flex-wrap gap-2">
           <Button onClick={onRetry}>Try again</Button>
-          {onSendToInbox ? (
-            <Button variant="outline" onClick={onSendToInbox} disabled={sendingToInbox}>
-              <Inbox /> Send to Inbox instead
+          {onSendToBucket ? (
+            <Button variant="outline" onClick={onSendToBucket} disabled={sendingToBucket}>
+              <PaintBucket /> Send to Bucket instead
             </Button>
           ) : null}
           <Button variant="ghost" onClick={onCancel}>

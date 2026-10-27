@@ -185,7 +185,7 @@ def probe(
             if content_type.startswith(MEDIA_TYPE_PREFIXES):
                 raise Unsupported(
                     f"{input_url} is a media file ({content_type}), not a Source; "
-                    "send it to an Inbox instead"
+                    "send it to a Bucket instead"
                 )
             try:
                 parsed = parse_feed(fetched.body, url=fetched.url)

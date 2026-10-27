@@ -1,4 +1,4 @@
-"""The prune job: an Inbox's Retention (``{mode: auto}``) or a queued manual prune."""
+"""The prune job: a Bucket's Retention (``{mode: auto}``) or a queued manual prune."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ async def run(ctx: JobContext) -> JobOutcome:
                 older_than_days=payload.get("older_than_days"),
                 dry_run=False,
             )
-            result = await services.prune_inbox(job.feed_id, body)
+            result = await services.prune_bucket(job.feed_id, body)
     except DomainError as exc:
         raise PermanentError(str(exc)) from exc
     except ValueError as exc:  # an unusable manual payload

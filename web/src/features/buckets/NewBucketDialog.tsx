@@ -18,19 +18,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useInvalidateFeed } from "@/features/feeds/mutations";
 
-/** `create_inbox`: a name now, autoprune later from the Inbox settings. */
-export function NewInboxDialog() {
+/** `create_bucket`: a name now, autoprune later from the Bucket settings. */
+export function NewBucketDialog() {
   const navigate = useNavigate();
   const invalidate = useInvalidateFeed();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const create = $api.useMutation("post", "/api/inboxes", {
-    onSuccess: (inbox) => {
+  const create = $api.useMutation("post", "/api/buckets", {
+    onSuccess: (bucket) => {
       invalidate();
-      toast.success(`Inbox “${inbox.name}” created`);
+      toast.success(`Bucket “${bucket.name}” created`);
       setOpen(false);
       setName("");
-      void navigate({ to: "/inboxes/$inboxId", params: { inboxId: inbox.id } });
+      void navigate({ to: "/buckets/$bucketId", params: { bucketId: bucket.id } });
     },
   });
   const submit = (event: FormEvent) => {
@@ -43,21 +43,21 @@ export function NewInboxDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant="outline" className="dark:bg-black dark:hover:bg-accent">
-          <Plus /> New Inbox
+          <Plus /> New Bucket
         </Button>
       </DialogTrigger>
       <DialogContent>
         <form onSubmit={submit} className="space-y-4">
           <DialogHeader>
-            <DialogTitle>New Inbox</DialogTitle>
+            <DialogTitle>New Bucket</DialogTitle>
             <DialogDescription>
-              An Inbox publishes its own feed and is filled by the URLs you push into it.
+              A Bucket publishes its own feed and is filled by the URLs you push into it.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">
-            <Label htmlFor="new-inbox-name">Name</Label>
+            <Label htmlFor="new-bucket-name">Name</Label>
             <Input
-              id="new-inbox-name"
+              id="new-bucket-name"
               value={name}
               onChange={(event) => setName(event.target.value)}
               maxLength={80}

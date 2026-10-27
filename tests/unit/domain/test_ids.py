@@ -7,10 +7,10 @@ import pytest
 
 from copycast.domain.enums import AssetKind, AssetProvenance
 from copycast.domain.ids import (
+    BUCKET_ALPHABET,
     FEED_ID_RE,
-    INBOX_ALPHABET,
     asset_id,
-    inbox_id,
+    bucket_id,
     is_feed_id,
     item_id,
     mirror_id,
@@ -42,17 +42,17 @@ def test_mirror_id_is_a_valid_feed_id() -> None:
     assert is_feed_id(mirror_id("example.com/feed.xml"))
 
 
-def test_inbox_id_shape() -> None:
-    ident = inbox_id("Copycast")
+def test_bucket_id_shape() -> None:
+    ident = bucket_id("Copycast")
     stem, suffix = ident.rsplit("-", 1)
     assert stem == "copycast"
     assert len(suffix) == 6
-    assert set(suffix) <= set(INBOX_ALPHABET)
+    assert set(suffix) <= set(BUCKET_ALPHABET)
     assert is_feed_id(ident)
 
 
-def test_inbox_id_is_random_per_call() -> None:
-    assert inbox_id("Later") != inbox_id("Later")
+def test_bucket_id_is_random_per_call() -> None:
+    assert bucket_id("Later") != bucket_id("Later")
 
 
 @pytest.mark.parametrize(
@@ -61,8 +61,8 @@ def test_inbox_id_is_random_per_call() -> None:
         ("Copycast", "copycast"),
         ("  Read  Later!! ", "read-later"),
         ("Émissions à écouter", "missions-couter"),
-        ("日本語", "inbox"),
-        ("---", "inbox"),
+        ("日本語", "bucket"),
+        ("---", "bucket"),
         ("a" * 60, "a" * 40),
         ("word-" * 12, ("word-" * 12)[:40].rstrip("-")),
     ],
@@ -72,8 +72,8 @@ def test_slug(name: str, expected: str) -> None:
     assert len(slug(name)) <= 40
 
 
-def test_inbox_id_never_exceeds_feed_id_length() -> None:
-    ident = inbox_id("x" * 200)
+def test_bucket_id_never_exceeds_feed_id_length() -> None:
+    ident = bucket_id("x" * 200)
     assert len(ident) <= 63
     assert FEED_ID_RE.match(ident)
 

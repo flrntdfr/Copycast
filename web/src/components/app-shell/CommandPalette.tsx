@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import {
   Info,
-  Inbox,
+  PaintBucket,
   KeyRound,
   Keyboard,
   Plus,
@@ -79,12 +79,12 @@ export function CommandPalette({
                   <Radio /> Mirror this URL
                 </CommandItem>
                 <CommandItem
-                  value={`inbox ${query}`}
+                  value={`bucket ${query}`}
                   onSelect={() =>
                     go(() => void navigate({ to: "/", search: { url: query.trim() } }))
                   }
                 >
-                  <Send /> Send to Inbox…
+                  <Send /> Send to Bucket…
                 </CommandItem>
               </>
             ) : (
@@ -101,8 +101,8 @@ export function CommandPalette({
           <CommandItem onSelect={() => go(() => void navigate({ to: "/" }))}>
             <Radio /> Feeds
           </CommandItem>
-          <CommandItem onSelect={() => go(() => void navigate({ to: "/", hash: "inboxes" }))}>
-            <Inbox /> Inboxes
+          <CommandItem onSelect={() => go(() => void navigate({ to: "/", hash: "buckets" }))}>
+            <PaintBucket /> Buckets
           </CommandItem>
           <CommandItem onSelect={() => go(() => void navigate({ to: "/jobs" }))}>
             <RefreshCw /> Jobs
@@ -136,11 +136,11 @@ export function CommandPalette({
                       () =>
                         void (isMirror(feed)
                           ? navigate({ to: "/mirrors/$mirrorId", params: { mirrorId: feed.id } })
-                          : navigate({ to: "/inboxes/$inboxId", params: { inboxId: feed.id } })),
+                          : navigate({ to: "/buckets/$bucketId", params: { bucketId: feed.id } })),
                     )
                   }
                 >
-                  {isMirror(feed) ? <Radio /> : <Inbox />} {feed.title}
+                  {isMirror(feed) ? <Radio /> : <PaintBucket />} {feed.title}
                 </CommandItem>
               ))}
             </CommandGroup>

@@ -31,7 +31,7 @@ from copycast.settings import Settings
 from tests.integration.storage.conftest import (
     NOW,
     asset_row,
-    inbox_row,
+    bucket_row,
     item_row,
     mirror_row,
     seed,
@@ -90,9 +90,9 @@ async def _snapshot(sessionmaker: async_sessionmaker[AsyncSession]) -> dict[str,
 
 
 async def _populate(uow_factory: UnitOfWorkFactory, layout: Layout) -> tuple[str, str]:
-    """A Mirror with real files and an Inbox with a Request; descriptors exported."""
+    """A Mirror with real files and a Bucket with a Request; descriptors exported."""
     async with uow_factory() as uow:
-        default = await uow.feeds.ensure_default_inbox()
+        default = await uow.feeds.ensure_default_bucket()
         mirror = await uow.feeds.add(
             mirror_row(source_channel_xml=_channel_xml(CHANNEL_XML.encode()))
         )
@@ -171,18 +171,18 @@ async def _populate(uow_factory: UnitOfWorkFactory, layout: Layout) -> tuple[str
         await uow.feeds.recount_storage(mirror.id)
         await uow.update_intent(mirror.id)
 
-        inbox = await uow.feeds.add(inbox_row("Later", autoprune_days=14))
-        inbox_item = item_row(inbox, 1, state=ArchiveState.archived)
-        await seed(uow, inbox_item)
-        layout.ensure_feed_dirs(inbox.id)
-        layout.media_path(inbox.id, inbox_item.id, "m4a").write_bytes(b"\0" * 1000)
-        request = await uow.requests.add(inbox.id, "https://x.example/v", RequestedVia.mcp)
-        await uow.requests.link_items(request.id, [inbox_item.id])
+        bucket = await uow.feeds.add(bucket_row("Later", autoprune_days=14))
+        bucket_item = item_row(bucket, 1, state=ArchiveState.archived)
+        await seed(uow, bucket_item)
+        layout.ensure_feed_dirs(bucket.id)
+        layout.media_path(bucket.id, bucket_item.id, "m4a").write_bytes(b"\0" * 1000)
+        request = await uow.requests.add(bucket.id, "https://x.example/v", RequestedVia.mcp)
+        await uow.requests.link_items(request.id, [bucket_item.id])
         await uow.requests.mark_expanded(request.id, 1, at=NOW)
-        await uow.feeds.recount_storage(inbox.id)
-        await uow.update_intent(inbox.id)
+        await uow.feeds.recount_storage(bucket.id)
+        await uow.update_intent(bucket.id)
         await uow.update_intent(default.id)
-    return mirror.id, inbox.id
+    return mirror.id, bucket.id
 
 
 async def _wipe(sessionmaker: async_sessionmaker[AsyncSession]) -> None:
@@ -198,7 +198,7 @@ async def test_round_trip_restores_everything_but_telemetry(
     db_engine: AsyncEngine,
     sessionmaker: async_sessionmaker[AsyncSession],
 ) -> None:
-    mirror_id, inbox_id = await _populate(uow_factory, layout)
+    mirror_id, bucket_id = await _populate(uow_factory, layout)
     before = await _snapshot(sessionmaker)
     assert len(before["feeds"]) == 3
     await _wipe(sessionmaker)
@@ -231,8 +231,8 @@ async def test_round_trip_restores_everything_but_telemetry(
         assert tomb is not None and tomb.archive_state == ArchiveState.deleted
         waiting = await session.get(CatalogItem, item_id(mirror_id, "urn:test:item:4"))
         assert waiting is not None and waiting.live_status == LiveStatus.post_live
-        inbox = await session.get(Feed, inbox_id)
-        assert inbox is not None and inbox.autoprune_days == 14
+        bucket = await session.get(Feed, bucket_id)
+        assert bucket is not None and bucket.autoprune_days == 14
 
     # Idempotent: a second run changes nothing but the revision.
     again = await rebuild(settings, yes=True, db_engine=db_engine)
@@ -256,9 +256,9 @@ async def test_refuses_while_the_worker_holds_its_lock(
         with pytest.raises(RebuildRefused, match="WORKER_LOCK"):
             await rebuild(settings, yes=False, db_engine=db_engine)
         report = await rebuild(settings, yes=False, lock_held=True, db_engine=db_engine)
-        assert report.default_inbox_id.startswith("copycast-")
+        assert report.default_bucket_id.startswith("copycast-")
     report = await rebuild(settings, yes=False, db_engine=db_engine)
-    assert report.feeds_on_disk == 1  # the default Inbox's descriptor was exported
+    assert report.feeds_on_disk == 1  # the default Bucket's descriptor was exported
 
 
 async def test_reconciles_media_and_ignores_tmp_leftovers(
@@ -462,33 +462,33 @@ async def test_rebuild_keeps_the_feed_pair_and_mints_one_for_old_descriptors(
     db_engine: AsyncEngine,
     sessionmaker: async_sessionmaker[AsyncSession],
 ) -> None:
-    mirror_id, inbox_id = await _populate(uow_factory, layout)
+    mirror_id, bucket_id = await _populate(uow_factory, layout)
     async with sessionmaker() as session:
         mirror = await session.get(Feed, mirror_id)
         assert mirror is not None
         pair = (mirror.auth_username, mirror.auth_password)
     # A descriptor written before credentials existed carries none of them.
-    inbox_descriptor = layout.descriptor_path(inbox_id)
-    data = json.loads(inbox_descriptor.read_text(encoding="utf-8"))
+    bucket_descriptor = layout.descriptor_path(bucket_id)
+    data = json.loads(bucket_descriptor.read_text(encoding="utf-8"))
     del data["feed"]["auth_username"], data["feed"]["auth_password"]
-    inbox_descriptor.write_text(json.dumps(data), encoding="utf-8")
+    bucket_descriptor.write_text(json.dumps(data), encoding="utf-8")
     await _wipe(sessionmaker)
 
     await rebuild(settings, yes=False, db_engine=db_engine)
     async with sessionmaker() as session:
         mirror = await session.get(Feed, mirror_id)
-        inbox = await session.get(Feed, inbox_id)
-        assert mirror is not None and inbox is not None
+        bucket = await session.get(Feed, bucket_id)
+        assert mirror is not None and bucket is not None
         assert (mirror.auth_username, mirror.auth_password) == pair
-        assert len(inbox.auth_username) == 8 and len(inbox.auth_password) == 24
-        minted = (inbox.auth_username, inbox.auth_password)
+        assert len(bucket.auth_username) == 8 and len(bucket.auth_password) == 24
+        minted = (bucket.auth_username, bucket.auth_password)
     # The minted pair is written back, so the next rebuild finds it instead of minting again.
-    on_disk = json.loads(inbox_descriptor.read_text(encoding="utf-8"))["feed"]
+    on_disk = json.loads(bucket_descriptor.read_text(encoding="utf-8"))["feed"]
     assert (on_disk["auth_username"], on_disk["auth_password"]) == minted
     await rebuild(settings, yes=False, db_engine=db_engine)
     async with sessionmaker() as session:
-        inbox = await session.get(Feed, inbox_id)
-        assert inbox is not None and (inbox.auth_username, inbox.auth_password) == minted
+        bucket = await session.get(Feed, bucket_id)
+        assert bucket is not None and (bucket.auth_username, bucket.auth_password) == minted
 
 
 async def test_rebuild_never_replaces_the_pair_of_a_row_that_still_exists(
@@ -499,10 +499,10 @@ async def test_rebuild_never_replaces_the_pair_of_a_row_that_still_exists(
     sessionmaker: async_sessionmaker[AsyncSession],
 ) -> None:
     """After an upgrade the rows carry pairs (migration 0002) while feed.json does not yet."""
-    mirror_id, inbox_id = await _populate(uow_factory, layout)
+    mirror_id, bucket_id = await _populate(uow_factory, layout)
     pairs: dict[str, tuple[str, str]] = {}
     async with sessionmaker() as session:
-        for feed_id in (mirror_id, inbox_id):
+        for feed_id in (mirror_id, bucket_id):
             row = await session.get(Feed, feed_id)
             assert row is not None
             pairs[feed_id] = (row.auth_username, row.auth_password)
@@ -518,5 +518,5 @@ async def test_rebuild_never_replaces_the_pair_of_a_row_that_still_exists(
             row = await session.get(Feed, feed_id)
             assert row is not None
             assert (row.auth_username, row.auth_password) == pair, feed_id
-    on_disk = json.loads(layout.descriptor_path(inbox_id).read_text(encoding="utf-8"))["feed"]
-    assert (on_disk["auth_username"], on_disk["auth_password"]) == pairs[inbox_id]
+    on_disk = json.loads(layout.descriptor_path(bucket_id).read_text(encoding="utf-8"))["feed"]
+    assert (on_disk["auth_username"], on_disk["auth_password"]) == pairs[bucket_id]

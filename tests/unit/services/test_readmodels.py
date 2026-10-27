@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from copycast.application.models import CatalogCounts, InboxRead, MirrorRead
+from copycast.application.models import BucketRead, CatalogCounts, MirrorRead
 from copycast.application.services import readmodels
 from copycast.domain.enums import ArchiveState, HealthStatus, LiveStatus
 
@@ -118,11 +118,11 @@ def test_mirror_read_and_selection_summary() -> None:
 
 
 def test_feed_read_dispatches_on_kind() -> None:
-    inbox = mirror_row(
-        kind="inbox", source_url=None, source_kind=None, backfill_mode=None, autoprune_days=3
+    bucket = mirror_row(
+        kind="bucket", source_url=None, source_kind=None, backfill_mode=None, autoprune_days=3
     )
-    read = readmodels.feed_read(inbox, Urls(), counts=CatalogCounts(archived=2), request_count=5)
-    assert isinstance(read, InboxRead)
+    read = readmodels.feed_read(bucket, Urls(), counts=CatalogCounts(archived=2), request_count=5)
+    assert isinstance(read, BucketRead)
     assert read.name == "Show" and read.autoprune_days == 3 and read.request_count == 5
     mirror = readmodels.feed_read(mirror_row(), Urls(), counts=CatalogCounts())
     assert isinstance(mirror, MirrorRead)

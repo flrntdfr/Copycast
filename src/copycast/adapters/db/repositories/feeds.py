@@ -1,4 +1,4 @@
-"""Feeds: Mirrors and Inboxes, their counters and the default Inbox."""
+"""Feeds: Mirrors and Buckets, their counters and the default Bucket."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ from copycast.adapters.db.models import Asset, CatalogItem, Feed
 from copycast.application.models import Totals
 from copycast.domain.enums import ArchiveState, AssetState, BackfillMode, FeedKind
 from copycast.domain.exceptions import NotFound
-from copycast.domain.ids import inbox_id
+from copycast.domain.ids import bucket_id
 
-DEFAULT_INBOX_TITLE = "Copycast"
+DEFAULT_BUCKET_TITLE = "Copycast"
 
 FeedSort = Literal["title", "created_at", "updated_at", "storage_bytes"]
 _SORT_COLUMNS = {
@@ -93,20 +93,20 @@ class FeedRepository:
             stmt = stmt.where(Feed.kind == kind.value)
         return int((await self._session.execute(stmt)).scalar_one())
 
-    async def find_inbox(self, ident: str) -> Feed | None:
-        """An Inbox by id, else by case-insensitive name; ``None`` when neither matches."""
+    async def find_bucket(self, ident: str) -> Feed | None:
+        """A Bucket by id, else by case-insensitive name; ``None`` when neither matches."""
         feed = await self.get(ident)
-        if feed is not None and feed.kind == FeedKind.inbox:
+        if feed is not None and feed.kind == FeedKind.bucket:
             return feed
         result = await self._session.execute(
             select(Feed)
-            .where(Feed.kind == FeedKind.inbox.value, func.lower(Feed.title) == ident.lower())
+            .where(Feed.kind == FeedKind.bucket.value, func.lower(Feed.title) == ident.lower())
             .order_by(Feed.is_default.desc(), Feed.created_at)
             .limit(1)
         )
         return result.scalar_one_or_none()
 
-    async def default_inbox(self) -> Feed | None:
+    async def default_bucket(self) -> Feed | None:
         result = await self._session.execute(select(Feed).where(Feed.is_default.is_(True)))
         return result.scalar_one_or_none()
 
@@ -137,11 +137,11 @@ class FeedRepository:
         )
         return list((await self._session.execute(stmt)).scalars())
 
-    async def inboxes_due_autoprune(self, before: datetime) -> list[Feed]:
+    async def buckets_due_autoprune(self, before: datetime) -> list[Feed]:
         stmt = (
             select(Feed)
             .where(
-                Feed.kind == FeedKind.inbox.value,
+                Feed.kind == FeedKind.bucket.value,
                 Feed.autoprune_days.is_not(None),
                 (Feed.last_autoprune_at.is_(None)) | (Feed.last_autoprune_at < before),
             )
@@ -178,16 +178,16 @@ class FeedRepository:
         result = await self._session.execute(delete(Feed).where(Feed.id == feed_id))
         return rows_affected(result) > 0
 
-    async def ensure_default_inbox(self, title: str = DEFAULT_INBOX_TITLE) -> Feed:
-        """The one default Inbox, created on first call; safe under concurrency."""
-        existing = await self.default_inbox()
+    async def ensure_default_bucket(self, title: str = DEFAULT_BUCKET_TITLE) -> Feed:
+        """The one default Bucket, created on first call; safe under concurrency."""
+        existing = await self.default_bucket()
         if existing is not None:
             return existing
         stmt = (
             insert(Feed)
             .values(
-                id=inbox_id(title),
-                kind=FeedKind.inbox.value,
+                id=bucket_id(title),
+                kind=FeedKind.bucket.value,
                 is_default=True,
                 title=title,
                 follow=False,
@@ -197,9 +197,9 @@ class FeedRepository:
             )
         )
         await self._session.execute(stmt)
-        feed = await self.default_inbox()
+        feed = await self.default_bucket()
         if feed is None:  # pragma: no cover - the partial unique index guarantees one row
-            raise RuntimeError("default Inbox could not be created")
+            raise RuntimeError("default Bucket could not be created")
         return feed
 
     async def bump_revision(self, feed_id: str) -> int:
@@ -315,4 +315,4 @@ class FeedRepository:
             await self._session.refresh(instance)
 
 
-__all__ = ["DEFAULT_INBOX_TITLE", "FeedRepository", "FeedSort"]
+__all__ = ["DEFAULT_BUCKET_TITLE", "FeedRepository", "FeedSort"]

@@ -116,7 +116,7 @@ class Layout:
 
     @property
     def uploads_dir(self) -> Path:
-        """Files PUT to an upload URL, staged until a Serial Inbox takes them (ADR 0015)."""
+        """Files PUT to an upload URL, staged until a Serial Bucket takes them (ADR 0015)."""
         return self.root / UPLOADS_DIR
 
     def read_version(self) -> str | None:

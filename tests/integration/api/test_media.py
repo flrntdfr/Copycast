@@ -144,7 +144,7 @@ async def test_assets_are_served_and_never_counted(
     assert missing.status_code == 404
     for traversal in ("..%2Ffeed.json", ".hidden", "a%2Fb.json"):
         assert (await client.get(f"/feeds/{mirror['id']}/assets/{traversal}")).status_code == 404
-    other = (await client.get(api("/inboxes"))).json()["feeds"][0]
+    other = (await client.get(api("/buckets"))).json()["feeds"][0]
     basename = served[0]["url"].rsplit("/", 1)[-1]
     assert (await client.get(ASSET_URL(other["id"], basename))).status_code == 404
 

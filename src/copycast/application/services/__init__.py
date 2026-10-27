@@ -3,7 +3,7 @@
 Importing this package registers every capability in
 ``application.capabilities.CAPABILITIES``. Routes and MCP tools call the
 bound methods of :class:`Services`; the worker calls the same functions for
-the operations it shares with the API (Refresh requests, the default Inbox,
+the operations it shares with the API (Refresh requests, the default Bucket,
 autoprune).
 """
 
@@ -21,15 +21,15 @@ from copycast.application.models import (
     ApiKeyList,
     ApiKeyRead,
     ArchiveFlagUpdate,
+    BucketCreate,
+    BucketRead,
+    BucketUpdate,
     ClearFeedRequest,
     ClearFeedResult,
     EngineCookiesRead,
     EngineCookiesWrite,
     FeedList,
     FeedRead,
-    InboxCreate,
-    InboxRead,
-    InboxUpdate,
     ItemPage,
     ItemRead,
     JobPage,
@@ -51,19 +51,20 @@ from copycast.application.models import (
     RequestRead,
     SelectionRequest,
     SelectionResult,
-    SerialInboxCreate,
+    SerialBucketCreate,
     StatusRead,
     UploadCreate,
     UploadRead,
+    UploadsAdd,
     VideoSearchPage,
     YouTubePlaylistList,
 )
 from copycast.application.ports import CancelToken
 from copycast.application.services import about as _about
+from copycast.application.services import buckets as _buckets
 from copycast.application.services import defaults as _defaults
 from copycast.application.services import engine as _engine
 from copycast.application.services import feeds as _feeds
-from copycast.application.services import inboxes as _inboxes
 from copycast.application.services import items as _items
 from copycast.application.services import jobs as _jobs
 from copycast.application.services import keys as _keys
@@ -122,11 +123,11 @@ class Services:
     async def rotate_feed_credentials(self, feed_id: str) -> FeedRead:
         return await _feeds.rotate_feed_credentials(self.ctx, feed_id)
 
-    async def ensure_default_inbox(self) -> InboxRead:
-        return await _feeds.ensure_default_inbox(self.ctx)
+    async def ensure_default_bucket(self) -> BucketRead:
+        return await _feeds.ensure_default_bucket(self.ctx)
 
-    async def resolve_inbox(self, ident: str) -> InboxRead:
-        return await _feeds.resolve_inbox(self.ctx, ident)
+    async def resolve_bucket(self, ident: str) -> BucketRead:
+        return await _feeds.resolve_bucket(self.ctx, ident)
 
     # items
     async def list_items(
@@ -239,31 +240,31 @@ class Services:
             self.ctx, feed_id, deadline_seconds=deadline_seconds
         )
 
-    # inboxes and requests
-    async def create_inbox(self, body: InboxCreate) -> InboxRead:
-        return await _inboxes.create_inbox(self.ctx, body)
+    # buckets and requests
+    async def create_bucket(self, body: BucketCreate) -> BucketRead:
+        return await _buckets.create_bucket(self.ctx, body)
 
-    async def update_inbox(self, inbox: str, body: InboxUpdate) -> InboxRead:
-        return await _inboxes.update_inbox(self.ctx, inbox, body)
+    async def update_bucket(self, bucket: str, body: BucketUpdate) -> BucketRead:
+        return await _buckets.update_bucket(self.ctx, bucket, body)
 
     async def add_request(
-        self, inbox: str, body: RequestCreate, *, via: RequestedVia = RequestedVia.ui
+        self, bucket: str, body: RequestCreate, *, via: RequestedVia = RequestedVia.ui
     ) -> RequestRead:
-        return await _inboxes.add_request(self.ctx, inbox, body, via=via)
+        return await _buckets.add_request(self.ctx, bucket, body, via=via)
 
-    async def list_requests(self, inbox: str, *, limit: int = 100, offset: int = 0) -> RequestPage:
-        return await _inboxes.list_requests(self.ctx, inbox, limit=limit, offset=offset)
+    async def list_requests(self, bucket: str, *, limit: int = 100, offset: int = 0) -> RequestPage:
+        return await _buckets.list_requests(self.ctx, bucket, limit=limit, offset=offset)
 
-    async def get_request(self, inbox: str, request_id: uuid.UUID) -> RequestRead:
-        return await _inboxes.get_request(self.ctx, inbox, request_id)
+    async def get_request(self, bucket: str, request_id: uuid.UUID) -> RequestRead:
+        return await _buckets.get_request(self.ctx, bucket, request_id)
 
-    async def prune_inbox(self, inbox: str, body: PruneRequest) -> PruneResult:
-        return await _inboxes.prune_inbox(self.ctx, inbox, body)
+    async def prune_bucket(self, bucket: str, body: PruneRequest) -> PruneResult:
+        return await _buckets.prune_bucket(self.ctx, bucket, body)
 
     async def autoprune(self, feed_id: str) -> PruneResult:
-        return await _inboxes.autoprune(self.ctx, feed_id)
+        return await _buckets.autoprune(self.ctx, feed_id)
 
-    # uploads and Serial Inboxes
+    # uploads and Serial Buckets
     async def create_upload(self, body: UploadCreate) -> UploadRead:
         return await _uploads.create_upload(self.ctx, body)
 
@@ -275,8 +276,11 @@ class Services:
     async def get_upload(self, upload_id: str) -> UploadRead:
         return await _uploads.get_upload(self.ctx, upload_id)
 
-    async def create_serial_inbox(self, body: SerialInboxCreate) -> InboxRead:
-        return await _uploads.create_serial_inbox(self.ctx, body)
+    async def create_serial_bucket(self, body: SerialBucketCreate) -> BucketRead:
+        return await _uploads.create_serial_bucket(self.ctx, body)
+
+    async def add_uploads(self, bucket: str, body: UploadsAdd) -> BucketRead:
+        return await _uploads.add_uploads(self.ctx, bucket, body)
 
     # jobs, about, admin
     async def list_jobs(

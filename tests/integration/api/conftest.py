@@ -1,7 +1,7 @@
 """Fixtures for the API suite: the app with its lifespan, an RSS Source, a worker runner.
 
 Every test gets the shared ``client`` (httpx over the FastAPI app whose
-lifespan ran: EventHub listening, default Inbox created) and a
+lifespan ran: EventHub listening, default Bucket created) and a
 :class:`Source` served from a temp directory. Archiving runs through the
 worker ``Runner`` with the FakeEngine, so media files really exist on disk.
 """

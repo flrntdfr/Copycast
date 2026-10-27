@@ -1,4 +1,4 @@
-"""Requests: URLs pushed into an Inbox and the items they produced."""
+"""Requests: URLs pushed into a Bucket and the items they produced."""
 
 from __future__ import annotations
 

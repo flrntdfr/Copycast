@@ -31,7 +31,7 @@ describe("PruneDialog", () => {
   it("runs a debounced dry run, then deletes after the confirmation", async () => {
     const bodies: PruneRequest[] = [];
     server.use(
-      http.post("/api/inboxes/:inboxId/prune", async ({ request }) => {
+      http.post("/api/buckets/:bucketId/prune", async ({ request }) => {
         const body = (await request.json()) as PruneRequest;
         bodies.push(body);
         return HttpResponse.json(
@@ -45,7 +45,7 @@ describe("PruneDialog", () => {
       }),
     );
     const user = userEvent.setup();
-    renderWithProviders(<PruneDialog inboxId="inbox-1" open onOpenChange={() => undefined} />);
+    renderWithProviders(<PruneDialog bucketId="bucket-1" open onOpenChange={() => undefined} />);
 
     const preview = await screen.findByTestId("prune-preview");
     await waitFor(() => expect(preview).toHaveTextContent("Deletes 12 Episodes (1.2 GB)"));
@@ -63,7 +63,7 @@ describe("PruneDialog", () => {
 
   it("asks for a criterion when none is selected", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<PruneDialog inboxId="inbox-1" open onOpenChange={() => undefined} />);
+    renderWithProviders(<PruneDialog bucketId="bucket-1" open onOpenChange={() => undefined} />);
     await user.click(screen.getByRole("checkbox", { name: /Downloaded at least once/ }));
     expect(await screen.findByText("Pick at least one criterion.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();

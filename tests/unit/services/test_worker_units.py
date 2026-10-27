@@ -159,7 +159,7 @@ def test_direct_listing_synthesizes_one_leaf() -> None:
 
 def test_want_streams_makes_upcoming_and_live_streams_archivable_for_a_request() -> None:
     """A Request wants a stream whatever its status; the archive job waits for the
-    recording, since an Inbox has no Refresh to flip ``archivable`` later."""
+    recording, since a Bucket has no Refresh to flip ``archivable`` later."""
     scripted = listing(0, service="YouTube").model_copy(
         update={
             "items": [

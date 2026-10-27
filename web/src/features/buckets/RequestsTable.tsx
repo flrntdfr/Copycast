@@ -25,12 +25,12 @@ import { cn } from "@/lib/utils";
 export const REQUESTS_PAGE_SIZE = 100;
 
 /**
- * Requests of one Inbox: URL, requested_via, status, item_count and the produced Episodes.
+ * Requests of one Bucket: URL, requested_via, status, item_count and the produced Episodes.
  * `request` events invalidate `list_requests`, so the table is live without polling.
  */
-export function RequestsTable({ inboxId }: { inboxId: string }) {
-  const requests = $api.useQuery("get", "/api/inboxes/{inbox_id}/requests", {
-    params: { path: { inbox_id: inboxId }, query: { limit: REQUESTS_PAGE_SIZE } },
+export function RequestsTable({ bucketId }: { bucketId: string }) {
+  const requests = $api.useQuery("get", "/api/buckets/{bucket_id}/requests", {
+    params: { path: { bucket_id: bucketId }, query: { limit: REQUESTS_PAGE_SIZE } },
   });
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const rows = requests.data?.requests ?? [];
@@ -40,7 +40,7 @@ export function RequestsTable({ inboxId }: { inboxId: string }) {
       <EmptyState
         icon={<Send />}
         title="No Requests yet"
-        description="Paste a video, playlist or page URL above; every Episode it yields lands in this Inbox."
+        description="Paste a video, playlist or page URL above; every Episode it yields lands in this Bucket."
       />
     );
   }
@@ -123,8 +123,8 @@ export function RequestsTable({ inboxId }: { inboxId: string }) {
                         {items.map((item) => (
                           <li key={item.id} className="flex items-center gap-3 py-1.5">
                             <Link
-                              to="/inboxes/$inboxId"
-                              params={{ inboxId }}
+                              to="/buckets/$bucketId"
+                              params={{ bucketId }}
                               search={{ tab: "episodes", q: item.title }}
                               className={cn("min-w-0 flex-1 truncate hover:underline")}
                               title={item.title}

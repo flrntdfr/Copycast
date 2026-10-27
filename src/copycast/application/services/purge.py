@@ -41,7 +41,7 @@ async def clear_feed(ctx: ServiceContext, feed_id: str, body: ClearFeedRequest) 
     """Tombstone every archived Episode not kept for good; ``dry_run`` (the default) counts.
 
     Kept for good: an Episode flagged Archive, and every Episode of a Mirror on the Archive
-    policy. The Feed, its Catalog and what is kept stay; the default Inbox may be cleared.
+    policy. The Feed, its Catalog and what is kept stay; the default Bucket may be cleared.
     """
 
     async def _clear() -> ClearFeedResult:

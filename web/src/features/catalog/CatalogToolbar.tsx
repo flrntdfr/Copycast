@@ -23,7 +23,7 @@ export const FILTER_DEBOUNCE_MS = 300;
 
 export interface CatalogToolbarProps {
   feedId: string;
-  feedKind: "mirror" | "inbox";
+  feedKind: "mirror" | "bucket";
   q: string;
   facet: CatalogFacet | undefined;
   counts: CatalogCounts | null | undefined;
@@ -70,7 +70,7 @@ export function CatalogToolbar(props: CatalogToolbarProps) {
 
   const visibleFacets = CATALOG_FACETS.filter((facet) => {
     if (facet === "deleted") return true;
-    if (props.feedKind === "inbox" && facet === "delisted") return false;
+    if (props.feedKind === "bucket" && facet === "delisted") return false;
     return true;
   });
 

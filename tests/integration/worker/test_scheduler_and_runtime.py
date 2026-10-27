@@ -17,7 +17,7 @@ from copycast.adapters.db.locks import WORKER_LOCK, SessionLock
 from copycast.adapters.db.models import Feed, Job
 from copycast.adapters.storage.descriptor import read_intent_version
 from copycast.app import Container
-from copycast.application.models import InboxCreate, RebuildRequest
+from copycast.application.models import BucketCreate, RebuildRequest
 from copycast.domain.enums import (
     ArchiveState,
     BackfillMode,
@@ -45,7 +45,7 @@ async def test_scheduler_tick(container: Container, source: Source, runner: Runn
     paused = await create_mirror(container, paused_url)
     await runner.run_until_idle()
     await container.services.set_paused(paused.id, True)
-    inbox = await container.services.create_inbox(InboxCreate(name="Auto", autoprune_days=1))
+    bucket = await container.services.create_bucket(BucketCreate(name="Auto", autoprune_days=1))
     async with uow(container) as unit:
         long_ago = datetime.now(UTC) - timedelta(days=2)
         await unit.session.execute(
@@ -64,7 +64,7 @@ async def test_scheduler_tick(container: Container, source: Source, runner: Runn
             .values(status=JobStatus.running.value, heartbeat_at=long_ago, claimed_by="dead")
         )
         old = await unit.jobs.enqueue(
-            JobKind.prune, JobTrigger.manual, feed_id=inbox.id, dedup="prune:old"
+            JobKind.prune, JobTrigger.manual, feed_id=bucket.id, dedup="prune:old"
         )
         assert old is not None
         await unit.session.execute(
@@ -87,7 +87,7 @@ async def test_scheduler_tick(container: Container, source: Source, runner: Runn
             requeued.status == JobStatus.queued.value and requeued.error == "worker heartbeat lost"
         )
         assert await unit.jobs.get(old.id) is None
-        prunes, _ = await unit.jobs.list_page(feed_id=inbox.id, kind=JobKind.prune)
+        prunes, _ = await unit.jobs.list_page(feed_id=bucket.id, kind=JobKind.prune)
         assert prunes and prunes[0].payload == {"mode": "auto"}
         # The Paused Mirror got no Refresh.
         paused_jobs, _ = await unit.jobs.list_page(feed_id=paused.id, kind=JobKind.refresh)
@@ -104,7 +104,7 @@ async def test_scheduler_tick(container: Container, source: Source, runner: Runn
             "deleted_count": 0,
             "bytes_freed": 0,
         }
-        feed = await unit.feeds.require(inbox.id)
+        feed = await unit.feeds.require(bucket.id)
         assert feed.last_autoprune_at is not None
 
 

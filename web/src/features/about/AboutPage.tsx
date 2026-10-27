@@ -111,7 +111,7 @@ export function AboutPage() {
               <a
                 href="/api/feeds.opml"
                 download="copycast.opml"
-                title="Every Mirror and Inbox feed with its credentials, to subscribe to all of them at once in Overcast, Pocket Casts or AntennaPod"
+                title="Every Mirror and Bucket feed with its credentials, to subscribe to all of them at once in Overcast, Pocket Casts or AntennaPod"
               >
                 <FileDown /> Export OPML
               </a>
@@ -235,8 +235,8 @@ export function AboutPage() {
                       </Link>
                     ) : (
                       <Link
-                        to="/inboxes/$inboxId"
-                        params={{ inboxId: feed.id }}
+                        to="/buckets/$bucketId"
+                        params={{ bucketId: feed.id }}
                         className="hover:underline"
                       >
                         {feed.title}
@@ -244,7 +244,7 @@ export function AboutPage() {
                     )}
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">
-                    {isMirror(feed) ? "Mirror" : "Inbox"}
+                    {isMirror(feed) ? "Mirror" : "Bucket"}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatNumber(feed.episode_count)}

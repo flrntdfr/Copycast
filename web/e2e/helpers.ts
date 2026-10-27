@@ -21,7 +21,7 @@ export const ARCHIVE_TIMEOUT_MS = 180_000;
 
 interface FeedSummary {
   id: string;
-  kind: "mirror" | "inbox";
+  kind: "mirror" | "bucket";
   title: string;
   source_url?: string;
 }
@@ -42,13 +42,13 @@ export async function deleteAllMirrors(request: APIRequestContext): Promise<void
   }
 }
 
-export async function defaultInbox(request: APIRequestContext): Promise<FeedSummary> {
-  const response = await request.get("/api/feeds?kind=inbox");
+export async function defaultBucket(request: APIRequestContext): Promise<FeedSummary> {
+  const response = await request.get("/api/feeds?kind=bucket");
   expect(response.ok()).toBeTruthy();
   const { feeds } = (await response.json()) as { feeds: FeedSummary[] };
-  const inbox = feeds.find((feed) => feed.title === "Copycast") ?? feeds[0];
-  if (!inbox) throw new Error("the default Inbox exists");
-  return inbox;
+  const bucket = feeds.find((feed) => feed.title === "Copycast") ?? feeds[0];
+  if (!bucket) throw new Error("the default Bucket exists");
+  return bucket;
 }
 
 /** Add the fixture feed from the Mirrors page bar and land on the dialog's Created step. */

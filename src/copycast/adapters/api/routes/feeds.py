@@ -1,4 +1,4 @@
-"""Feeds: list (plus the ``/mirrors`` and ``/inboxes`` aliases), get, rotate credentials, delete."""
+"""Feeds: list (plus the ``/mirrors`` and ``/buckets`` aliases), get, rotate credentials, delete."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ Order = Literal["asc", "desc"]
     operation_id="list_feeds",
     openapi_extra={"x-capability": "list_feeds"},
     response_model=FeedList,
-    summary="List Feeds (Mirrors and Inboxes)",
+    summary="List Feeds (Mirrors and Buckets)",
 )
 async def list_feeds(
     services: ServicesDep,
@@ -54,17 +54,17 @@ async def list_mirrors(
 
 
 @router.get(
-    "/inboxes",
-    operation_id="list_inboxes",
+    "/buckets",
+    operation_id="list_buckets",
     response_model=FeedList,
-    summary="List Inboxes (alias of list_feeds with kind=inbox)",
+    summary="List Buckets (alias of list_feeds with kind=bucket)",
 )
-async def list_inboxes(
+async def list_buckets(
     services: ServicesDep,
     sort: Annotated[FeedSort, Query()] = "title",
     order: Annotated[Order, Query()] = "asc",
 ) -> FeedList:
-    return await services.list_feeds(FeedKind.inbox, sort=sort, order=order)
+    return await services.list_feeds(FeedKind.bucket, sort=sort, order=order)
 
 
 OPML_MEDIA_TYPE = "text/x-opml+xml; charset=utf-8"
@@ -147,7 +147,7 @@ async def retry_failed(services: ServicesDep, feed_id: str) -> SelectionResult:
     status_code=204,
     dependencies=[RebuildGuard],
     responses=problem_responses(404, 409),
-    summary="Delete a Feed and its files (the default Inbox is refused)",
+    summary="Delete a Feed and its files (the default Bucket is refused)",
 )
 async def delete_feed(services: ServicesDep, feed_id: str) -> Response:
     await services.delete_feed(feed_id)

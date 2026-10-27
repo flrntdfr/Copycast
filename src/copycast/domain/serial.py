@@ -1,6 +1,6 @@
-"""Serial Inboxes: the posting schedule, numbered titles and progress notes (ADR 0015).
+"""Serial Buckets: the posting schedule, numbered titles and progress notes (ADR 0015).
 
-A Serial Inbox publishes its Episodes in the order the agent gave, oldest
+A Serial Bucket publishes its Episodes in the order the agent gave, oldest
 first. Podcast apps order by ``pubDate``, so each position gets its own day,
 counted back from the creation day so the last Episode is dated yesterday,
 and a posting time picked for fun from :data:`POSTING_TIMES` (one per day, so
@@ -33,7 +33,7 @@ POSTING_TIMES: Final[tuple[tuple[time, str], ...]] = (
 
 @dataclass(frozen=True, slots=True)
 class SerialEntry:
-    """One Episode of a Serial Inbox as the agent described it, in listening order."""
+    """One Episode of a Serial Bucket as the agent described it, in listening order."""
 
     title: str
     duration_seconds: int | None = None

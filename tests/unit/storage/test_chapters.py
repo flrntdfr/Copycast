@@ -13,7 +13,7 @@ from copycast.adapters.storage.chapters import ChaptersUpgrade, upgrade_chapter_
 from copycast.adapters.storage.layout import Layout
 
 FEED = "mirror-chapters"
-OTHER = "inbox-abc234"
+OTHER = "bucket-abc234"
 RAW = "0000000000000001"
 P20 = "0000000000000002"
 CORRUPT = "0000000000000003"

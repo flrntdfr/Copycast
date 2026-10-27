@@ -1,9 +1,9 @@
-"""Uploads and Serial Inboxes (ADR 0015).
+"""Uploads and Serial Buckets (ADR 0015).
 
 ``POST /api/uploads`` stages a file and returns its one-time ``upload_url``;
 ``PUT /uploads/{id}/{token}`` (outside ``/api``: the token is the credential,
 so an agent holding only an API key can ``curl -T`` the file) receives the
-bytes; ``POST /api/serial-inboxes`` turns received uploads into an Inbox in
+bytes; ``POST /api/serial-buckets`` turns received uploads into a Bucket in
 the given order.
 """
 
@@ -13,7 +13,13 @@ from fastapi import APIRouter, Request, Response
 
 from copycast.adapters.api.deps import RebuildGuard, ServicesDep
 from copycast.adapters.api.problems import problem_responses
-from copycast.application.models import InboxRead, SerialInboxCreate, UploadCreate, UploadRead
+from copycast.application.models import (
+    BucketRead,
+    SerialBucketCreate,
+    UploadCreate,
+    UploadRead,
+    UploadsAdd,
+)
 
 router = APIRouter(tags=["uploads"])
 open_router = APIRouter(tags=["uploads"])
@@ -46,21 +52,34 @@ async def get_upload(services: ServicesDep, upload_id: str) -> UploadRead:
 
 
 @router.post(
-    "/serial-inboxes",
-    operation_id="create_serial_inbox",
-    openapi_extra={"x-capability": "create_serial_inbox"},
-    response_model=InboxRead,
+    "/serial-buckets",
+    operation_id="create_serial_bucket",
+    openapi_extra={"x-capability": "create_serial_bucket"},
+    response_model=BucketRead,
     status_code=201,
     dependencies=[RebuildGuard],
     responses=problem_responses(404, 409, 422),
-    summary="Create an Inbox from uploads, Episodes in the given order",
+    summary="Create a Bucket from uploads, Episodes in the given order",
 )
-async def create_serial_inbox(
-    services: ServicesDep, request: Request, response: Response, body: SerialInboxCreate
-) -> InboxRead:
-    inbox = await services.create_serial_inbox(body)
-    response.headers["Location"] = str(request.url_for("get_feed", feed_id=inbox.id))
-    return inbox
+async def create_serial_bucket(
+    services: ServicesDep, request: Request, response: Response, body: SerialBucketCreate
+) -> BucketRead:
+    bucket = await services.create_serial_bucket(body)
+    response.headers["Location"] = str(request.url_for("get_feed", feed_id=bucket.id))
+    return bucket
+
+
+@router.post(
+    "/buckets/{bucket_id}/uploads",
+    operation_id="add_uploads",
+    openapi_extra={"x-capability": "add_uploads"},
+    response_model=BucketRead,
+    dependencies=[RebuildGuard],
+    responses=problem_responses(404, 409, 422),
+    summary="Add received uploads to a Bucket, in natural file-name order",
+)
+async def add_uploads(services: ServicesDep, bucket_id: str, body: UploadsAdd) -> BucketRead:
+    return await services.add_uploads(bucket_id, body)
 
 
 @open_router.put(

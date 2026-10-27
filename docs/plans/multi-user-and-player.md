@@ -178,7 +178,7 @@ networks:
 | | Admin | Member |
 |---|---|---|
 | Browse the Library, subscribe, play, Listening positions, own Feed keys | yes | yes |
-| Create Mirrors (Library or Private) and Inboxes; push Requests to own Inboxes | yes | yes |
+| Create Mirrors (Library or Private) and Buckets; push Requests to own Buckets | yes | yes |
 | Additive actions on a subscribed Library Mirror (archive on demand, retry, refresh) | yes | yes |
 | Policy, Tombstones, `delete_feed` | any Feed | Feeds they own |
 | Cookie file, Defaults, rebuild, purge, Users and Invites | yes | no |
@@ -192,7 +192,7 @@ Enforcement is **declared in the capability registry**, next to `DESTRUCTIVE`. F
 |---|---|
 | Library Mirrors | One per Source; `source_dedup_key` stays unique among Library Mirrors and the Mirror ID is unchanged. `create_mirror` on an existing Source becomes **create-or-subscribe** (`subscribed_existing: true`, the requested policy not applied, and the response says so). |
 | Private Mirrors | Forced for Captures, for Source URLs with userinfo, and for query keys matching `auth\|token\|key\|secret\|sig`, using one predicate across create, retarget and the migration. New ids are salted with the Owner. Existing ids never change. This also fixes the `list=WL` collision between users. |
-| Inboxes | Owned by one User. **Each User gets their own default "Copycast" Inbox.** |
+| Buckets | Owned by one User. **Each User gets their own default "Copycast" Bucket.** |
 | Requests, jobs | Record `requested_by`. Jobs are visible when their Feed is visible; `requested_by` is hidden from non-owners. |
 | API keys | Owned by a User. What a key can do is its Scope ∩ its User's role ∩ that User's ownership. No tool input has a `user_id` field. |
 | Defaults | Global, Admin-only. |
@@ -253,7 +253,7 @@ Why this shape:
 - Tests:
   - the pair form is byte-identical to rendering with `base_url`;
   - `.invalid` never appears in any output;
-  - goldens cover an Inbox and a synthesised Mirror in link form.
+  - goldens cover a Bucket and a synthesised Mirror in link form.
 
 ### 4.3 Lifecycle
 
@@ -355,7 +355,7 @@ The plan keeps `PlayerBar.tsx` with its single `<audio>` and the store in `web/s
 | # | Feature | Detail |
 |---|---|---|
 | P6 | **Web media route** | `GET\|HEAD /api/feeds/{feed_id}/items/{item_id}/media` and `/assets/{name}`: the same `FileResponse` code with `count=False, on_demand=False`, `Cache-Control: private`, and an **absolute** URL composed by the server (`media.play_url` and `AssetRead.play_url`). It must be absolute because `audio.src !== track.url` compares against an absolute URL; a root-relative URL would reload the element on every pause and lose the position. The player, chapters, transcripts, attachments and Download all use it. **Media requests count exactly as on `/feeds` today (decision D4)**, attributed to the User. This moves the browser off `/feeds/*`, which multi-user needs anyway. |
-| — | **ADR 0010: decided, keep counting** | Web Play starts keep counting (`counts_as_download`: GET with no Range, or `bytes=0-`). "Download count" is renamed **Plays** everywhere, and the listening state is **Finished** (D4b). Accepted side effects: a short web preview starts the Inbox autoprune clock, web plays extend Automatic expiry, and a resume that re-requests `bytes=0-` counts again. |
+| — | **ADR 0010: decided, keep counting** | Web Play starts keep counting (`counts_as_download`: GET with no Range, or `bytes=0-`). "Download count" is renamed **Plays** everywhere, and the listening state is **Finished** (D4b). Accepted side effects: a short web preview starts the Bucket autoprune clock, web plays extend Automatic expiry, and a resume that re-requests `bytes=0-` counts again. |
 | P3 | **Listening positions on the server** | `listening_positions(user_id → users, item_id, feed_id, position_s, duration_s, completed_at, client_at, updated_at, device)`, PK `(user_id, item_id)`. `users` arrives in the same migration with only the bootstrap Admin, so there is no `'operator'` string to rewrite later. `PUT …/listening` every ~15 s of play, immediately on pause and ended, and via `fetch(…, {keepalive:true})` on hide. **Latest `client_at` wins** (clamped to now+60 s). `ItemRead.listening` is inline. Safari wipes script storage after 7 days, so a local-only layer is not enough on an iPhone. |
 | P5 | Continue listening | A group in ⌘K, and a strip at the top of the Feeds page. |
 | P14 | Unfinished filter, Mark finished | Single and bulk (selection grammar, ADR 0008); "Mark all older as finished". Finished never touches archiving. |
@@ -363,11 +363,11 @@ The plan keeps `PlayerBar.tsx` with its single `<audio>` and the store in `web/s
 | P12 | Up Next | "Play next" / "Add to queue", auto-advance within a Feed. Kept locally at first. |
 | P15 | Phones | A mini bar plus a bottom "Now playing" sheet (the existing `ui/sheet.tsx`) holding speed, sleep and chapters. 44 px targets. The volume slider is hidden on iOS. The desktop bar does not change. |
 | P16–P18 | Accessibility and errors | The seek bar commits on `change`, so it works with VoiceOver and TalkBack. A live region, focus return and per-row labels. Precise playback errors and "Archive and play" through the job and SSE. |
-| P19–P22 | Polish | Show notes with clickable timestamps; play from Requests; deep links `?item=&t=` (always to the UI, never to a feed or media URL); "−18:40 at 2.5×, ends at 14:32"; a PWA manifest. Also small fixes: `useSendToInbox` matches the name "copycast" instead of `is_default`, and `qrcode` uses caret pins against the pinning rule. |
+| P19–P22 | Polish | Show notes with clickable timestamps; play from Requests; deep links `?item=&t=` (always to the UI, never to a feed or media URL); "−18:40 at 2.5×, ends at 14:32"; a PWA manifest. Also small fixes: `useSendToBucket` matches the name "copycast" instead of `is_default`, and `qrcode` uses caret pins against the pinning rule. |
 
 ### 6.3 Tier 3: later
 
-- Finished-aware Inbox Retention, as an option.
+- Finished-aware Bucket Retention, as an option.
 - Cross-device Up Next.
 - A transcript pane, which needs auto-captions enabled first.
 - **Skip silence and loudness as an analysis asset computed once at archive time** (ffmpeg `silencedetect`/`ebur128`). The player jumps over gaps without Web Audio, so it works on a locked iPhone.
@@ -398,7 +398,7 @@ The plan keeps `PlayerBar.tsx` with its single `<audio>` and the store in `web/s
 | **1.4.0** | Player quick wins + hardening | §6.1 (P1, P2, P4, P7, P8, P9a, P9b, P10, P11), plus Fetch-Metadata CSRF guard (closes body-less cross-site POSTs today), MCP resource scope fix, `Forbidden`→403 | 8–10 |
 | **1.5.0** | Principal seam + Listening positions | `users` (bootstrap Admin only), `Principal`/`services_for`, `Access` on every capability (+ convergence checks), `api_keys.user_id`; web media/asset route + ADR 0010 amendment; `listening_positions`, Continue listening, Finished, Unfinished filter, `mark_finished` / `list_listening_positions` tools; the Download count → Plays rename | 10–13 |
 | **1.6.0** | Feed keys | `feed_keys` + migration of the 23 pairs, key pair + key link, block tags, sentinel render, key UI (two tabs, labels, replace with grace, revoke, QR, last used, "possibly shared"), per-key OPML, log redaction + **Traefik access-log action**. **Apple Podcasts works.** | 6–8 |
-| **2.0.0** | Accounts + Library (shipped together) | Sessions, login/logout, user menu, passkeys (mandatory for Admins only when `base_url` is https/localhost), invites, per-username backoff (no IP limits: everything is 172.19.0.1), CLI `copycast users add/reset/reset-passkeys/disable`; `owner_id`/`visibility`/`subscriptions`, create-or-subscribe, Private Mirrors, per-user default Inbox, SSE/job filtering, cookie-by-acting-user, user-namespaced localStorage (logout clears it), isolation matrix generated from the registry, rollback runbook | 19–26 |
+| **2.0.0** | Accounts + Library (shipped together) | Sessions, login/logout, user menu, passkeys (mandatory for Admins only when `base_url` is https/localhost), invites, per-username backoff (no IP limits: everything is 172.19.0.1), CLI `copycast users add/reset/reset-passkeys/disable`; `owner_id`/`visibility`/`subscriptions`, create-or-subscribe, Private Mirrors, per-user default Bucket, SSE/job filtering, cookie-by-acting-user, user-namespaced localStorage (logout clears it), isolation matrix generated from the registry, rollback runbook | 19–26 |
 | optional | Add-ons | claude.ai OAuth via `OIDCProxy` + Pocket ID/Nextcloud (5–6 + IdP); OIDC login adapter (3–4); per-user Cookie files and Member Captures (4–6); silence/loudness analysis (4–6); gPodder v2 (4–6) | — |
 
 **Accounts and Library ship together.** Inviting Members before ownership exists would show them every Admin Feed.
@@ -476,7 +476,7 @@ Recommended option first in each row.
 | `counts_as_download` counts a GET with no Range or with `bytes=0-` | `routes/public.py:89-99` |
 | Autoprune requires `first_downloaded_at` | `repositories/catalog.py:375-379` |
 | Engine chapters are written raw | `worker/jobs/archive_item.py:264-267` |
-| `useSendToInbox` matches the Inbox by name | `useSendToInbox.ts:9` |
+| `useSendToBucket` matches the Bucket by name | `useSendToBucket.ts:9` |
 | MCP resources skip the scope check | `adapters/mcp/resources.py` |
 | A `read` key gets every Feed's pair | `adapters/mcp/tools.py:156-162` |
 | `uvicorn.run` does not set `forwarded_allow_ips` | `cli.py:88` |

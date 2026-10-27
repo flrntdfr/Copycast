@@ -628,7 +628,7 @@ class CatalogRepository:
 
     async def tombstone(self, item_id: str, *, listed: bool, at: datetime | None = None) -> bool:
         """Deleted by the user or a prune: media columns cleared, row kept, never re-archived
-        automatically. Inbox rows also drop ``listed`` so they hide."""
+        automatically. Bucket rows also drop ``listed`` so they hide."""
         result = await self._session.execute(
             update(CatalogItem)
             .where(CatalogItem.id == item_id)

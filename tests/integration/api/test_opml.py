@@ -22,7 +22,7 @@ async def test_opml_lists_every_feed(client: httpx.AsyncClient, source: Source) 
     root = etree.fromstring(response.content)
     assert root.get("version") == "2.0" and root.findtext("head/title") == "Copycast"
     outlines = {o.get("text"): o for o in root.findall("body/outline")}
-    # The Mirror and the default Inbox.
+    # The Mirror and the default Bucket.
     assert "Exported Show" in outlines and "Copycast" in outlines
     show = outlines["Exported Show"]
     assert show.get("type") == "rss" and show.get("xmlUrl") == mirror["feed_url"]

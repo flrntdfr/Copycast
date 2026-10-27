@@ -5,7 +5,7 @@ import type {
   CookieServiceRead,
   EngineCookieFileRead,
   EngineCookiesRead,
-  InboxRead,
+  BucketRead,
   MirrorDefaults,
   ItemRead,
   JobRead,
@@ -67,11 +67,11 @@ export function mirror(overrides: Partial<MirrorRead> = {}): MirrorRead {
   };
 }
 
-export function inbox(overrides: Partial<InboxRead> = {}): InboxRead {
-  const id = overrides.id ?? nextId("inbox");
+export function bucket(overrides: Partial<BucketRead> = {}): BucketRead {
+  const id = overrides.id ?? nextId("bucket");
   return {
     id,
-    kind: "inbox",
+    kind: "bucket",
     title: "Copycast",
     name: "Copycast",
     description: null,
@@ -191,7 +191,7 @@ export function selectionResult(overrides: Partial<SelectionResult> = {}): Selec
 export function request(overrides: Partial<RequestRead> = {}): RequestRead {
   return {
     id: overrides.id ?? `00000000-0000-4000-8000-${(++sequence).toString().padStart(12, "0")}`,
-    inbox_id: "inbox-1",
+    bucket_id: "bucket-1",
     url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     requested_via: "ui",
     status: "queued",

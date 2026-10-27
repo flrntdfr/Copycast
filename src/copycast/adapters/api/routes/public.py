@@ -280,7 +280,7 @@ open_router = APIRouter(tags=["public"])
 
 
 async def logo() -> Response:
-    """The Copycast logo an Inbox feed shows as its artwork (public, like all artwork)."""
+    """The Copycast logo a Bucket feed shows as its artwork (public, like all artwork)."""
     return FileResponse(
         LOGO_FILE, media_type="image/png", headers={"Cache-Control": LOGO_CACHE_CONTROL}
     )
@@ -307,7 +307,7 @@ _get_and_head(
     "/{feed_id}.xml",
     feed_xml,
     operation_id="public_feed",
-    summary="The Mirror or Inbox Feed (RSS)",
+    summary="The Mirror or Bucket Feed (RSS)",
     responses={200: {"content": {"application/rss+xml": {"schema": {"type": "string"}}}}},
 )
 _get_and_head(

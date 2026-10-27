@@ -365,7 +365,7 @@ async def test_a_feed_row_held_by_another_transaction_is_served_without_a_check(
     assert source.origin.hits("/rss/held.xml") == hits + 1
 
 
-async def test_fetch_never_refreshes_on_head_paused_or_inbox(
+async def test_fetch_never_refreshes_on_head_paused_or_bucket(
     client: httpx.AsyncClient, source: Source, runner: Runner, container: Container
 ) -> None:
     url = source.write_rss("never", items=[1], artwork=False)
@@ -401,11 +401,11 @@ async def test_fetch_never_refreshes_on_head_paused_or_inbox(
     assert len(runs) == 1 and runs[0].status == "succeeded" and runs[0].wanted_count == 0
     assert len(await refresh_jobs(container, mirror["id"])) == 2
 
-    # An Inbox feed never triggers anything.
-    inbox = (await client.get(api("/inboxes"))).json()["feeds"][0]
-    assert (await client.get(FEED_URL(inbox["id"]))).status_code == 200
-    assert await refresh_jobs(container, inbox["id"]) == []
-    assert await light_runs(container, inbox["id"]) == []
+    # A Bucket feed never triggers anything.
+    bucket = (await client.get(api("/buckets"))).json()["feeds"][0]
+    assert (await client.get(FEED_URL(bucket["id"]))).status_code == 200
+    assert await refresh_jobs(container, bucket["id"]) == []
+    assert await light_runs(container, bucket["id"]) == []
 
 
 async def test_origin_failure_leaves_the_feed_served_and_last_error_untouched(

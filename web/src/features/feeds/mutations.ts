@@ -98,7 +98,7 @@ export function useDeleteFeed() {
       if (navigateAway) {
         await navigate({
           to: "/",
-          hash: feed.kind === "inbox" ? "inboxes" : undefined,
+          hash: feed.kind === "bucket" ? "buckets" : undefined,
           replace: true,
         });
       }

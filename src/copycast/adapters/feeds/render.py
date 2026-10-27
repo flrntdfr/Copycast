@@ -1,4 +1,4 @@
-"""Render a Mirror Feed or Inbox Feed from what the repositories provide.
+"""Render a Mirror Feed or Bucket Feed from what the repositories provide.
 
 The input is a small read model (:class:`FeedView`, :class:`ItemView`,
 :class:`AssetView`) built from database rows, so rendering is a pure
@@ -48,8 +48,8 @@ else:  # lxml exposes no public element type at runtime
     Element = object
 
 GENERATOR: Final = f"Copycast {APP_VERSION}"
-INBOX_AUTHOR: Final = "Copycast"
-INBOX_DESCRIPTION: Final = "Episodes saved to the {title} Inbox with Copycast."
+BUCKET_AUTHOR: Final = "Copycast"
+BUCKET_DESCRIPTION: Final = "Episodes saved to the {title} Bucket with Copycast."
 CONTENT_TYPE: Final = "application/rss+xml; charset=utf-8"
 DEFAULT_LANGUAGE: Final = "en"
 CAPTION_FORMATS: Final = frozenset({AssetFormat.vtt, AssetFormat.srt})
@@ -155,7 +155,7 @@ class FeedView:
     last_modified: datetime | None = None
     backfill_mode: BackfillMode | None = None
     serial: bool = False
-    """A Serial Inbox: dated by ``published_at`` (its schedule) and published ``serial``."""
+    """A Serial Bucket: dated by ``published_at`` (its schedule) and published ``serial``."""
     assets: tuple[AssetView, ...] = ()
 
     @property
@@ -196,7 +196,7 @@ def render_feed(
     )
     self_url = feed_url(base_url, feed.id)
     feed_artwork = _local_url(base_url, feed.id, _pick_artwork(feed.assets)) or feed.artwork_url
-    if feed_artwork is None and feed.kind is FeedKind.inbox:
+    if feed_artwork is None and feed.kind is FeedKind.bucket:
         feed_artwork = base_url.rstrip("/") + COPYCAST_ARTWORK_PATH
 
     preserved = (
@@ -300,16 +300,16 @@ def _synthesized_channel(
     root = etree.Element("rss", nsmap=_merged_nsmap(None))
     root.set("version", "2.0")
     channel = etree.SubElement(root, "channel")
-    inbox = feed.kind is FeedKind.inbox
+    bucket = feed.kind is FeedKind.bucket
     _sub(channel, "title", feed.title)
     _sub(channel, "link", feed.link or base_url.rstrip("/") + "/")
     _sub(
         channel,
         "description",
-        feed.description or (INBOX_DESCRIPTION.format(title=feed.title) if inbox else feed.title),
+        feed.description or (BUCKET_DESCRIPTION.format(title=feed.title) if bucket else feed.title),
     )
     _sub(channel, "language", feed.language or DEFAULT_LANGUAGE)
-    author = feed.author or (INBOX_AUTHOR if inbox else None)
+    author = feed.author or (BUCKET_AUTHOR if bucket else None)
     if author:
         _sub(channel, tag(NS_ITUNES, "author"), author)
     if artwork:
@@ -453,7 +453,7 @@ def _synthesized_item(
         _sub(element, "link", item.source_url)
     guid = _sub(element, "guid", item.source_url or f"urn:copycast:{item.id}")
     guid.set("isPermaLink", "false")
-    by_arrival = feed.kind is FeedKind.inbox and not feed.serial
+    by_arrival = feed.kind is FeedKind.bucket and not feed.serial
     published = item.first_seen_at if by_arrival else item.published_at
     _sub(element, "pubDate", rfc2822(published or item.first_seen_at or now))
     element.append(_enclosure(base_url, feed, item))

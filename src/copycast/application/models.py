@@ -36,7 +36,7 @@ from copycast.domain.enums import (
 )
 from copycast.domain.language import normalize_language
 
-INBOX_NAME_MAX_LEN = 80
+BUCKET_NAME_MAX_LEN = 80
 SELECTION_MAX_LEN = 4096
 API_KEY_NAME_MAX_LEN = 80
 
@@ -129,7 +129,7 @@ class MirrorRead(_FeedReadBase):
         default=False, description="Episodes are deleted when their item leaves the Source"
     )
     playlist_capture: bool = Field(
-        default=False, description="Captured from the Inboxes; listed among them, not as a Mirror"
+        default=False, description="Captured from the Buckets; listed among them, not as a Mirror"
     )
     paused: bool = False
     follow: bool = True
@@ -147,20 +147,20 @@ class MirrorRead(_FeedReadBase):
     selection: SelectionSummary | None = None
 
 
-class InboxRead(_FeedReadBase):
-    kind: Literal[FeedKind.inbox] = FeedKind.inbox
+class BucketRead(_FeedReadBase):
+    kind: Literal[FeedKind.bucket] = FeedKind.bucket
     name: str
     autoprune_days: int | None = None
     request_count: int = 0
     serial: bool = Field(
-        default=False, description="A Serial Inbox: Episodes in the order given at creation"
+        default=False, description="A Serial Bucket: Episodes in the order given at creation"
     )
     is_default: bool = Field(
-        default=False, description="The default Inbox: it can be renamed but never deleted"
+        default=False, description="The default Bucket: it can be renamed but never deleted"
     )
 
 
-FeedRead = Annotated[MirrorRead | InboxRead, Field(discriminator="kind")]
+FeedRead = Annotated[MirrorRead | BucketRead, Field(discriminator="kind")]
 
 
 class FeedList(ReadModel):
@@ -348,7 +348,7 @@ class YouTubePlaylistList(ReadModel):
 
 
 class VideoSearchResult(ReadModel):
-    """One YouTube search hit; ``url`` is what ``add_to_inbox`` or ``probe_source`` takes."""
+    """One YouTube search hit; ``url`` is what ``add_to_bucket`` or ``probe_source`` takes."""
 
     title: str
     url: str
@@ -430,7 +430,7 @@ class MirrorCreate(RequestModel):
     )
     playlist_capture: bool | None = Field(
         default=None,
-        description="A YouTube playlist captured from the Inboxes (listed among them)",
+        description="A YouTube playlist captured from the Buckets (listed among them)",
     )
 
     @field_validator("preferred_language")
@@ -537,7 +537,7 @@ class SelectionResult(ReadModel):
     dry_run: bool = False
 
 
-# --------------------------------------------------------------------------- inboxes and requests
+# --------------------------------------------------------------------------- buckets and requests
 
 
 def _clean_name(value: str) -> str:
@@ -547,8 +547,8 @@ def _clean_name(value: str) -> str:
     return value
 
 
-class InboxCreate(RequestModel):
-    name: str = Field(min_length=1, max_length=INBOX_NAME_MAX_LEN)
+class BucketCreate(RequestModel):
+    name: str = Field(min_length=1, max_length=BUCKET_NAME_MAX_LEN)
     autoprune_days: int | None = Field(default=None, ge=1)
 
     @field_validator("name")
@@ -557,10 +557,10 @@ class InboxCreate(RequestModel):
         return _clean_name(value)
 
 
-class InboxUpdate(RequestModel):
+class BucketUpdate(RequestModel):
     """PATCH body; ``autoprune_days: null`` present in the body switches autoprune off."""
 
-    name: str | None = Field(default=None, min_length=1, max_length=INBOX_NAME_MAX_LEN)
+    name: str | None = Field(default=None, min_length=1, max_length=BUCKET_NAME_MAX_LEN)
     autoprune_days: int | None = Field(default=None, ge=1)
 
     @field_validator("name")
@@ -619,21 +619,21 @@ class UploadRead(ReadModel):
 
 
 class SerialEpisode(RequestModel):
-    """One file of a Serial Inbox, described the way it should read in a podcast app."""
+    """One file of a Serial Bucket, described the way it should read in a podcast app."""
 
     upload_id: str = Field(min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=300)
-    author: str | None = Field(default=None, max_length=300, description="Else the Inbox's")
+    author: str | None = Field(default=None, max_length=300, description="Else the Bucket's")
     description: str | None = Field(default=None, max_length=20000)
     part: int | None = Field(default=None, ge=0, description="Part, book or disc number")
     part_title: str | None = Field(default=None, max_length=300)
     chapter: int | None = Field(default=None, ge=0)
 
 
-class SerialInboxCreate(RequestModel):
-    """A Serial Inbox: ``episodes`` in listening order, first to last (ADR 0015)."""
+class SerialBucketCreate(RequestModel):
+    """A Serial Bucket: ``episodes`` in listening order, first to last (ADR 0015)."""
 
-    name: str = Field(min_length=1, max_length=INBOX_NAME_MAX_LEN)
+    name: str = Field(min_length=1, max_length=BUCKET_NAME_MAX_LEN)
     author: str | None = Field(default=None, max_length=300)
     description: str | None = Field(default=None, max_length=20000)
     number_titles: bool = Field(
@@ -647,9 +647,21 @@ class SerialInboxCreate(RequestModel):
         return _clean_name(value)
 
     @model_validator(mode="after")
-    def _distinct(self) -> SerialInboxCreate:
+    def _distinct(self) -> SerialBucketCreate:
         ids = [episode.upload_id for episode in self.episodes]
         if len(set(ids)) != len(ids):
+            raise ValueError("each upload may appear only once")
+        return self
+
+
+class UploadsAdd(RequestModel):
+    """Received uploads to add to a Bucket; Copycast orders them by file name, naturally."""
+
+    upload_ids: list[str] = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def _distinct(self) -> UploadsAdd:
+        if len(set(self.upload_ids)) != len(self.upload_ids):
             raise ValueError("each upload may appear only once")
         return self
 
@@ -668,7 +680,7 @@ class RequestCreate(RequestModel):
 
 class RequestRead(ReadModel):
     id: UUID
-    inbox_id: str
+    bucket_id: str
     url: str
     requested_via: RequestedVia
     status: RequestStatus
@@ -984,6 +996,9 @@ __all__ = [
     "AudioTags",
     "BackfillPolicy",
     "BackfillRequest",
+    "BucketCreate",
+    "BucketRead",
+    "BucketUpdate",
     "CatalogCounts",
     "ComponentStatus",
     "CrawlerStats",
@@ -994,9 +1009,6 @@ __all__ = [
     "FeedHealth",
     "FeedList",
     "FeedRead",
-    "InboxCreate",
-    "InboxRead",
-    "InboxUpdate",
     "ItemMedia",
     "ItemPage",
     "ItemRead",
@@ -1028,8 +1040,8 @@ __all__ = [
     "SelectionRequest",
     "SelectionResult",
     "SelectionSummary",
+    "SerialBucketCreate",
     "SerialEpisode",
-    "SerialInboxCreate",
     "StatusFact",
     "StatusRead",
     "StatusState",

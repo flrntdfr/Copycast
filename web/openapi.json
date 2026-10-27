@@ -11,7 +11,7 @@
         "tags": [
           "feeds"
         ],
-        "summary": "List Feeds (Mirrors and Inboxes)",
+        "summary": "List Feeds (Mirrors and Buckets)",
         "operationId": "list_feeds",
         "parameters": [
           {
@@ -199,13 +199,13 @@
         "x-capability": "create_mirror"
       }
     },
-    "/api/inboxes": {
+    "/api/buckets": {
       "get": {
         "tags": [
           "feeds"
         ],
-        "summary": "List Inboxes (alias of list_feeds with kind=inbox)",
-        "operationId": "list_inboxes",
+        "summary": "List Buckets (alias of list_feeds with kind=bucket)",
+        "operationId": "list_buckets",
         "parameters": [
           {
             "name": "sort",
@@ -263,16 +263,16 @@
       },
       "post": {
         "tags": [
-          "inboxes"
+          "buckets"
         ],
-        "summary": "Create an Inbox",
-        "operationId": "create_inbox",
+        "summary": "Create a Bucket",
+        "operationId": "create_bucket",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/InboxCreate"
+                "$ref": "#/components/schemas/BucketCreate"
               }
             }
           }
@@ -283,7 +283,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InboxRead"
+                  "$ref": "#/components/schemas/BucketRead"
                 }
               }
             }
@@ -309,7 +309,7 @@
             }
           }
         },
-        "x-capability": "create_inbox"
+        "x-capability": "create_bucket"
       }
     },
     "/api/feeds.opml": {
@@ -363,14 +363,14 @@
                       "$ref": "#/components/schemas/MirrorRead"
                     },
                     {
-                      "$ref": "#/components/schemas/InboxRead"
+                      "$ref": "#/components/schemas/BucketRead"
                     }
                   ],
                   "discriminator": {
                     "propertyName": "kind",
                     "mapping": {
                       "mirror": "#/components/schemas/MirrorRead",
-                      "inbox": "#/components/schemas/InboxRead"
+                      "bucket": "#/components/schemas/BucketRead"
                     }
                   },
                   "title": "Response Get Feed"
@@ -405,7 +405,7 @@
         "tags": [
           "feeds"
         ],
-        "summary": "Delete a Feed and its files (the default Inbox is refused)",
+        "summary": "Delete a Feed and its files (the default Bucket is refused)",
         "operationId": "delete_feed",
         "parameters": [
           {
@@ -485,14 +485,14 @@
                       "$ref": "#/components/schemas/MirrorRead"
                     },
                     {
-                      "$ref": "#/components/schemas/InboxRead"
+                      "$ref": "#/components/schemas/BucketRead"
                     }
                   ],
                   "discriminator": {
                     "propertyName": "kind",
                     "mapping": {
                       "mirror": "#/components/schemas/MirrorRead",
-                      "inbox": "#/components/schemas/InboxRead"
+                      "bucket": "#/components/schemas/BucketRead"
                     }
                   },
                   "title": "Response Rotate Feed Credentials"
@@ -1775,21 +1775,21 @@
         "x-capability": "select_items"
       }
     },
-    "/api/inboxes/{inbox_id}": {
+    "/api/buckets/{bucket_id}": {
       "patch": {
         "tags": [
-          "inboxes"
+          "buckets"
         ],
-        "summary": "Rename an Inbox or change its autoprune",
-        "operationId": "update_inbox",
+        "summary": "Rename a Bucket or change its autoprune",
+        "operationId": "update_bucket",
         "parameters": [
           {
-            "name": "inbox_id",
+            "name": "bucket_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Inbox Id"
+              "title": "Bucket Id"
             }
           }
         ],
@@ -1798,7 +1798,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/InboxUpdate"
+                "$ref": "#/components/schemas/BucketUpdate"
               }
             }
           }
@@ -1809,7 +1809,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InboxRead"
+                  "$ref": "#/components/schemas/BucketRead"
                 }
               }
             }
@@ -1845,24 +1845,24 @@
             }
           }
         },
-        "x-capability": "update_inbox"
+        "x-capability": "update_bucket"
       }
     },
-    "/api/inboxes/{inbox_id}/requests": {
+    "/api/buckets/{bucket_id}/requests": {
       "post": {
         "tags": [
-          "inboxes"
+          "buckets"
         ],
-        "summary": "Push a URL into an Inbox (expanded by the worker)",
+        "summary": "Push a URL into a Bucket (expanded by the worker)",
         "operationId": "add_request",
         "parameters": [
           {
-            "name": "inbox_id",
+            "name": "bucket_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Inbox Id"
+              "title": "Bucket Id"
             }
           }
         ],
@@ -1912,18 +1912,18 @@
       },
       "get": {
         "tags": [
-          "inboxes"
+          "buckets"
         ],
-        "summary": "Requests of an Inbox, newest first",
+        "summary": "Requests of a Bucket, newest first",
         "operationId": "list_requests",
         "parameters": [
           {
-            "name": "inbox_id",
+            "name": "bucket_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Inbox Id"
+              "title": "Bucket Id"
             }
           },
           {
@@ -1985,21 +1985,21 @@
         "x-capability": "list_requests"
       }
     },
-    "/api/inboxes/{inbox_id}/requests/{request_id}": {
+    "/api/buckets/{bucket_id}/requests/{request_id}": {
       "get": {
         "tags": [
-          "inboxes"
+          "buckets"
         ],
         "summary": "One Request with the items it produced",
         "operationId": "get_request",
         "parameters": [
           {
-            "name": "inbox_id",
+            "name": "bucket_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Inbox Id"
+              "title": "Bucket Id"
             }
           },
           {
@@ -2048,21 +2048,21 @@
         "x-capability": "get_request"
       }
     },
-    "/api/inboxes/{inbox_id}/prune": {
+    "/api/buckets/{bucket_id}/prune": {
       "post": {
         "tags": [
-          "inboxes"
+          "buckets"
         ],
-        "summary": "Delete Inbox Episodes matching every given criterion (synchronous)",
-        "operationId": "prune_inbox",
+        "summary": "Delete Bucket Episodes matching every given criterion (synchronous)",
+        "operationId": "prune_bucket",
         "parameters": [
           {
-            "name": "inbox_id",
+            "name": "bucket_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Inbox Id"
+              "title": "Bucket Id"
             }
           }
         ],
@@ -2108,7 +2108,7 @@
             }
           }
         },
-        "x-capability": "prune_inbox"
+        "x-capability": "prune_bucket"
       }
     },
     "/api/jobs": {
@@ -2917,18 +2917,18 @@
         "x-capability": "get_upload"
       }
     },
-    "/api/serial-inboxes": {
+    "/api/serial-buckets": {
       "post": {
         "tags": [
           "uploads"
         ],
-        "summary": "Create an Inbox from uploads, Episodes in the given order",
-        "operationId": "create_serial_inbox",
+        "summary": "Create a Bucket from uploads, Episodes in the given order",
+        "operationId": "create_serial_bucket",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SerialInboxCreate"
+                "$ref": "#/components/schemas/SerialBucketCreate"
               }
             }
           },
@@ -2940,7 +2940,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InboxRead"
+                  "$ref": "#/components/schemas/BucketRead"
                 }
               }
             }
@@ -2976,7 +2976,80 @@
             }
           }
         },
-        "x-capability": "create_serial_inbox"
+        "x-capability": "create_serial_bucket"
+      }
+    },
+    "/api/buckets/{bucket_id}/uploads": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Add received uploads to a Bucket, in natural file-name order",
+        "operationId": "add_uploads",
+        "parameters": [
+          {
+            "name": "bucket_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bucket Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadsAdd"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BucketRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "add_uploads"
       }
     },
     "/feeds/{feed_id}.xml": {
@@ -2984,7 +3057,7 @@
         "tags": [
           "public"
         ],
-        "summary": "The Mirror or Inbox Feed (RSS)",
+        "summary": "The Mirror or Bucket Feed (RSS)",
         "operationId": "public_feed",
         "parameters": [
           {
@@ -3837,6 +3910,183 @@
         "title": "BackfillRequest",
         "description": "The archive policy; ``selection`` implies mode ``selection``.\n\nArchive: ``all`` (everything, then Follow) or ``new`` (nothing listed so far, then\nevery new item). Ephemeral: ``automatic``, nothing ahead of time; an Episode is\ndownloaded when a podcast app first asks for it and expires ``retention_days``\n(default 7) after its last download. ``rolling``: the newest ``latest_n`` only, older\nEpisodes tombstoned as newer ones arrive. ``selection``: exactly the Episodes named.\n``latest`` (N at creation, then Follow) remains for existing Mirrors."
       },
+      "BucketCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "autoprune_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Autoprune Days"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "BucketCreate"
+      },
+      "BucketRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "artwork_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artwork Url"
+          },
+          "feed_url": {
+            "type": "string",
+            "title": "Feed Url",
+            "description": "Carries user:pass@ while authentication is on"
+          },
+          "feed_credentials": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeedCredentials"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "episode_count": {
+            "type": "integer",
+            "title": "Episode Count",
+            "default": 0
+          },
+          "storage_bytes": {
+            "type": "integer",
+            "title": "Storage Bytes",
+            "default": 0
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision",
+            "default": 1
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "kind": {
+            "type": "string",
+            "const": "bucket",
+            "title": "Kind",
+            "default": "bucket"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "autoprune_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Autoprune Days"
+          },
+          "request_count": {
+            "type": "integer",
+            "title": "Request Count",
+            "default": 0
+          },
+          "serial": {
+            "type": "boolean",
+            "title": "Serial",
+            "description": "A Serial Bucket: Episodes in the order given at creation",
+            "default": false
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default",
+            "description": "The default Bucket: it can be renamed but never deleted",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "feed_url",
+          "created_at",
+          "name"
+        ],
+        "title": "BucketRead"
+      },
+      "BucketUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "autoprune_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Autoprune Days"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "BucketUpdate",
+        "description": "PATCH body; ``autoprune_days: null`` present in the body switches autoprune off."
+      },
       "CatalogCounts": {
         "properties": {
           "listed": {
@@ -4248,7 +4498,7 @@
         "type": "string",
         "enum": [
           "mirror",
-          "inbox"
+          "bucket"
         ],
         "title": "FeedKind"
       },
@@ -4261,13 +4511,13 @@
                   "$ref": "#/components/schemas/MirrorRead"
                 },
                 {
-                  "$ref": "#/components/schemas/InboxRead"
+                  "$ref": "#/components/schemas/BucketRead"
                 }
               ],
               "discriminator": {
                 "propertyName": "kind",
                 "mapping": {
-                  "inbox": "#/components/schemas/InboxRead",
+                  "bucket": "#/components/schemas/BucketRead",
                   "mirror": "#/components/schemas/MirrorRead"
                 }
               }
@@ -4302,183 +4552,6 @@
           "never"
         ],
         "title": "HealthStatus"
-      },
-      "InboxCreate": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 80,
-            "minLength": 1,
-            "title": "Name"
-          },
-          "autoprune_days": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Autoprune Days"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "title": "InboxCreate"
-      },
-      "InboxRead": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "artwork_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Artwork Url"
-          },
-          "feed_url": {
-            "type": "string",
-            "title": "Feed Url",
-            "description": "Carries user:pass@ while authentication is on"
-          },
-          "feed_credentials": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/FeedCredentials"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "episode_count": {
-            "type": "integer",
-            "title": "Episode Count",
-            "default": 0
-          },
-          "storage_bytes": {
-            "type": "integer",
-            "title": "Storage Bytes",
-            "default": 0
-          },
-          "revision": {
-            "type": "integer",
-            "title": "Revision",
-            "default": 1
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "kind": {
-            "type": "string",
-            "const": "inbox",
-            "title": "Kind",
-            "default": "inbox"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "autoprune_days": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Autoprune Days"
-          },
-          "request_count": {
-            "type": "integer",
-            "title": "Request Count",
-            "default": 0
-          },
-          "serial": {
-            "type": "boolean",
-            "title": "Serial",
-            "description": "A Serial Inbox: Episodes in the order given at creation",
-            "default": false
-          },
-          "is_default": {
-            "type": "boolean",
-            "title": "Is Default",
-            "description": "The default Inbox: it can be renamed but never deleted",
-            "default": false
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "title",
-          "feed_url",
-          "created_at",
-          "name"
-        ],
-        "title": "InboxRead"
-      },
-      "InboxUpdate": {
-        "properties": {
-          "name": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 80,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "autoprune_days": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Autoprune Days"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "title": "InboxUpdate",
-        "description": "PATCH body; ``autoprune_days: null`` present in the body switches autoprune off."
       },
       "ItemMedia": {
         "properties": {
@@ -5195,7 +5268,7 @@
               }
             ],
             "title": "Playlist Capture",
-            "description": "A YouTube playlist captured from the Inboxes (listed among them)"
+            "description": "A YouTube playlist captured from the Buckets (listed among them)"
           }
         },
         "additionalProperties": false,
@@ -5416,7 +5489,7 @@
           "playlist_capture": {
             "type": "boolean",
             "title": "Playlist Capture",
-            "description": "Captured from the Inboxes; listed among them, not as a Mirror",
+            "description": "Captured from the Buckets; listed among them, not as a Mirror",
             "default": false
           },
           "paused": {
@@ -6115,9 +6188,9 @@
             "format": "uuid",
             "title": "Id"
           },
-          "inbox_id": {
+          "bucket_id": {
             "type": "string",
-            "title": "Inbox Id"
+            "title": "Bucket Id"
           },
           "url": {
             "type": "string",
@@ -6171,7 +6244,7 @@
         "type": "object",
         "required": [
           "id",
-          "inbox_id",
+          "bucket_id",
           "url",
           "requested_via",
           "status",
@@ -6316,6 +6389,63 @@
         "title": "SelectionSummary",
         "description": "What a selection-mode Mirror has selected so far."
       },
+      "SerialBucketCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "number_titles": {
+            "type": "boolean",
+            "title": "Number Titles",
+            "description": "Prefix each title with its position (\"07 \u00b7 Title\")",
+            "default": true
+          },
+          "episodes": {
+            "items": {
+              "$ref": "#/components/schemas/SerialEpisode"
+            },
+            "type": "array",
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Episodes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "episodes"
+        ],
+        "title": "SerialBucketCreate",
+        "description": "A Serial Bucket: ``episodes`` in listening order, first to last (ADR 0015)."
+      },
       "SerialEpisode": {
         "properties": {
           "upload_id": {
@@ -6341,7 +6471,7 @@
               }
             ],
             "title": "Author",
-            "description": "Else the Inbox's"
+            "description": "Else the Bucket's"
           },
           "description": {
             "anyOf": [
@@ -6400,64 +6530,7 @@
           "title"
         ],
         "title": "SerialEpisode",
-        "description": "One file of a Serial Inbox, described the way it should read in a podcast app."
-      },
-      "SerialInboxCreate": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 80,
-            "minLength": 1,
-            "title": "Name"
-          },
-          "author": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 300
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Author"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 20000
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "number_titles": {
-            "type": "boolean",
-            "title": "Number Titles",
-            "description": "Prefix each title with its position (\"07 \u00b7 Title\")",
-            "default": true
-          },
-          "episodes": {
-            "items": {
-              "$ref": "#/components/schemas/SerialEpisode"
-            },
-            "type": "array",
-            "maxItems": 2000,
-            "minItems": 1,
-            "title": "Episodes"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "name",
-          "episodes"
-        ],
-        "title": "SerialInboxCreate",
-        "description": "A Serial Inbox: ``episodes`` in listening order, first to last (ADR 0015)."
+        "description": "One file of a Serial Bucket, described the way it should read in a podcast app."
       },
       "SourceKind": {
         "type": "string",
@@ -6673,6 +6746,26 @@
         ],
         "title": "UploadRead"
       },
+      "UploadsAdd": {
+        "properties": {
+          "upload_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Upload Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "upload_ids"
+        ],
+        "title": "UploadsAdd",
+        "description": "Received uploads to add to a Bucket; Copycast orders them by file name, naturally."
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -6796,7 +6889,7 @@
           "url"
         ],
         "title": "VideoSearchResult",
-        "description": "One YouTube search hit; ``url`` is what ``add_to_inbox`` or ``probe_source`` takes."
+        "description": "One YouTube search hit; ``url`` is what ``add_to_bucket`` or ``probe_source`` takes."
       },
       "YouTubePlaylist": {
         "properties": {

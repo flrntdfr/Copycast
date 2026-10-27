@@ -2,7 +2,7 @@
 
 Building the app touches neither the database nor the data directory
 (``copycast openapi`` needs that); the lifespan runs the startup sequence:
-layout version, schema (``COPYCAST_AUTO_MIGRATE``), default Inbox, EventHub,
+layout version, schema (``COPYCAST_AUTO_MIGRATE``), default Bucket, EventHub,
 the per-process probe cache and the FastMCP session manager, and undoes it on
 shutdown. :func:`preflight` is the part ``copycast api`` runs before uvicorn
 so a bad layout or schema exits 2 with one actionable line.
@@ -151,7 +151,7 @@ def _lifespan(settings: Settings, container: ApiContainer, mcp_app: Any) -> Any:
         except SettingsError as exc:
             log.error("api.startup_failed", error=str(exc))
             raise
-        await container.services.ensure_default_inbox()
+        await container.services.ensure_default_bucket()
         _ = container.sources.cache  # the per-process probe cache
         hub = EventHub(psycopg_conninfo(settings.database_url))
         app.state.event_hub = hub
