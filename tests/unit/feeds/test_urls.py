@@ -25,6 +25,14 @@ def test_base_url_trailing_slash_and_ext_dot_are_tolerated() -> None:
     )
 
 
+def test_a_media_key_moves_media_and_assets_under_k() -> None:
+    assert media_url(BASE, "abc", "x", "m4a", key="k3y") == f"{BASE}/feeds/abc/k/k3y/media/x.m4a"
+    assert (
+        asset_url(BASE, "abc", "assets/x.chapters.json", key="k3y")
+        == f"{BASE}/feeds/abc/k/k3y/assets/x.chapters.json"
+    )
+
+
 def test_path_components_are_quoted() -> None:
     assert asset_url(BASE, "a b", "we ird.jpg") == f"{BASE}/feeds/a%20b/assets/we%20ird.jpg"
     assert media_url(BASE, "id", "it/em", "m4a") == f"{BASE}/feeds/id/media/it%2Fem.m4a"

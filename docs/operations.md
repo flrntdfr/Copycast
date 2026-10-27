@@ -152,8 +152,15 @@ at creation; migration 0002 mints them for feeds that existed before. They live 
 and in `feed.json`, so a rebuild keeps every subscription working. The UI shows them under the
 feed URL, which already carries them as `https://user:pass@host/feeds/<id>.xml`. *Rotate*
 (`POST /api/feeds/{id}/credentials/rotate`) mints a new pair and cuts off every client holding
-the old one. Overcast, Pocket Casts and AntennaPod send the pair for episode downloads too;
-Apple Podcasts fetches the feed but not the audio.
+the old one.
+
+**Media keys.** A player streaming an enclosure (iOS AVPlayer in Overcast) sends no
+credentials and never answers a challenge, so while authentication is on a feed publishes its
+media, chapters, transcripts and attachments under `/feeds/<id>/k/<key>/…`: the key is derived
+from the feed's password, opens only that feed's files, rotates with the pair and is logged as
+`***`. A reverse proxy's own access log records it with the path. Bare `/feeds/<id>/media/…`
+URLs still work with the pair. The upgrade to 2.0.2 moves every enclosure URL once, so apps
+may download Episodes they already have again (ADR 0020).
 
 **API keys.** Minted and revoked on the *API keys* page (`/api/keys`), shown once, stored as a
 SHA-256 digest, with a scope: `read` (read-only tools), `write` (everything but deletions) or
@@ -563,8 +570,8 @@ pushes the lock change to `main`; `image.yml` then builds and publishes:
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
-| `2.0.1` | yes, on every engine bump | "the current 2.0.1" |
-| `2.0.1-yt2026.10.26.220202.dev0` | never (until pruned) | exactly this app + engine combination |
+| `2.0.2` | yes, on every engine bump | "the current 2.0.2" |
+| `2.0.2-yt2026.10.26.220202.dev0` | never (until pruned) | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
 Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. After each build the
@@ -573,7 +580,7 @@ are deleted, so roll back within that window or pull and keep the image yourself
 runs with `GITHUB_TOKEN`, which needs the package to grant the repository the Admin role
 (Package settings → Manage Actions access). To roll back an engine that broke a site, pin
 the previous immutable tag in `.env`
-(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:2.0.1-yt<previous>`) or in the kustomize overlay
+(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:2.0.2-yt<previous>`) or in the kustomize overlay
 (`images[].newTag`), and `docker compose up -d` / `kubectl apply -k`. The About page and
 `copycast --version` show which engine is running; `jobs.engine_version` records which engine
 archived each item.

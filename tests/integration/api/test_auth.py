@@ -17,6 +17,7 @@ import pytest
 
 from copycast.adapters.storage.descriptor import FeedDescriptor
 from copycast.app import Container
+from copycast.domain.credentials import feed_media_key
 from copycast.settings import Settings, get_settings
 from copycast.worker.runner import Runner
 from tests.conftest import TEST_BASE_URL
@@ -114,20 +115,47 @@ async def test_feed_routes_take_the_feed_pair_or_the_operator_pair(
     unknown = await client.get(FEED_URL("no-such-feed"), headers=feed_headers)
     assert unknown.status_code == 401
 
-    # The rendered feed's enclosure URLs stay bare: clients reuse the feed's pair.
+    # The rendered feed's enclosures carry the media key, never the pair: a streaming player
+    # (AVPlayer) sends no credentials and never answers the challenge.
     client.headers.update(OPERATOR_HEADERS)
     archived = await archived_items(client, runner, mirror["id"])
     client.headers.pop("Authorization")
     assert len(archived) == 1
     document = await client.get(feed_path, headers=feed_headers)
-    assert f"http://testserver/feeds/{mirror['id']}/media/" in document.text
+    key = feed_media_key(mirror["id"], pair["password"])
+    keyed = f"http://testserver/feeds/{mirror['id']}/k/{key}/media/"
+    assert keyed in document.text
+    assert f"/feeds/{mirror['id']}/media/" not in document.text
     assert pair["password"] not in document.text
 
-    media_path = MEDIA_URL(mirror["id"], archived[0]["id"], archived[0]["media"]["ext"])
+    item_id, ext = archived[0]["id"], archived[0]["media"]["ext"]
+    media_path = MEDIA_URL(mirror["id"], item_id, ext)
     assert (await client.get(media_path)).status_code == 401
     partial = await client.get(media_path, headers={**feed_headers, "Range": "bytes=0-9"})
     assert partial.status_code == 206
     assert (await client.get(media_path, headers=OPERATOR_HEADERS)).status_code == 200
+
+    # The keyed URL needs nothing else, Range and HEAD included.
+    keyed_path = f"/feeds/{mirror['id']}/k/{key}/media/{item_id}.{ext}"
+    streamed = await client.get(keyed_path, headers={"Range": "bytes=0-"})
+    full = await client.get(media_path, headers=OPERATOR_HEADERS)
+    assert streamed.status_code == 206 and streamed.content == full.content
+    assert (await client.head(keyed_path)).status_code == 200
+    # A wrong key, another feed's key, or the key as a query opens nothing.
+    wrong_key = await client.get(f"/feeds/{mirror['id']}/k/{'a' * 22}/media/{item_id}.{ext}")
+    assert wrong_key.status_code == 401 and problem(wrong_key)["detail"] == (
+        "wrong media key for this feed"
+    )
+    assert (
+        await client.get(f"/feeds/{other['id']}/k/{key}/media/{item_id}.{ext}")
+    ).status_code == 401
+    assert (await client.get(f"{media_path}?key={key}")).status_code == 401
+    # A wrong key with the feed's pair still passes: the pair is always enough.
+    assert (
+        await client.get(
+            f"/feeds/{mirror['id']}/k/nope/media/{item_id}.{ext}", headers=feed_headers
+        )
+    ).status_code == 200
 
 
 async def test_artwork_logo_and_robots_are_public(
@@ -174,6 +202,12 @@ async def test_rotate_feed_credentials(
     assert (
         await client.get(feed_path, headers=basic(new["username"], new["password"]))
     ).status_code == 200
+    # The media key is derived from the pair, so it rotates with it.
+    assert feed_media_key(mirror["id"], new["password"]) != feed_media_key(
+        mirror["id"], old["password"]
+    )
+    document = await client.get(feed_path, headers=basic(new["username"], new["password"]))
+    assert feed_media_key(mirror["id"], old["password"]) not in document.text
 
     # The descriptor carries the new pair, so a rebuild keeps every subscription working.
     descriptor = FeedDescriptor.read(

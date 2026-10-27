@@ -6,6 +6,7 @@ responses (SSE, media) and background tasks keep their exact semantics.
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from typing import Any
@@ -123,6 +124,15 @@ def client_ip_of(scope: Scope, headers: Headers) -> str | None:
     return str(client[0]) if client else None
 
 
+FEED_KEY_RE = re.compile(r"^(/feeds/[^/]+/k/)[^/]+(?=/)")
+REDACTED_KEY = "***"
+
+
+def logged_path(path: str) -> str:
+    """The path as logged: a feed's media key (``/feeds/{id}/k/{key}/``) is a credential."""
+    return FEED_KEY_RE.sub(rf"\g<1>{REDACTED_KEY}", path, count=1)
+
+
 def _query_of(scope: Scope) -> str | None:
     raw: bytes = scope.get("query_string") or b""
     return raw.decode("utf-8", "replace") or None
@@ -173,7 +183,7 @@ class AccessLogMiddleware:
             log.info(
                 ACCESS_LOG_EVENT,
                 method=scope["method"],
-                path=scope["path"],
+                path=logged_path(scope["path"]),
                 query=_query_of(scope),
                 status=500 if status is None else status,
                 duration_ms=round((time.perf_counter() - started) * 1000, 1),

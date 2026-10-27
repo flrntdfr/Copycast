@@ -173,6 +173,10 @@ _Avoid_: Admin password, login, account, session
 A Feed's own random username and password, minted at creation, kept in Postgres and in `feed.json`, and rotated on demand. While authentication is on they open that Feed's RSS, media and assets and nothing else; the feed URL carries them as `user:pass@` and the UI shows them separately for apps such as Overcast.
 _Avoid_: Feed token, feed secret, private URL, feed password (say the pair)
 
+**Media key**:
+A Feed's secret path segment, derived from its password, under which the Feed publishes its media and non-artwork assets while authentication is on (`/feeds/{id}/k/{key}/…`), so players that never answer a Basic challenge can stream (ADR 0020). Rotates with the Feed credentials; logged as `***`.
+_Avoid_: Feed key (that is the multi-user plan's per-listener credential), token, signed URL
+
 **API key**:
 A bearer secret minted from the UI for one MCP client, shown once, stored as a digest, revocable on its own. The only credential the MCP mount accepts while authentication is on.
 _Avoid_: Token, PAT, MCP password, service account
@@ -286,3 +290,4 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0016](docs/adr/0016-ephemeral-or-archive-and-the-archive-flag.md) | Two policies, Ephemeral and Archive (with or without Backfill); the Archive flag keeps an Episode for good |
 | [0018](docs/adr/0018-inboxes-become-buckets-with-uploads.md) | Inboxes are renamed Buckets; uploads join any Bucket in natural file-name order, dated by arrival |
 | [0019](docs/adr/0019-object-store-scratch-and-a-shared-feed-cache.md) | Every byte lives in an S3 Object store; the worker transcodes in Scratch; first plays hold the line on a reserved slot; feeds are cached in a shared Valkey |
+| [0020](docs/adr/0020-media-keys-in-enclosure-urls.md) | While auth is on, enclosures and non-artwork assets are published under a media key derived from the feed's password |

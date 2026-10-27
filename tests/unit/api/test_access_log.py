@@ -23,6 +23,7 @@ from copycast.adapters.api.middleware import (
     RequestContextMiddleware,
     client_ip_of,
     ensure_request_id,
+    logged_path,
 )
 
 EventDict = dict[str, Any]
@@ -309,3 +310,13 @@ def test_client_ip_of(
 
     headers = Headers({"x-forwarded-for": forwarded_for} if forwarded_for is not None else {})
     assert client_ip_of({"type": "http", "client": client}, headers) == expected
+
+
+def test_a_feed_media_key_never_reaches_the_log() -> None:
+    assert logged_path("/feeds/abc/k/s3cretkey/media/0123456789abcdef.m4a") == (
+        "/feeds/abc/k/***/media/0123456789abcdef.m4a"
+    )
+    assert logged_path("/feeds/abc/media/0123456789abcdef.m4a") == (
+        "/feeds/abc/media/0123456789abcdef.m4a"
+    )
+    assert logged_path("/api/feeds") == "/api/feeds"

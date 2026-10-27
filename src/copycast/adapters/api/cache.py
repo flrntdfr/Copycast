@@ -24,10 +24,12 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from copycast.logging import get_logger
+from copycast.version import APP_VERSION
 
 log = get_logger(__name__)
 
-SHARED_PREFIX = "copycast:feed:"
+SHARED_PREFIX = f"copycast:feed:{APP_VERSION}:"
+"""Per release: a new version may render differently at the same revision."""
 LOCK_PREFIX = "copycast:render:"
 LOCK_SECONDS = 15
 RENDER_WAIT_SECONDS = 2.0

@@ -3,12 +3,15 @@
 Every secret here is random and high-entropy, so an API key is stored as a
 plain SHA-256 digest (no salt or work factor is needed against brute force)
 while feed pairs stay in clear text: the UI shows them again for the next
-podcast client and ``copycast rebuild`` restores them from the descriptor.
+podcast client and ``copycast rebuild`` restores them from the descriptor. A
+feed's media key is derived from its password, so it needs no storage of its own.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import secrets
 from typing import Final
 
@@ -18,6 +21,9 @@ FEED_ALPHABET: Final = "abcdefghjkmnpqrstuvwxyz23456789"
 """Lowercase and digits minus the look-alikes; safe inside ``user:pass@`` URLs."""
 FEED_USERNAME_LEN: Final = 8
 FEED_PASSWORD_LEN: Final = 24
+FEED_MEDIA_KEY_LEN: Final = 22
+"""Base32 characters of a feed's media key (110 bits)."""
+_MEDIA_KEY_CONTEXT: Final = b"copycast feed media key\x00"
 API_KEY_PREFIX: Final = "cck_"
 API_KEY_BYTES: Final = 30
 API_KEY_DISPLAY_LEN: Final = 12
@@ -42,6 +48,19 @@ def new_feed_username() -> str:
 def new_feed_password() -> str:
     """Twenty-four characters (about 119 bits) from the unambiguous alphabet."""
     return _token(FEED_PASSWORD_LEN)
+
+
+def feed_media_key(feed_id: str, password: str) -> str:
+    """The secret path segment of a feed's media and asset URLs (``/feeds/{id}/k/{key}/``).
+
+    Players that never answer a Basic challenge (iOS AVPlayer streaming an enclosure)
+    follow it. An HMAC of the feed id under the feed's password: rotating the pair
+    rotates the key, and ``copycast rebuild`` gets it back with the password.
+    """
+    mac = hmac.new(
+        password.encode("utf-8"), _MEDIA_KEY_CONTEXT + feed_id.encode("utf-8"), hashlib.sha256
+    )
+    return base64.b32encode(mac.digest()).decode("ascii").lower()[:FEED_MEDIA_KEY_LEN]
 
 
 def new_api_key() -> str:
@@ -89,11 +108,13 @@ def required_scope(*, destructive: bool, read_only: bool) -> KeyScope:
 __all__ = [
     "API_KEY_PREFIX",
     "FEED_ALPHABET",
+    "FEED_MEDIA_KEY_LEN",
     "FEED_PASSWORD_LEN",
     "FEED_USERNAME_LEN",
     "api_key_hash",
     "api_key_prefix",
     "constant_time_equals",
+    "feed_media_key",
     "looks_like_api_key",
     "new_api_key",
     "new_feed_password",

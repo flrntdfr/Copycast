@@ -1,6 +1,7 @@
 # 0011 Optional authentication for direct deployments
 
-Status: accepted; amended (artwork is public, see the end) (v1); narrows ADR 0004
+Status: accepted; amended (artwork is public, see the end) (v1); narrows ADR 0004; enclosure
+URLs carry a media key since ADR 0020
 
 ## Context
 

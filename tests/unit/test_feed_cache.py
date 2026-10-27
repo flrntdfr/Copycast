@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from copycast.adapters.api import cache as cache_module
-from copycast.adapters.api.cache import FeedCache, SharedFeedCache, weak_etag
+from copycast.adapters.api.cache import SHARED_PREFIX, FeedCache, SharedFeedCache, weak_etag
 
 STAMP = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
 
@@ -92,7 +92,7 @@ async def test_replicas_share_one_render_per_revision() -> None:
         rendered.last_modified,
         rendered.content_type,
     )
-    assert valkey.ttls["copycast:feed:f1:3"] == 600
+    assert valkey.ttls[f"{SHARED_PREFIX}f1:3"] == 600
     assert second.get("f1", 3) is served, "kept in the replica's own LRU too"
     await second.fetch("f1", 4, _renderer(4, b"<rss>4</rss>", calls))
     assert calls == [3, 4], "a new revision renders again"
@@ -141,7 +141,7 @@ async def test_a_shared_level_that_is_down_is_only_an_accelerator_lost() -> None
     assert entry is not None and calls == [1] and shared.errors == 3  # get, lock, set
     assert await shared.get("f1", 1) is None and shared.errors == 4
     valkey.down = False
-    valkey.data["copycast:feed:f1:2"] = b"not a cached feed"
+    valkey.data[f"{SHARED_PREFIX}f1:2"] = b"not a cached feed"
     assert await shared.get("f1", 2) is None, "an undecodable value is a miss"
 
 

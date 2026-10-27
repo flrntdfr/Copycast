@@ -7,7 +7,10 @@ Off unless ``settings.auth.password`` is set (ADR 0011). When on:
   gated by API keys inside the fastmcp app, see ``adapters.mcp.auth``);
 * :func:`require_feed_access` on the ``/feeds`` router accepts the operator
   pair or the pair of the very feed being fetched, so a podcast client holding
-  one feed's credentials reaches nothing else.
+  one feed's credentials reaches nothing else. The ``/feeds/{id}/k/{key}/``
+  media and asset routes also take the feed's media key from the path: the
+  enclosure URLs a feed publishes carry it, because a streaming player (iOS
+  AVPlayer) never answers a challenge.
 
 Both answer 401 as problem+json with a ``Basic`` challenge, which is what makes
 browsers, Overcast and AntennaPod prompt for the pair.
@@ -29,7 +32,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from copycast.adapters.api.container import ApiContainer
 from copycast.adapters.api.deps import get_container
 from copycast.adapters.api.problems import WWW_AUTHENTICATE, build_problem
-from copycast.domain.credentials import constant_time_equals
+from copycast.domain.credentials import constant_time_equals, feed_media_key
 from copycast.domain.exceptions import Unauthorized
 from copycast.domain.urls import COPYCAST_ARTWORK_PATH
 from copycast.settings import AuthSettings
@@ -146,12 +149,15 @@ async def require_feed_access(
     container: Annotated[ApiContainer, Depends(get_container)],
     feed_id: str,
 ) -> None:
-    """The operator pair or this feed's own pair; a no-op while auth is off or for artwork."""
+    """The operator pair, this feed's own pair, or (on a ``/k/{key}/`` route) this feed's
+    media key; a no-op while auth is off or for artwork."""
     auth = container.settings.auth
     if not auth.enabled or is_public_artwork(request.url.path):
         return
+    # Read from the path only: a ``?key=`` query must never stand in for the pair.
+    key: str | None = request.path_params.get("key")
     credentials = parse_basic(request.headers.get("authorization"))
-    if credentials is None:
+    if credentials is None and key is None:
         raise Unauthorized("this feed requires its username and password")
     if is_operator(auth, credentials):
         return
@@ -159,6 +165,14 @@ async def require_feed_access(
         feed = await uow.feeds.get(feed_id)
         username: str | None = feed.auth_username if feed is not None else None
         password: str | None = feed.auth_password if feed is not None else None
+    if (
+        key is not None
+        and password is not None
+        and constant_time_equals(key, feed_media_key(feed_id, password))
+    ):
+        return
+    if credentials is None:
+        raise Unauthorized("wrong media key for this feed")
     if (
         username is not None
         and password is not None

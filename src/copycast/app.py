@@ -29,6 +29,7 @@ from copycast.application.models import (
 from copycast.application.ports import CancelToken, Engine
 from copycast.application.services.context import RssFetch, ServiceContext, SourceSnapshot
 from copycast.application.services.sources import WATCH_LATER_URL
+from copycast.domain.credentials import feed_media_key
 from copycast.domain.enums import (
     ArchiveState,
     AssetFormat,
@@ -401,6 +402,11 @@ class FeedRendererAdapter:
                 backfill_mode=BackfillMode(feed.backfill_mode) if feed.backfill_mode else None,
                 serial=bool(feed.serial),
                 assets=tuple(by_item.get(None, [])),
+                media_key=(
+                    feed_media_key(feed.id, feed.auth_password)
+                    if self._container.settings.auth.enabled and feed.auth_password
+                    else None
+                ),
             )
             item_views = [
                 render_module.ItemView(

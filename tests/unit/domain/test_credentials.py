@@ -28,6 +28,14 @@ def test_api_key_shape_hash_and_prefix() -> None:
     assert c.api_key_prefix(secret) == secret[:12] and c.api_key_prefix(secret).startswith("cck_")
 
 
+def test_feed_media_key_is_stable_per_feed_and_password() -> None:
+    key = c.feed_media_key("a2617beebed7fefa", "s3cret")
+    assert len(key) == c.FEED_MEDIA_KEY_LEN and key.isalnum() and key == key.lower()
+    assert key == c.feed_media_key("a2617beebed7fefa", "s3cret")
+    assert key != c.feed_media_key("a2617beebed7fefa", "rotated")
+    assert key != c.feed_media_key("other", "s3cret")
+
+
 def test_constant_time_equals() -> None:
     assert c.constant_time_equals("abc", "abc")
     assert not c.constant_time_equals("abc", "abd")

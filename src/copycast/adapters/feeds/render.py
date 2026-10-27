@@ -157,6 +157,10 @@ class FeedView:
     serial: bool = False
     """A Serial Bucket: dated by ``published_at`` (its schedule) and published ``serial``."""
     assets: tuple[AssetView, ...] = ()
+    media_key: str | None = None
+    """Set while auth is on: enclosures, chapters, transcripts and attachments are published
+    under ``/feeds/{id}/k/{key}/`` for players that never answer a Basic challenge.
+    Artwork keeps its bare URL (it is public)."""
 
     @property
     def automatic(self) -> bool:
@@ -345,18 +349,22 @@ def _preserved_item(feed: FeedView, item: ItemView, base_url: str) -> Element | 
     _replace_all(element, [_enclosure(base_url, feed, item)], (None, "enclosure"))
     for notes in (element.find("description"), element.find(tag(NS_CONTENT, "encoded"))):
         if notes is not None and notes.text:
-            notes.text = localized_notes(notes.text, base_url, feed.id, item.assets)
+            notes.text = localized_notes(
+                notes.text, base_url, feed.id, item.assets, key=feed.media_key
+            )
 
     chapters = _pick_chapters(item.assets)
     if chapters is not None:
         _replace_all(
-            element, [_chapters_element(base_url, feed.id, chapters)], (NS_PODCAST, "chapters")
+            element,
+            [_chapters_element(base_url, feed.id, chapters, key=feed.media_key)],
+            (NS_PODCAST, "chapters"),
         )
     transcripts = _pick_transcripts(item.assets)
     if transcripts:
         _replace_all(
             element,
-            [_transcript_element(base_url, feed.id, t) for t in transcripts],
+            [_transcript_element(base_url, feed.id, t, key=feed.media_key) for t in transcripts],
             (NS_PODCAST, "transcript"),
         )
     artwork = _local_url(base_url, feed.id, _pick_artwork(item.assets))
@@ -366,13 +374,18 @@ def _preserved_item(feed: FeedView, item: ItemView, base_url: str) -> Element | 
 
 
 def localized_notes(
-    text: str | None, base_url: str, feed_id: str, assets: Iterable[AssetView]
+    text: str | None,
+    base_url: str,
+    feed_id: str,
+    assets: Iterable[AssetView],
+    *,
+    key: str | None = None,
 ) -> str | None:
     """The show notes with every mirrored attachment's URL replaced by the local copy."""
     if not text:
         return text
     for asset in _served(assets, AssetKind.attachment):
-        local = _local_url(base_url, feed_id, asset)
+        local = _local_url(base_url, feed_id, asset, key=key)
         if asset.remote_url and local and asset.remote_url in text:
             text = text.replace(asset.remote_url, local)
     return text
@@ -426,7 +439,7 @@ def _enclosure(base_url: str, feed: FeedView, item: ItemView) -> Element:
     feed's item keeps the URL it was listed under once archived. ``type`` and ``length``
     are the archived file's, else the predicted MIME and a 128 kbit/s estimate."""
     enclosure = etree.Element("enclosure")
-    enclosure.set("url", media_url(base_url, feed.id, item.id, item.public_ext))
+    enclosure.set("url", media_url(base_url, feed.id, item.id, item.public_ext, key=feed.media_key))
     archived = bool(item.media_ext)
     length = item.media_bytes if archived else None
     enclosure.set("length", str(length or placeholder_length(item.duration_seconds)))
@@ -443,7 +456,8 @@ def _synthesized_item(
     element = etree.Element("item")
     _sub(element, "title", item.title)
     description = with_source_link(
-        localized_notes(item.description, base_url, feed.id, item.assets), item.source_url
+        localized_notes(item.description, base_url, feed.id, item.assets, key=feed.media_key),
+        item.source_url,
     )
     if item.published_at_approximate and item.published_at is not None:
         description = with_approximate_note(description, item.published_at, now)
@@ -472,9 +486,9 @@ def _synthesized_item(
         etree.SubElement(element, tag(NS_ITUNES, "image")).set("href", artwork)
     chapters = _pick_chapters(item.assets)
     if chapters is not None:
-        element.append(_chapters_element(base_url, feed.id, chapters))
+        element.append(_chapters_element(base_url, feed.id, chapters, key=feed.media_key))
     for transcript in _pick_transcripts(item.assets):
-        element.append(_transcript_element(base_url, feed.id, transcript))
+        element.append(_transcript_element(base_url, feed.id, transcript, key=feed.media_key))
     return element
 
 
@@ -508,24 +522,30 @@ def _pick_transcripts(assets: Iterable[AssetView]) -> list[AssetView]:
     return [chosen[key] for key in sorted(chosen)]
 
 
-def _local_url(base_url: str, feed_id: str, asset: AssetView | None) -> str | None:
+def _local_url(
+    base_url: str, feed_id: str, asset: AssetView | None, *, key: str | None = None
+) -> str | None:
     if asset is None or not asset.local_path:
         return None
-    return asset_url(base_url, feed_id, asset.local_path)
+    return asset_url(base_url, feed_id, asset.local_path, key=key)
 
 
-def _chapters_element(base_url: str, feed_id: str, asset: AssetView) -> Element:
+def _chapters_element(
+    base_url: str, feed_id: str, asset: AssetView, *, key: str | None = None
+) -> Element:
     element = etree.Element(tag(NS_PODCAST, "chapters"))
     assert asset.local_path is not None
-    element.set("url", asset_url(base_url, feed_id, asset.local_path))
+    element.set("url", asset_url(base_url, feed_id, asset.local_path, key=key))
     element.set("type", asset.mime or CHAPTERS_MIME)
     return element
 
 
-def _transcript_element(base_url: str, feed_id: str, asset: AssetView) -> Element:
+def _transcript_element(
+    base_url: str, feed_id: str, asset: AssetView, *, key: str | None = None
+) -> Element:
     element = etree.Element(tag(NS_PODCAST, "transcript"))
     assert asset.local_path is not None
-    element.set("url", asset_url(base_url, feed_id, asset.local_path))
+    element.set("url", asset_url(base_url, feed_id, asset.local_path, key=key))
     mime = asset.mime or (TRANSCRIPT_MIME[asset.format] if asset.format else "text/plain")
     element.set("type", mime)
     if asset.language:

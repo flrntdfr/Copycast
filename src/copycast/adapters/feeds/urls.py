@@ -6,6 +6,8 @@ from posixpath import basename
 from urllib.parse import quote, urlsplit, urlunsplit
 
 FEEDS_PREFIX = "/feeds"
+KEY_SEGMENT = "k"
+"""``/feeds/{id}/k/{key}/media/...``: a feed's media key in place of its Basic pair."""
 
 
 def _base(base_url: str) -> str:
@@ -33,21 +35,28 @@ def feed_url(
     return url
 
 
-def media_url(base_url: str, feed_id: str, item_id: str, ext: str) -> str:
-    """``{base_url}/feeds/{id}/media/{item_id}.{ext}``"""
+def _files(base_url: str, feed_id: str, key: str | None) -> str:
+    """Where a feed's media and assets live: ``/feeds/{id}``, or ``/feeds/{id}/k/{key}``."""
+    root = f"{_base(base_url)}{FEEDS_PREFIX}/{quote(feed_id, safe='')}"
+    return root if key is None else f"{root}/{KEY_SEGMENT}/{quote(key, safe='')}"
+
+
+def media_url(
+    base_url: str, feed_id: str, item_id: str, ext: str, *, key: str | None = None
+) -> str:
+    """``{base_url}/feeds/{id}[/k/{key}]/media/{item_id}.{ext}``"""
     clean_ext = ext.lstrip(".")
     return (
-        f"{_base(base_url)}{FEEDS_PREFIX}/{quote(feed_id, safe='')}/media/"
+        f"{_files(base_url, feed_id, key)}/media/"
         f"{quote(item_id, safe='')}.{quote(clean_ext, safe='')}"
     )
 
 
-def asset_url(base_url: str, feed_id: str, local_path: str) -> str:
-    """``{base_url}/feeds/{id}/assets/{basename}`` (``local_path`` may carry ``assets/``)."""
+def asset_url(base_url: str, feed_id: str, local_path: str, *, key: str | None = None) -> str:
+    """``{base_url}/feeds/{id}[/k/{key}]/assets/{basename}`` (``local_path`` may carry
+    ``assets/``)."""
     name = basename(local_path)
-    return (
-        f"{_base(base_url)}{FEEDS_PREFIX}/{quote(feed_id, safe='')}/assets/{quote(name, safe='')}"
-    )
+    return f"{_files(base_url, feed_id, key)}/assets/{quote(name, safe='')}"
 
 
-__all__ = ["FEEDS_PREFIX", "asset_url", "feed_url", "media_url", "with_credentials"]
+__all__ = ["FEEDS_PREFIX", "KEY_SEGMENT", "asset_url", "feed_url", "media_url", "with_credentials"]

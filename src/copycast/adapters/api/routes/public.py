@@ -17,7 +17,9 @@ or answers 503 with ``Retry-After`` before a podcast app gives up (iOS drops a
 silent request after 60 s). ``/feeds/{id}/assets/{basename}`` is matched
 against the feed's archived asset rows and never counted. While authentication
 is on, every route here takes the operator pair or the feed's own pair
-(``adapters.api.auth.require_feed_access``).
+(``adapters.api.auth.require_feed_access``); media and assets are also served
+under ``/feeds/{id}/k/{key}/``, the feed's media key standing in for the pair,
+which is the form a feed publishes its enclosures in while auth is on.
 """
 
 from __future__ import annotations
@@ -351,6 +353,19 @@ _get_and_head(
     operation_id="public_asset",
     summary="A mirrored asset (artwork, chapters, transcript)",
 )
+# The same files under the feed's media key, the form the feed publishes while auth is on
+# (``require_feed_access`` reads ``key`` from the path). Out of the schema: same contract.
+for _path, _endpoint in (
+    ("/{feed_id}/k/{key}/media/{filename}", media),
+    ("/{feed_id}/k/{key}/assets/{filename}", asset),
+):
+    router.add_api_route(
+        _path,
+        _endpoint,
+        methods=["GET", "HEAD"],
+        response_class=Response,
+        include_in_schema=False,
+    )
 
 
 __all__ = [
