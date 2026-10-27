@@ -102,6 +102,25 @@ async def test_the_proxy_answers_ranges_like_a_file(
     past = await client.get(path, headers={"Range": f"bytes={size}-"})
     assert past.status_code == 416 and past.headers["content-range"] == f"bytes */{size}"
 
+    # The Object store fails mid-body: the response ends short (the client retries with a
+    # Range) and the error never escapes the ASGI app.
+    real_stream = store_stream = container.layout.store.stream
+
+    async def broken(*args: Any, **kwargs: Any) -> Any:
+        async for chunk in real_stream(*args, **kwargs):
+            yield chunk[:5]
+            raise OSError("Generic S3 error: HTTP error: request or response body error")
+
+    container.layout.store.stream = broken  # type: ignore[method-assign]
+    try:
+        short = await client.get(path, headers={"Range": "bytes=0-9"})
+    except httpx.RemoteProtocolError:
+        pass  # the transport noticed the short body: that is the point
+    else:
+        assert len(short.content) < 10
+    finally:
+        container.layout.store.stream = store_stream  # type: ignore[method-assign]
+
     # The object vanished from the Object store behind the row's back: 404, not a 500.
     store = container.layout.store
     store.delete(container.layout.media_key(mirror["id"], item["id"], item["media"]["ext"]))

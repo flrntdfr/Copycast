@@ -86,6 +86,9 @@ access_key_id     = "..."             # or the usual AWS_* environment
 secret_access_key = "..."
 scratch_dir       = "./scratch"       # local: downloads and transcodes, never served
 min_free_scratch_mb = 512
+request_timeout_seconds = 60          # every Object store call but a served stream
+stream_timeout_seconds  = 21600       # one GET streamed to a podcast app (a slow app reads
+                                      # a long Episode for many minutes; this bounds a stall)
 
 [cache]                         # the shared Feed cache; unset, each api process caches alone
 url = "redis://valkey:6379/0"   # redis://, rediss://, valkey:// or valkeys://
@@ -124,7 +127,11 @@ hooks, ...) are rejected at startup with exit code 2; `cookiefile`, `proxy` and
 Compose-only (interpolated by `docker compose`, see `.env.example`): `COMPOSE_PROFILES`,
 `TS_AUTHKEY`, `POSTGRES_PASSWORD`, `COPYCAST_BASE_URL`, `COPYCAST_AUTH_PASSWORD`,
 `COPYCAST_AUTH_USERNAME`, `COPYCAST_IMAGE`, `COPYCAST_PORT`, `COPYCAST_UID`, `COPYCAST_GID`,
-`COPYCAST_S3_SECRET_KEY`, `COPYCAST_S3_ACCESS_KEY`, `COPYCAST_S3_BUCKET`, `COPYCAST_S3_DATA`.
+`COPYCAST_S3_SECRET_KEY`, `COPYCAST_S3_ACCESS_KEY`, `COPYCAST_S3_BUCKET`, `COPYCAST_S3_DATA`,
+`COPYCAST_S3_VOLUME_MAX` and `COPYCAST_S3_VOLUME_SIZE_MB` (SeaweedFS: 64 volume files of
+1024 MiB by default; they grow as written, so these only cap the store and the disk stays the
+limit. Never `0`, "auto": SeaweedFS then fixes the count from the free disk at the first
+start, and writes stop once those volumes are full even after space is freed).
 
 ## Authentication
 

@@ -119,6 +119,16 @@ class ObjectResponse(Response):
             except FileNotFoundError:
                 # Replaced or deleted after ``head``: the client sees a short body and retries.
                 log.warning("media.object_vanished", key=self.obj.key, sent=sent - start)
+            except Exception as exc:  # the Object store failed mid-body (timeout, gone away)
+                # The headers are out: end the body short (the client retries with a Range)
+                # instead of letting the error escape the ASGI app.
+                reason = str(exc).strip().splitlines()[0][:200] if str(exc).strip() else ""
+                log.warning(
+                    "media.stream_failed",
+                    key=self.obj.key,
+                    sent=sent - start,
+                    error=reason or type(exc).__name__,
+                )
         if last:
             await send({"type": "http.response.body", "body": b"", "more_body": False})
 

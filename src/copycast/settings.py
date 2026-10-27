@@ -125,6 +125,11 @@ class StorageSettings(BaseModel):
     virtual_hosted_style: bool = False
     scratch_dir: Path = DEFAULT_SCRATCH_DIR
     min_free_scratch_mb: int = Field(default=512, ge=0)
+    request_timeout_seconds: int = Field(default=60, ge=1)
+    """Every call but a served stream: a hung server fails fast and is retried."""
+    stream_timeout_seconds: int = Field(default=6 * 3600, ge=1)
+    """One GET streamed to a podcast app lasts as long as the app reads: a slow client on a
+    long Episode keeps it open for many minutes, so this bounds only a stalled transfer."""
 
     @field_validator("url")
     @classmethod

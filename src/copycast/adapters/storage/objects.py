@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import AsyncIterator, Callable, Iterable, Sequence
-from datetime import UTC
+from datetime import UTC, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 from urllib.parse import urlsplit
@@ -78,8 +78,9 @@ def _info(meta: ObjectMeta, key: str | None = None) -> StoredObject:
 class ObjectStore:
     """Synchronous calls for the jobs and services (run off the loop), async ones for serving."""
 
-    def __init__(self, store: Any, *, url: str) -> None:
+    def __init__(self, store: Any, *, url: str, stream_store: Any | None = None) -> None:
         self._store = store
+        self._stream_store = stream_store if stream_store is not None else store
         self.url = url
 
     # ------------------------------------------------------------------ reads
@@ -212,7 +213,10 @@ class ObjectStore:
     ) -> AsyncIterator[bytes]:
         """The bytes ``[start, end)`` of ``key``, chunked; ``if_match`` pins the version read.
 
-        Raises ``FileNotFoundError`` when the object is gone and
+        Reads through the stream client: an HTTP client's request timeout covers reading the
+        body, and the media proxy reads at the podcast app's pace (backpressure), so one GET
+        of a long Episode can stay open for many minutes. Raises ``FileNotFoundError`` when
+        the object is gone and
         :class:`RangeNotSatisfiable` when ``start`` is past its end; an object
         replaced since ``head`` (``if_match`` fails) reads as gone.
         """
@@ -224,7 +228,7 @@ class ObjectStore:
         if if_match is not None:
             options["if_match"] = if_match
         try:
-            result = await obstore.get_async(self._store, key, options=options)
+            result = await obstore.get_async(self._stream_store, key, options=options)
         except PreconditionError as exc:
             raise FileNotFoundError(key) from exc
         except NotModifiedError as exc:  # pragma: no cover - no If-None-Match is sent
@@ -267,7 +271,15 @@ def open_store(settings: StorageSettings) -> ObjectStore:
         raise SettingsError(
             f"storage.url must be s3://<bucket>[/<prefix>] or memory://<name>, got {settings.url!r}"
         )
-    client: ClientConfig = {"allow_http": settings.endpoint.startswith("http://")}
+    allow_http = settings.endpoint.startswith("http://")
+    client: ClientConfig = {
+        "allow_http": allow_http,
+        "timeout": timedelta(seconds=settings.request_timeout_seconds),
+    }
+    stream_client: ClientConfig = {
+        "allow_http": allow_http,
+        "timeout": timedelta(seconds=settings.stream_timeout_seconds),
+    }
     config: dict[str, Any] = {"region": settings.region}
     if settings.endpoint:
         config["endpoint"] = settings.endpoint
@@ -278,7 +290,8 @@ def open_store(settings: StorageSettings) -> ObjectStore:
     config["virtual_hosted_style_request"] = settings.virtual_hosted_style
     prefix = parts.path.strip("/") or None
     store = S3Store(parts.netloc, prefix=prefix, client_options=client, **config)
-    return ObjectStore(store, url=settings.url)
+    stream_store = S3Store(parts.netloc, prefix=prefix, client_options=stream_client, **config)
+    return ObjectStore(store, url=settings.url, stream_store=stream_store)
 
 
 def _first_line(text: str) -> str:

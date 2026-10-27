@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -88,6 +89,28 @@ def test_open_store_refuses_other_schemes_and_shares_memory_stores() -> None:
         s3.ping()
     with pytest.raises(SettingsError):
         open_store(StorageSettings.model_construct(url="ftp://nope"))
+
+
+def test_served_streams_read_through_a_client_with_the_stream_timeout() -> None:
+    """Production 2026-10-27: a podcast app reading a 25 MB Episode slowly kept one GET open
+    past the HTTP client's request timeout (30 s by default in obstore), which also covers
+    the body; obstore resumed the body ten times, then the download broke mid-way. Served
+    streams read through a client of their own whose timeout only bounds a stalled transfer;
+    every other call keeps the short one, so a hung server still fails fast."""
+    store = open_store(StorageSettings(url="s3://bucket", endpoint="http://127.0.0.1:9"))
+    calls: Any = store._store.client_options  # pyright: ignore[reportPrivateUsage]
+    streams: Any = store._stream_store.client_options  # pyright: ignore[reportPrivateUsage]
+    # obstore reports the options back as strings.
+    assert (calls["timeout"], streams["timeout"]) == ("1m", "6h")
+    assert calls["allow_http"] == streams["allow_http"] == "true"
+    tuned = open_store(
+        StorageSettings(url="s3://bucket", request_timeout_seconds=5, stream_timeout_seconds=900)
+    )
+    assert tuned._store.client_options["timeout"] == "5s"  # pyright: ignore[reportPrivateUsage]
+    assert tuned._stream_store.client_options["timeout"] == "15m"  # pyright: ignore[reportPrivateUsage]
+    memory = open_store(StorageSettings(url="memory://one-client"))
+    assert memory._stream_store is memory._store  # pyright: ignore[reportPrivateUsage]
+    objects_module.forget_memory_store("one-client")
 
 
 def test_scratch_jobs_are_private_and_swept(tmp_path: Path) -> None:
