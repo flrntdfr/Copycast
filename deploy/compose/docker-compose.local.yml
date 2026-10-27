@@ -53,7 +53,7 @@ x-app: &app
 
 services:
   postgres:
-    image: postgres:17.11@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
+    image: postgres:17.11@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe
     environment:
       POSTGRES_USER: copycast
       POSTGRES_PASSWORD: copycast
