@@ -1,4 +1,4 @@
-import { CircleCheck, ClipboardPaste, Info, Loader2, Lock, Trash2, Upload } from "lucide-react";
+import { CircleCheck, ClipboardPaste, Loader2, Lock, Trash2, Upload } from "lucide-react";
 import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { $api } from "@/api/client";
@@ -38,25 +38,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { HelpTip } from "./HelpTip";
 import { useDeleteCookies, useSetCookies } from "./mutations";
-
-/** A small (i) that explains a section in a tooltip instead of a paragraph. */
-export function HelpTip({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex align-middle text-muted-foreground hover:text-foreground"
-          aria-label={label}
-        >
-          <Info className="size-3.5" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-xs text-pretty">{children}</TooltipContent>
-    </Tooltip>
-  );
-}
 
 /**
  * The sites that need a login: one tile per service, unlocked (green check) once a stored
@@ -103,11 +86,21 @@ export function AuthenticationsSection() {
               aria-label="Pick a cookies.txt file"
               onChange={pickFile}
             />
-            <Button size="sm" onClick={() => fileInput.current?.click()} disabled={save.isPending}>
+            <Button
+              size="sm"
+              className="h-10 md:h-8"
+              onClick={() => fileInput.current?.click()}
+              disabled={save.isPending}
+            >
               {save.isPending ? <Loader2 className="animate-spin" /> : <Upload />}
               Add cookies.txt…
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setPasting(true)}>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-10 md:h-8"
+              onClick={() => setPasting(true)}
+            >
               <ClipboardPaste /> Paste…
             </Button>
           </>
@@ -207,7 +200,9 @@ function CookieFilesTable({
           ) : (
             files.map((file) => (
               <TableRow key={file.name} data-testid={`cookie-file-${file.name}`}>
-                <TableCell className="font-mono text-xs">{file.name}.txt</TableCell>
+                <TableCell className="max-w-40 truncate font-mono text-xs">
+                  {file.name}.txt
+                </TableCell>
                 <TableCell>
                   <span className="flex items-center gap-1.5">
                     {(file.services ?? []).map((service) => (
@@ -230,7 +225,7 @@ function CookieFilesTable({
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="size-8 text-muted-foreground hover:text-destructive"
+                    className="size-10 text-muted-foreground hover:text-destructive md:size-8"
                     aria-label={`Remove ${file.name}.txt`}
                     onClick={() => onRemove(file.name)}
                   >

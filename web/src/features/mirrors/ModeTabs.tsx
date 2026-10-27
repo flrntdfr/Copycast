@@ -85,7 +85,10 @@ export function ModeTabs({
       value={tabOf(value)}
       onValueChange={(next) => onValueChange(next === "archive" ? "all" : (next as BackfillMode))}
     >
-      <TabsList aria-label="Policy" className="flex-wrap">
+      <TabsList
+        aria-label="Policy"
+        className="w-full group-data-[orientation=horizontal]/tabs:h-12 md:w-fit md:group-data-[orientation=horizontal]/tabs:h-9"
+      >
         {tabs.map((tab) => (
           <TabsTrigger key={tab} value={tab} data-testid={`mode-${tab}`}>
             {TAB_LABELS[tab]}

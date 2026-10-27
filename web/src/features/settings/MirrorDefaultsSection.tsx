@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModeTabs, isLegacyMode } from "@/features/mirrors/ModeTabs";
 import { minutesToSeconds, secondsToMinutes } from "@/lib/format";
-import { HelpTip } from "./AuthenticationsSection";
+import { HelpTip } from "./HelpTip";
 import { useSetDefaults } from "./mutations";
 
 const SAVE_DELAY_MS = 600;
@@ -181,7 +181,7 @@ function DefaultsForm({
             type="button"
             size="icon"
             variant="outline"
-            className="size-8"
+            className="size-10 md:size-8"
             aria-label="One hour less"
             disabled={intervalOk && interval <= 1}
             onClick={() => step(-1)}
@@ -194,7 +194,7 @@ function DefaultsForm({
             min={1}
             max={MAX_HOURS}
             inputMode="numeric"
-            className="h-8 w-16 text-center tabular-nums"
+            className="h-10 w-16 text-center tabular-nums md:h-8"
             value={hours}
             onChange={(event) => setHours(event.target.value)}
             aria-invalid={!intervalOk}
@@ -204,7 +204,7 @@ function DefaultsForm({
             type="button"
             size="icon"
             variant="outline"
-            className="size-8"
+            className="size-10 md:size-8"
             aria-label="One hour more"
             disabled={intervalOk && interval >= MAX_HOURS}
             onClick={() => step(1)}
@@ -224,7 +224,7 @@ function DefaultsForm({
         </div>
         <Input
           id="defaults-language"
-          className="h-8 w-40"
+          className="h-10 w-40 md:h-8"
           value={language}
           onChange={(event) => setLanguage(event.target.value)}
           placeholder="fr, pt-BR…"
@@ -246,7 +246,7 @@ function DefaultsForm({
             type="number"
             min={1}
             inputMode="numeric"
-            className="h-8 w-20 tabular-nums"
+            className="h-10 w-20 tabular-nums md:h-8"
             value={minutes}
             onChange={(event) => setMinutes(event.target.value)}
             placeholder="—"
@@ -268,7 +268,7 @@ function DefaultsForm({
                   type="number"
                   min={1}
                   inputMode="numeric"
-                  className="h-8 w-20 tabular-nums"
+                  className="h-10 w-20 tabular-nums md:h-8"
                   placeholder="never"
                   value={retention}
                   onChange={(event) => setRetention(event.target.value)}
@@ -286,7 +286,7 @@ function DefaultsForm({
                   type="number"
                   min={1}
                   inputMode="numeric"
-                  className="h-8 w-20 tabular-nums"
+                  className="h-10 w-20 tabular-nums md:h-8"
                   value={latestN}
                   onChange={(event) => setLatestN(event.target.value)}
                   aria-invalid={!policy}

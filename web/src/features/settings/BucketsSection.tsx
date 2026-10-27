@@ -15,7 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatMegabytes } from "@/lib/format";
-import { HelpTip } from "./AuthenticationsSection";
+import { HelpTip } from "./HelpTip";
 import { BucketDeleteDialog } from "./BucketDeleteDialog";
 
 /**
@@ -133,7 +133,7 @@ function BucketRow({ feed, onDelete }: { feed: FeedRead; onDelete: () => void })
         <Button
           size="icon"
           variant="ghost"
-          className="size-8 text-muted-foreground hover:text-destructive"
+          className="size-10 text-muted-foreground hover:text-destructive md:size-8"
           aria-label={`Delete ${feed.title}`}
           onClick={onDelete}
         >
