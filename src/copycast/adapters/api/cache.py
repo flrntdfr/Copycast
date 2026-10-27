@@ -9,11 +9,17 @@ so a revision is rendered once across the fleet. A render takes a short
 winner's body instead of rendering the same revision again. The shared level
 is an accelerator only: any error there is logged and the request renders
 from Postgres as if it were absent.
+
+Every entry also carries its body gzipped once, off the event loop, when the
+revision is rendered (or found in the shared level): the feed route answers a
+client that accepts gzip with those bytes as they are, so a cache hit costs no
+compression at all (the gzip middleware leaves an encoded response alone).
 """
 
 from __future__ import annotations
 
 import asyncio
+import gzip
 import hashlib
 import json
 import time
@@ -36,6 +42,8 @@ RENDER_WAIT_SECONDS = 2.0
 RENDER_WAIT_STEP = 0.05
 SHARED_TIMEOUT_SECONDS = 0.5
 ERROR_LOG_INTERVAL = 60.0
+GZIP_LEVEL = 6
+"""Once per revision, so the level is about size, not latency; 6 is within 1 % of 9."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,11 +53,34 @@ class CachedFeed:
     etag: str
     last_modified: datetime
     content_type: str
+    gzip_body: bytes | None = None
+    """``body`` gzipped once; ``None`` only for an entry built without it."""
 
 
 def weak_etag(body: bytes) -> str:
-    """``W/"<sha256[:20]>"`` of the rendered body."""
+    """``W/"<sha256[:20]>"`` of the rendered body (weak: it names every encoding of it)."""
     return f'W/"{hashlib.sha256(body).hexdigest()[:20]}"'
+
+
+def compress(body: bytes) -> bytes:
+    """``body`` gzipped, with no timestamp in the header so a revision always gives the
+    same bytes."""
+    return gzip.compress(body, compresslevel=GZIP_LEVEL, mtime=0)
+
+
+def build_entry(
+    *, revision: int, body: bytes, last_modified: datetime, content_type: str
+) -> CachedFeed:
+    """The entry for one rendered revision: ETag and gzip body computed here, once.
+    CPU-bound for a large feed: :meth:`FeedCache.fetch` runs it in a thread."""
+    return CachedFeed(
+        revision=revision,
+        body=body,
+        etag=weak_etag(body),
+        last_modified=last_modified,
+        content_type=content_type,
+        gzip_body=compress(body),
+    )
 
 
 class RenderedLike(Protocol):
@@ -64,26 +95,34 @@ class RenderedLike(Protocol):
 
 
 def _encode(entry: CachedFeed) -> bytes:
+    """A JSON header line, the body, then the gzip body (``body_bytes`` splits them)."""
     header = {
         "revision": entry.revision,
         "last_modified": entry.last_modified.isoformat(),
         "content_type": entry.content_type,
+        "etag": entry.etag,
+        "body_bytes": len(entry.body),
     }
-    return json.dumps(header).encode("utf-8") + b"\n" + entry.body
+    return json.dumps(header).encode("utf-8") + b"\n" + entry.body + (entry.gzip_body or b"")
 
 
 def _decode(raw: bytes) -> CachedFeed | None:
-    header_raw, sep, body = raw.partition(b"\n")
+    header_raw, sep, rest = raw.partition(b"\n")
     if not sep:
         return None
     try:
         header: dict[str, Any] = json.loads(header_raw)
+        size = int(header["body_bytes"])
+        if not 0 <= size <= len(rest):
+            return None
+        body, gzip_body = rest[:size], rest[size:]
         return CachedFeed(
             revision=int(header["revision"]),
             body=body,
-            etag=weak_etag(body),
+            etag=str(header["etag"]),
             last_modified=datetime.fromisoformat(str(header["last_modified"])),
             content_type=str(header["content_type"]),
+            gzip_body=gzip_body or None,
         )
     except (ValueError, KeyError, TypeError):
         return None
@@ -184,18 +223,10 @@ class FeedCache:
         last_modified: datetime,
         content_type: str,
     ) -> CachedFeed:
-        entry = CachedFeed(
-            revision=revision,
-            body=body,
-            etag=weak_etag(body),
-            last_modified=last_modified,
-            content_type=content_type,
+        entry = build_entry(
+            revision=revision, body=body, last_modified=last_modified, content_type=content_type
         )
-        self._entries[feed_id] = entry
-        self._entries.move_to_end(feed_id)
-        while len(self._entries) > self._capacity:
-            self._entries.popitem(last=False)
-        return entry
+        return self._keep(feed_id, entry)
 
     def invalidate(self, feed_id: str) -> None:
         self._entries.pop(feed_id, None)
@@ -233,12 +264,15 @@ class FeedCache:
         rendered = await render()
         if rendered is None:
             return None
-        entry = self.put(
+        entry = self._keep(
             feed_id,
-            revision=rendered.revision,
-            body=rendered.body,
-            last_modified=rendered.last_modified,
-            content_type=rendered.content_type,
+            await asyncio.to_thread(
+                build_entry,
+                revision=rendered.revision,
+                body=rendered.body,
+                last_modified=rendered.last_modified,
+                content_type=rendered.content_type,
+            ),
         )
         if shared is not None:
             await shared.put(feed_id, entry)
@@ -252,4 +286,4 @@ class FeedCache:
         return len(self._entries)
 
 
-__all__ = ["CachedFeed", "FeedCache", "SharedFeedCache", "weak_etag"]
+__all__ = ["CachedFeed", "FeedCache", "SharedFeedCache", "build_entry", "compress", "weak_etag"]

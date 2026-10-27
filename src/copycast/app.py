@@ -11,6 +11,7 @@ package is imported.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -435,8 +436,13 @@ class FeedRendererAdapter:
                 )
                 for item in items
             ]
-        rendered = render_module.render_feed(
-            feed_view, item_views, base_url=self._container.settings.base_url
+        # Seconds of CPU for a feed of thousands of items (lxml parsing every preserved item):
+        # a thread, so the api keeps serving media and other feeds meanwhile.
+        rendered = await asyncio.to_thread(
+            render_module.render_feed,
+            feed_view,
+            item_views,
+            base_url=self._container.settings.base_url,
         )
         return RenderedFeedDocument(
             body=bytes(rendered.body),

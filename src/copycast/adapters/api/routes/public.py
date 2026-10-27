@@ -99,6 +99,28 @@ def not_modified_since(header: str | None, last_modified: datetime) -> bool:
     return last_modified.astimezone(UTC).replace(microsecond=0) <= since
 
 
+def accepts_gzip(header: str | None) -> bool:
+    """Whether ``Accept-Encoding`` admits gzip: ``gzip`` (or ``*`` when gzip is not named)
+    with a non-zero ``q``."""
+    if not header:
+        return False
+    weights: dict[str, float] = {}
+    for part in header.split(","):
+        name, _, params = part.strip().partition(";")
+        weight = 1.0
+        for param in params.split(";"):
+            key, _, value = param.strip().partition("=")
+            if key.strip().lower() == "q":
+                try:
+                    weight = float(value)
+                except ValueError:
+                    weight = 0.0
+        weights[name.strip().lower()] = weight
+    if "gzip" in weights:
+        return weights["gzip"] > 0
+    return weights.get("*", 0.0) > 0
+
+
 def counts_as_download(method: str, range_header: str | None) -> bool:
     """Full GET or a Range starting at byte 0; HEAD and later ranges never count."""
     if method.upper() != "GET":
@@ -150,6 +172,7 @@ async def feed_xml(
         "ETag": entry.etag,
         "Last-Modified": http_date(entry.last_modified),
         "Cache-Control": FEED_CACHE_CONTROL,
+        "Vary": "Accept-Encoding",
     }
     if_none_match = request.headers.get("if-none-match")
     if etag_matches(if_none_match, entry.etag) or (
@@ -157,10 +180,15 @@ async def feed_xml(
         and not_modified_since(request.headers.get("if-modified-since"), entry.last_modified)
     ):
         return Response(status_code=304, headers=headers, background=background)
-    body = b"" if request.method == "HEAD" else entry.body
-    headers["Content-Length"] = str(len(entry.body))
+    # The gzip body was made once with the revision; sent as is, so the gzip middleware
+    # (which skips an encoded response) never compresses a cached feed again.
+    content = entry.body
+    if entry.gzip_body is not None and accepts_gzip(request.headers.get("accept-encoding")):
+        content = entry.gzip_body
+        headers["Content-Encoding"] = "gzip"
+    headers["Content-Length"] = str(len(content))
     return Response(
-        content=body,
+        content=b"" if request.method == "HEAD" else content,
         media_type=entry.content_type,
         headers=headers,
         background=background,
@@ -371,6 +399,7 @@ for _path, _endpoint in (
 __all__ = [
     "FEED_CACHE_CONTROL",
     "MEDIA_CACHE_CONTROL",
+    "accepts_gzip",
     "counts_as_download",
     "etag_matches",
     "http_date",

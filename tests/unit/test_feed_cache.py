@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -10,7 +11,13 @@ from typing import Any
 import pytest
 
 from copycast.adapters.api import cache as cache_module
-from copycast.adapters.api.cache import SHARED_PREFIX, FeedCache, SharedFeedCache, weak_etag
+from copycast.adapters.api.cache import (
+    SHARED_PREFIX,
+    FeedCache,
+    SharedFeedCache,
+    compress,
+    weak_etag,
+)
 
 STAMP = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
 
@@ -86,11 +93,18 @@ async def test_replicas_share_one_render_per_revision() -> None:
     served = await second.fetch("f1", 3, _renderer(3, b"<rss>3</rss>", calls))
     assert calls == [3], "the second replica took the body from the shared level"
     assert rendered is not None and served is not None
-    assert (served.body, served.etag, served.last_modified, served.content_type) == (
+    assert (
+        served.body,
+        served.etag,
+        served.last_modified,
+        served.content_type,
+        served.gzip_body,
+    ) == (
         rendered.body,
         rendered.etag,
         rendered.last_modified,
         rendered.content_type,
+        rendered.gzip_body,
     )
     assert valkey.ttls[f"{SHARED_PREFIX}f1:3"] == 600
     assert second.get("f1", 3) is served, "kept in the replica's own LRU too"
@@ -150,3 +164,17 @@ def test_from_url_accepts_valkey_schemes() -> None:
     kwargs = shared._client.connection_pool.connection_kwargs  # pyright: ignore[reportPrivateUsage]
     assert kwargs["host"] == "localhost" and kwargs["password"] == "pw"
     assert kwargs["socket_timeout"] == cache_module.SHARED_TIMEOUT_SECONDS
+
+
+async def test_every_entry_carries_its_body_gzipped_once() -> None:
+    body = b"<rss>" + b"<item>episode</item>" * 500 + b"</rss>"
+    cache = FeedCache()
+    entry = await cache.fetch("f1", 1, _renderer(1, body, []))
+    assert entry is not None and entry.gzip_body is not None
+    assert gzip.decompress(entry.gzip_body) == body
+    assert len(entry.gzip_body) < len(body) // 10
+    # No timestamp in the gzip header: the same revision always gives the same bytes.
+    assert compress(body) == entry.gzip_body
+    assert cache.put(
+        "f2", revision=1, body=body, last_modified=STAMP, content_type="x"
+    ).gzip_body == (entry.gzip_body)

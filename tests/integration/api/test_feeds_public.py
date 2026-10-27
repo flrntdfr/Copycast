@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -105,7 +106,37 @@ async def test_feed_xml_headers_and_conditionals(
     head = await client.head(FEED_URL(mirror["id"]))
     assert head.status_code == 200 and head.content == b""
     assert head.headers["etag"] == etag
-    assert int(head.headers["content-length"]) == len(response.content)
+    assert head.headers["content-length"] == response.headers["content-length"]
+
+
+async def test_feed_xml_is_gzipped_once_per_revision_and_served_as_is(
+    client: httpx.AsyncClient, source: Source, runner: Runner
+) -> None:
+    mirror = await create_mirror(client, source.write_rss("gz", items=[3, 2, 1], artwork=False))
+    await archived_items(client, runner, mirror["id"])
+    path = FEED_URL(mirror["id"])
+
+    plain = await client.get(path, headers={"Accept-Encoding": "identity"})
+    assert plain.status_code == 200 and "content-encoding" not in plain.headers
+    assert plain.headers["vary"] == "Accept-Encoding"
+    assert int(plain.headers["content-length"]) == len(plain.content)
+
+    async with client.stream("GET", path, headers={"Accept-Encoding": "gzip"}) as zipped:
+        raw = b"".join([chunk async for chunk in zipped.aiter_raw()])
+    assert zipped.headers["content-encoding"] == "gzip"
+    assert zipped.headers["vary"] == "Accept-Encoding"
+    assert int(zipped.headers["content-length"]) == len(raw)
+    assert gzip.decompress(raw) == plain.content
+    assert zipped.headers["etag"] == plain.headers["etag"]
+
+    # The same bytes on every hit (made once with the revision, no timestamp in them).
+    async with client.stream("GET", path, headers={"Accept-Encoding": "gzip"}) as again:
+        assert b"".join([chunk async for chunk in again.aiter_raw()]) == raw
+    refused = await client.get(path, headers={"Accept-Encoding": "gzip;q=0, br"})
+    assert "content-encoding" not in refused.headers
+    head = await client.head(path, headers={"Accept-Encoding": "gzip"})
+    assert head.headers["content-encoding"] == "gzip"
+    assert int(head.headers["content-length"]) == len(raw)
 
 
 async def test_feed_xml_unknown_feed_is_404_problem(client: httpx.AsyncClient) -> None:

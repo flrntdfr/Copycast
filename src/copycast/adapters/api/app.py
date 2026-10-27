@@ -39,6 +39,7 @@ from copycast.adapters.api.routes import create_api_router
 from copycast.adapters.api.routes import public as public_routes
 from copycast.adapters.api.routes import uploads as upload_routes
 from copycast.adapters.api.spa import mount_spa
+from copycast.adapters.api.watchdog import LoopWatchdog
 from copycast.adapters.mcp.server import create_mcp
 from copycast.logging import get_logger
 from copycast.settings import Settings, SettingsError
@@ -59,8 +60,11 @@ GZIP_EXCLUDED_TYPES: tuple[str, ...] = (
     "application/octet-stream",
     "application/zip",
     "application/gzip",
+    "application/rss+xml",
 )
-"""Everything else Copycast serves is XML, JSON, HTML, JS or CSS."""
+"""Everything else Copycast serves is XML, JSON, HTML, JS or CSS. Feeds are excluded too:
+the feed route sends the gzip body the Feed cache made once per revision, and its own
+``Vary``."""
 
 log = get_logger(__name__)
 
@@ -157,11 +161,14 @@ def _lifespan(settings: Settings, container: ApiContainer, mcp_app: Any) -> Any:
         app.state.event_hub = hub
         await hub.start()
         mcp_lifespan = TaskScopedContext(mcp_app.router.lifespan_context(mcp_app))
+        watchdog = LoopWatchdog()
         try:
             await mcp_lifespan.start()
+            watchdog.start()
             log.info("api.started", base_url=settings.base_url, bind=settings.bind)
             yield
         finally:
+            await watchdog.stop()
             await mcp_lifespan.stop()
             await hub.stop()
             await app.state.feed_cache.aclose()
