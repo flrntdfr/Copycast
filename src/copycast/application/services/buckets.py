@@ -70,7 +70,6 @@ async def create_bucket(ctx: ServiceContext, body: BucketCreate) -> BucketRead:
                 engine_options={},
             )
         )
-        ctx.layout.ensure_feed_dirs(feed.id)
         await uow.update_intent(feed.id)
         await uow.publish(FeedEvent(feed_id=feed.id, revision=feed.revision, reason="created"))
         read = await bucket_read_for(uow, ctx, feed)

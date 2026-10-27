@@ -25,6 +25,8 @@ dependencies = [
     "click==8.5.0",
     "packaging==26.3",
     "mutagen==1.48.1",
+    "obstore==0.11.1",
+    "redis==8.1.0",
 ]
 
 [project.scripts]
@@ -64,6 +66,7 @@ markers = [
     "ffmpeg: needs ffmpeg on PATH",
     "network: reaches the public internet; skipped unless COPYCAST_TEST_NETWORK=1",
     "e2e: runs against a full compose stack",
+    "s3: needs an S3 server (a SeaweedFS testcontainer or COPYCAST_TEST_S3_URL)",
 ]
 filterwarnings = ["error::DeprecationWarning:copycast"]
 

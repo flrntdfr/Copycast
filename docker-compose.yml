@@ -4,9 +4,14 @@
 #   tailscale  the api shares the network namespace of a Tailscale sidecar and is reachable
 #              only inside your tailnet as https://copycast.<tailnet>.ts.net
 #   direct     the api publishes port 8080 on this host (only for a trusted network)
-# The worker and Postgres run under both profiles.
+# The worker, Postgres, SeaweedFS (the Object store) and Valkey (the Feed cache) run under both.
 #
-# Before the first start:  mkdir -p data config && chown -R 1000:1000 data
+# Every byte Copycast keeps lives in the Object store (docs/adr/0019); the worker downloads and
+# transcodes in its Scratch volume and uploads only finished files. Set COPYCAST_S3_SECRET_KEY
+# in .env before the first start.
+#
+# Before the first start:  mkdir -p config
+# Coming from 1.x with a ./data directory:  see docs/operations.md, "Moving to the Object store".
 
 x-env: &env
   COPYCAST__BASE_URL: ${COPYCAST_BASE_URL:-http://localhost:8080}
@@ -14,16 +19,25 @@ x-env: &env
   # Empty means no authentication (docs/adr/0011).
   COPYCAST__AUTH__PASSWORD: ${COPYCAST_AUTH_PASSWORD:-}
   COPYCAST__AUTH__USERNAME: ${COPYCAST_AUTH_USERNAME:-copycast}
+  COPYCAST__STORAGE__URL: s3://${COPYCAST_S3_BUCKET:-copycast}
+  COPYCAST__STORAGE__ENDPOINT: http://seaweedfs:8333
+  COPYCAST__STORAGE__ACCESS_KEY_ID: ${COPYCAST_S3_ACCESS_KEY:-copycast}
+  COPYCAST__STORAGE__SECRET_ACCESS_KEY: ${COPYCAST_S3_SECRET_KEY:?set COPYCAST_S3_SECRET_KEY in .env}
+  COPYCAST__STORAGE__SCRATCH_DIR: /scratch
+  COPYCAST__CACHE__URL: redis://valkey:6379/0
 
 x-app: &app
   image: ${COPYCAST_IMAGE:-ghcr.io/flrntdfr/copycast:latest}
   user: "${COPYCAST_UID:-1000}:${COPYCAST_GID:-1000}"
   environment: *env
   volumes:
-    - ./data:/data
     - ./config:/config:ro
   depends_on:
     postgres:
+      condition: service_healthy
+    seaweedfs:
+      condition: service_healthy
+    valkey:
       condition: service_healthy
   restart: unless-stopped
 
@@ -52,6 +66,14 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    # The api's Scratch: a listing's private cookie copy, an Upload while its tags are read.
+    volumes:
+      - ./config:/config:ro
+      - api-scratch:/scratch
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/healthz/live', timeout=3)"]
@@ -66,6 +88,9 @@ services:
     command: [api]
     ports:
       - "${COPYCAST_PORT:-8080}:8080"
+    volumes:
+      - ./config:/config:ro
+      - api-scratch:/scratch
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/healthz/live', timeout=3)"]
@@ -77,6 +102,10 @@ services:
   worker:
     <<: *app
     command: [worker]
+    # Downloads, transcodes and tags happen here; only finished files go to the Object store.
+    volumes:
+      - ./config:/config:ro
+      - scratch:/scratch
     stop_grace_period: 2m
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8081/healthz/live', timeout=3)"]
@@ -100,6 +129,39 @@ services:
       retries: 12
     restart: unless-stopped
 
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    entrypoint: ["/bin/sh", "/copycast/entrypoint.sh"]
+    environment:
+      COPYCAST_S3_ACCESS_KEY: ${COPYCAST_S3_ACCESS_KEY:-copycast}
+      COPYCAST_S3_SECRET_KEY: ${COPYCAST_S3_SECRET_KEY:?set COPYCAST_S3_SECRET_KEY in .env}
+      COPYCAST_S3_BUCKET: ${COPYCAST_S3_BUCKET:-copycast}
+    volumes:
+      - ./deploy/compose/seaweedfs/entrypoint.sh:/copycast/entrypoint.sh:ro
+      # The archive. A named volume by default; point COPYCAST_S3_DATA at a disk to bind it.
+      - ${COPYCAST_S3_DATA:-seaweedfs}:/data
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:9.0.7-alpine@sha256:2d04268dfa26ab31cfa3fdc538866e76438b2d00e41db41b8cb86d780ac5a416
+    # A cache only: nothing to persist, the least recently used feeds make room.
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  seaweedfs:
+  scratch:
+  api-scratch:
   tailscale-state:

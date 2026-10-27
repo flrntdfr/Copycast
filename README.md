@@ -16,13 +16,15 @@ Prebuilt images for amd64 and arm64 are on the GitHub container registry.
 
 ```bash
 git clone https://github.com/flrntdfr/copycast && cd copycast
-cp .env.example .env            # choose a profile, set the base URL and the Postgres password
-mkdir -p data config && chown -R 1000:1000 data
+cp .env.example .env            # choose a profile, set the base URL and the two passwords
+mkdir -p config
 docker compose up -d
 ```
 
-Copycast runs as uid 1000 inside the containers and refuses to start with a data directory
-it cannot write to — the `chown` is the one step people forget. Configuration lives in
+The stack is Copycast's api and worker, Postgres, SeaweedFS (the S3 Object store every byte
+lives in) and Valkey (the shared Feed cache). Coming from 1.x, copy your `data/` directory
+into the Object store once with `copycast storage push` (docs/operations.md, "Moving to the
+Object store"). Configuration lives in
 `config/copycast.toml` (optional; every key has a default and can be set through
 `COPYCAST__SECTION__KEY` variables). See [docs/operations.md](docs/operations.md) for the
 full environment-variable table, backups and rebuilds.
@@ -130,9 +132,13 @@ Tools cover everything the UI does: `search_podcasts` (iTunes Search, no key nee
   FLAC, WAV) is transcoded once to mp3.
 - YouTube from a server's IP asks you to sign in: paste a logged-in browser's `cookies.txt`
   on the **Settings** page and retry; see [docs/operations.md](docs/operations.md).
-- Everything Copycast knows is either in Postgres or under `data/`; the data directory alone
-  is enough to rebuild the database (`copycast rebuild`,
-  [ADR 0001](docs/adr/0001-postgres-is-truth-data-dir-rebuildable.md)).
+- Everything Copycast knows is either in Postgres or in the Object store (an S3 bucket); the
+  Object store alone is enough to rebuild the database (`copycast rebuild`,
+  [ADR 0001](docs/adr/0001-postgres-is-truth-data-dir-rebuildable.md),
+  [ADR 0019](docs/adr/0019-object-store-scratch-and-a-shared-feed-cache.md)).
+- A podcast app's first download of an Episode not archived yet holds the line while the
+  worker archives it on a slot of its own, then gets the finished, tagged file: no partial
+  or untagged bytes are ever served.
 - The engine (yt-dlp) is pinned in the image and bumped automatically every two weeks; every
   image is also tagged `<version>-yt<engine>` so you can roll back to a known-good engine
   (the registry keeps the three newest images;

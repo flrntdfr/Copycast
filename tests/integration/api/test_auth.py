@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -38,11 +39,11 @@ OPERATOR_HEADERS = basic(*OPERATOR)
 
 
 @pytest.fixture
-def settings(data_dir: Path, db: str) -> Settings:
+def settings(store: Any, storage_config: dict[str, Any], scratch_dir: Path, db: str) -> Settings:
     """The root ``settings`` with the operator pair set: authentication on."""
     return get_settings(
         base_url=TEST_BASE_URL,
-        data_dir=data_dir,
+        storage={**storage_config, "scratch_dir": scratch_dir},
         database_url=db,
         refresh={"interval_hours": 24, "fetch_cooldown_minutes": 15, "concurrency": 1},
         auth={"username": OPERATOR[0], "password": OPERATOR[1]},
@@ -175,7 +176,9 @@ async def test_rotate_feed_credentials(
     ).status_code == 200
 
     # The descriptor carries the new pair, so a rebuild keeps every subscription working.
-    descriptor = FeedDescriptor.read(container.layout.descriptor_path(mirror["id"]))
+    descriptor = FeedDescriptor.read(
+        container.layout.store, container.layout.descriptor_key(mirror["id"])
+    )
     assert (descriptor.feed.auth_username, descriptor.feed.auth_password) == (
         new["username"],
         new["password"],

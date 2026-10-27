@@ -8,11 +8,12 @@ IMAGE   ?= copycast:local
 VERSION ?=
 
 # End-to-end stack: the CI overlay adds the fixtures server and pins the locally built image.
-# The containers run as the caller's uid/gid so the bind-mounted ./data is writable without sudo.
+# The containers run as the caller's uid/gid; the Object store is the stack's own SeaweedFS.
 E2E_IMAGE    ?= copycast:ci
 E2E_BASE_URL ?= http://localhost:8080
 E2E_COMPOSE  := -f docker-compose.yml -f docker-compose.ci.yml --profile direct
-E2E_ENV      := COPYCAST_IMAGE=$(E2E_IMAGE) COPYCAST_UID=$$(id -u) COPYCAST_GID=$$(id -g)
+E2E_ENV      := COPYCAST_IMAGE=$(E2E_IMAGE) COPYCAST_UID=$$(id -u) COPYCAST_GID=$$(id -g) \
+                COPYCAST_S3_SECRET_KEY=e2e-object-store-secret
 
 .PHONY: help setup db-up db-down migrate api worker web-dev dev lint fmt typecheck \
         test test-unit test-integration test-e2e web-test web-lint web-build web-e2e \
@@ -26,10 +27,10 @@ setup: ## Install Python and web dependencies from the lockfiles
 	$(UV) sync --locked --all-groups
 	$(PNPM) install --frozen-lockfile
 
-db-up: ## Start the development Postgres (deploy/compose/docker-compose.dev.yml)
+db-up: ## Start the development Postgres, SeaweedFS and Valkey (deploy/compose/docker-compose.dev.yml)
 	$(COMPOSE) -f deploy/compose/docker-compose.dev.yml up -d --wait
 
-db-down: ## Stop the development Postgres
+db-down: ## Stop the development Postgres, SeaweedFS and Valkey
 	$(COMPOSE) -f deploy/compose/docker-compose.dev.yml down
 
 migrate: ## Apply database migrations
@@ -74,7 +75,7 @@ test-integration: ## Integration tests (Postgres via COPYCAST_TEST_DATABASE_URL 
 
 test-e2e: ## Build copycast:ci, start the compose stack (direct profile + fixtures), httpx smoke + Playwright, tear down
 	$(MAKE) image IMAGE=$(E2E_IMAGE)
-	mkdir -p data config
+	mkdir -p config
 	$(E2E_ENV) $(COMPOSE) $(E2E_COMPOSE) up -d --wait
 	@status=0; \
 	{ COPYCAST_E2E_BASE_URL=$(E2E_BASE_URL) $(UV) run pytest -m e2e tests/e2e -q \

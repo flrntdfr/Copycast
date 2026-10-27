@@ -24,7 +24,7 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from copycast.adapters.api.auth import ROBOTS_PATH, OperatorAuthMiddleware
-from copycast.adapters.api.cache import FeedCache
+from copycast.adapters.api.cache import FeedCache, SharedFeedCache
 from copycast.adapters.api.container import ApiContainer
 from copycast.adapters.api.events import EventHub, psycopg_conninfo
 from copycast.adapters.api.health import create_health_router
@@ -164,6 +164,7 @@ def _lifespan(settings: Settings, container: ApiContainer, mcp_app: Any) -> Any:
         finally:
             await mcp_lifespan.stop()
             await hub.stop()
+            await app.state.feed_cache.aclose()
             container.close_http_client()
             await container.aclose()
             log.info("api.stopped")
@@ -187,7 +188,12 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
     app.state.settings = settings
     app.state.container = container
     app.state.mcp = mcp
-    app.state.feed_cache = FeedCache()
+    shared = (
+        SharedFeedCache.from_url(settings.cache.url, ttl_seconds=settings.cache.ttl_seconds)
+        if settings.cache.url
+        else None
+    )
+    app.state.feed_cache = FeedCache(shared=shared)
 
     install_exception_handlers(app)
     # Innermost: runs right before routing, inside the request-id and gzip layers.

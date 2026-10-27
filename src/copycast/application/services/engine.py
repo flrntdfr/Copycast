@@ -2,20 +2,18 @@
 
 Sites such as YouTube refuse downloads from a server's address unless a
 logged-in session's cookies come along; the operator exports them from a
-browser and adds them here, one file per site or session. Each file lives at
-``data/engine/cookies/{name}.txt`` (mode 0600); the Engine reads one jar,
-``data/engine/cookies.txt``, merged from them on every change. yt-dlp writes rotated
-cookies into that jar, so every change first carries the jar back into the files.
-A jar stored before files existed shows as the file ``cookies``.
+browser and adds them here, one file per site or session. Each file lives in the
+Object store at ``engine/cookies/{name}.txt``; the Engine reads one jar,
+``engine/cookies.txt``, merged from them on every change (yt-dlp gets a private 0600
+Scratch copy of it). yt-dlp writes rotated cookies into that jar, so every change first
+carries the jar back into the files. A jar stored before files existed shows as the file
+``cookies``.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 import stat
-from datetime import UTC, datetime
-from pathlib import Path
 
 from copycast.application.capabilities import capability
 from copycast.application.models import (
@@ -24,7 +22,7 @@ from copycast.application.models import (
     EngineCookiesRead,
     EngineCookiesWrite,
 )
-from copycast.application.services.context import ServiceContext
+from copycast.application.services.context import ObjectStorePort, ServiceContext
 from copycast.domain.cookies import (
     COOKIE_SERVICES,
     YOUTUBE_DOMAINS,
@@ -44,66 +42,64 @@ COOKIES_MODE = stat.S_IRUSR | stat.S_IWUSR
 LEGACY_NAME = "cookies"
 
 
-def _write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, COOKIES_MODE)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(text)
-        if not text.endswith("\n"):
-            handle.write("\n")
-    os.chmod(tmp, COOKIES_MODE)
-    os.replace(tmp, path)
-
-
-def _text(path: Path) -> str | None:
+def _text(store: ObjectStorePort, key: str) -> str | None:
     try:
-        return path.read_text(encoding="utf-8")
+        body = store.get_bytes(key)
+        return body.decode("utf-8") if body is not None else None
     except (OSError, UnicodeDecodeError):
         return None
+
+
+def _write(store: ObjectStorePort, key: str, text: str) -> None:
+    body = text if text.endswith("\n") else text + "\n"
+    store.put_bytes(key, body, content_type="text/plain")
 
 
 class _Store:
     """The jar the Engine reads and the files it is merged from."""
 
-    def __init__(self, jar: Path, folder: Path) -> None:
+    def __init__(self, store: ObjectStorePort, jar: str, folder: str) -> None:
+        self.store = store
         self.jar = jar
         self.folder = folder
 
-    def paths(self) -> dict[str, Path]:
-        """Every stored file by name; a jar stored before files existed is ``cookies``."""
-        if not self.folder.is_dir():
-            return {LEGACY_NAME: self.jar} if self.jar.is_file() else {}
-        return {path.stem: path for path in sorted(self.folder.glob("*.txt"))}
+    def keys(self) -> dict[str, str]:
+        """Every stored file's key by name; a jar stored before files existed is ``cookies``."""
+        listed = [o for o in self.store.list(self.folder) if o.name.endswith(".txt")]
+        if not listed:
+            return {LEGACY_NAME: self.jar} if self.store.head(self.jar) is not None else {}
+        return {o.name.removesuffix(".txt"): o.key for o in listed}
 
     def load(self) -> dict[str, str]:
-        files = {name: _text(path) for name, path in self.paths().items()}
+        files = {name: _text(self.store, key) for name, key in self.keys().items()}
         return {name: text for name, text in files.items() if text is not None}
 
     def synced(self) -> dict[str, str]:
         """The stored files with what the Engine changed in the jar carried back."""
         files = self.load()
-        jar = _text(self.jar) if files else None
+        jar = _text(self.store, self.jar) if files else None
         return split_cookie_jar(jar, files) if jar is not None else files
 
     def save(self, files: dict[str, str]) -> None:
         """Write the files that changed, drop the others, then merge the jar again."""
-        self.folder.mkdir(parents=True, exist_ok=True)
-        for path in self.folder.glob("*.txt"):
-            if path.stem not in files:
-                path.unlink(missing_ok=True)
+        stale = [
+            o.key
+            for o in self.store.list(self.folder)
+            if o.name.endswith(".txt") and o.name.removesuffix(".txt") not in files
+        ]
+        self.store.delete(stale)
         for name, text in files.items():
-            path = self.folder / f"{name}.txt"
-            stored = _text(path)
+            key = f"{self.folder}{name}.txt"
+            stored = _text(self.store, key)
             if stored is None or cookie_lines(stored) != cookie_lines(text):
-                _write(path, text)
+                _write(self.store, key, text)
         if files:
-            _write(self.jar, merge_cookie_files(files))
+            _write(self.store, self.jar, merge_cookie_files(files))
         else:
-            self.jar.unlink(missing_ok=True)
+            self.store.delete(self.jar)
 
     def read(self) -> EngineCookiesRead:
-        files = [_file_read(name, path) for name, path in self.paths().items()]
+        files = [_file_read(self.store, name, key) for name, key in self.keys().items()]
         files = [file for file in files if file is not None]
         if not files:
             return EngineCookiesRead(present=False, services=_services([]))
@@ -121,22 +117,22 @@ class _Store:
         )
 
 
-def _file_read(name: str, path: Path) -> EngineCookieFileRead | None:
-    text = _text(path)
+def _file_read(store: ObjectStorePort, name: str, key: str) -> EngineCookieFileRead | None:
     try:
-        info = path.stat()
+        info = store.head(key)
     except OSError:
         return None
-    if text is None:
+    text = _text(store, key) if info is not None else None
+    if info is None or text is None:
         return None
-    updated_at = datetime.fromtimestamp(info.st_mtime, tz=UTC)
+    updated_at = info.last_modified
     try:
         summary = parse_cookies(text)
     except Exception:  # an operator-edited file that no longer parses is still listed
-        return EngineCookieFileRead(name=name, size_bytes=info.st_size, updated_at=updated_at)
+        return EngineCookieFileRead(name=name, size_bytes=info.size, updated_at=updated_at)
     return EngineCookieFileRead(
         name=name,
-        size_bytes=info.st_size,
+        size_bytes=info.size,
         updated_at=updated_at,
         cookie_count=summary.cookie_count,
         domains=summary.domains,
@@ -161,7 +157,8 @@ def _services(files: list[EngineCookieFileRead]) -> list[CookieServiceRead]:
 
 
 def _store(ctx: ServiceContext) -> _Store:
-    return _Store(ctx.layout.cookies_path(), ctx.layout.cookie_files_dir())
+    layout = ctx.layout
+    return _Store(layout.store, layout.cookies_key(), layout.cookie_files_prefix())
 
 
 @capability("get_engine_cookies", response=EngineCookiesRead)

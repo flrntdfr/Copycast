@@ -11,14 +11,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, cast
 
 from copycast.adapters.assets.mirror import AssetError, feed_artwork_asset, mirror_asset
 from copycast.adapters.db.uow import UnitOfWork
 from copycast.adapters.sources import rss
 from copycast.adapters.sources.http import SourceError
-from copycast.adapters.storage.atomic import write_atomic, write_json_atomic
 from copycast.adapters.storage.layout import Layout
 from copycast.application.events import FeedEvent
 from copycast.application.ports import (
@@ -111,12 +109,16 @@ def list_engine(
     return Listed(listing, engine_version=engine.version().version)
 
 
-def write_source_snapshot(layout: Layout, feed_id: str, listed: Listed) -> Path | None:
+def write_source_snapshot(layout: Layout, feed_id: str, listed: Listed) -> str | None:
     """``source/feed.xml`` (verbatim RSS) or ``source/listing.json`` (raw flat listing)."""
     if listed.body is not None:
-        return write_atomic(layout.source_xml_path(feed_id), listed.body)
+        key = layout.source_xml_key(feed_id)
+        layout.store.put_bytes(key, listed.body, content_type="application/xml")
+        return key
     if listed.listing is not None and listed.listing.raw is not None:
-        return write_json_atomic(layout.source_listing_path(feed_id), listed.listing.raw)
+        key = layout.source_listing_key(feed_id)
+        layout.write_json(key, listed.listing.raw)
+        return key
     return None
 
 
@@ -164,7 +166,6 @@ async def run(ctx: JobContext) -> JobOutcome:
         raise
 
     layout: Layout = ctx.container.layout
-    layout.ensure_feed_dirs(feed_id)
     if not listed.unchanged:
         await ctx.run_blocking(write_source_snapshot, layout, feed_id, listed)
     artwork = await _mirror_feed_artwork(ctx, feed_id, listed.listing, layout)
@@ -319,7 +320,7 @@ async def _mirror_feed_artwork(
         return None
     remote = feed_artwork_asset(listing.artwork_url)
     try:
-        mirrored = await ctx.run_blocking(mirror_asset, remote, layout.assets_dir(feed_id))
+        mirrored = await ctx.run_blocking(mirror_asset, remote, layout, feed_id)
     except AssetError as exc:
         return _Artwork("", "", 0, listing.artwork_url, error=str(exc))
     return _Artwork(mirrored.local_path, mirrored.mime, mirrored.size_bytes, listing.artwork_url)

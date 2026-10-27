@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -83,6 +83,7 @@ class FakeEngine:
         self._fetch_failures: list[tuple[str | None, Exception]] = []
         self._chapters: dict[str, list[dict[str, Any]]] = {}
         self._block: threading.Event | None = None
+        self._block_only: frozenset[str] | None = None
         self.records = EngineRecords()
         self.info_extra: dict[str, Any] = {}
         """Merged into every info.json a fetch writes (description, timestamp, uploader...)."""
@@ -123,19 +124,24 @@ class FakeEngine:
         with self._lock:
             self._chapters[url] = [dict(chapter) for chapter in chapters]
 
-    def block_fetches(self, event: threading.Event) -> None:
+    def block_fetches(
+        self, event: threading.Event, *, item_ids: Iterable[str] | None = None
+    ) -> None:
         """Until ``event`` is set, fetches write a ``.part`` file and poll the cancel token.
 
         A fetch whose token is cancelled while blocked raises :class:`Cancelled`
         leaving the ``.part`` in ``temp_dir``; once the event is set the fetch
-        completes normally. Pass an already-set event to unblock.
+        completes normally. Pass an already-set event to unblock. With
+        ``item_ids`` only the fetches of those items block.
         """
         with self._lock:
             self._block = event
+            self._block_only = frozenset(item_ids) if item_ids is not None else None
 
     def unblock(self) -> None:
         with self._lock:
             self._block = None
+            self._block_only = None
 
     def reset(self) -> None:
         with self._lock:
@@ -144,6 +150,7 @@ class FakeEngine:
             self._fetch_failures.clear()
             self._chapters.clear()
             self._block = None
+            self._block_only = None
             self.records = EngineRecords()
 
     # ------------------------------------------------------------------ port
@@ -202,6 +209,8 @@ class FakeEngine:
                         break
             chapters = [dict(chapter) for chapter in self._chapters.get(spec.url, [])]
             block = self._block
+            if self._block_only is not None and spec.item_id not in self._block_only:
+                block = None
         if failure is not None:
             log.error(f"fake engine failure: {failure}")
             raise failure

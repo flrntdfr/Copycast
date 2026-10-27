@@ -181,20 +181,35 @@ class JobRepository:
             return None
         return await self._session.get(Job, inserted, populate_existing=True)
 
-    async def claim(self, worker_id: str) -> Job | None:
-        """Claim the next runnable job with per-feed exclusivity (``FOR UPDATE SKIP LOCKED``)."""
+    async def claim(self, worker_id: str, *, on_demand_only: bool = False) -> Job | None:
+        """Claim the next runnable job with per-feed exclusivity (``FOR UPDATE SKIP LOCKED``).
+
+        An on-demand archive (a podcast app waiting on the line, ``trigger=feed_fetch``)
+        is exempt from per-feed exclusivity: it only waits for another job of the same
+        item, never for its feed's Refresh or Backfill. ``on_demand_only`` claims
+        nothing else (the worker's reserved slot).
+        """
         j = aliased(Job, name="j")
         r = aliased(Job, name="r")
+        on_demand = (j.kind == JobKind.archive_item.value) & (
+            j.trigger == JobTrigger.feed_fetch.value
+        )
         running_same_feed = exists(
             select(1).where(r.status == JobStatus.running.value, r.feed_id == j.feed_id)
         )
+        running_same_item = exists(
+            select(1).where(r.status == JobStatus.running.value, r.item_id == j.item_id)
+        )
+        conditions = [
+            j.status == JobStatus.queued.value,
+            j.run_after <= func.now(),
+            (on_demand & ~running_same_item) | (~on_demand & ~running_same_feed),
+        ]
+        if on_demand_only:
+            conditions.append(on_demand)
         candidate = (
             select(j.id)
-            .where(
-                j.status == JobStatus.queued.value,
-                j.run_after <= func.now(),
-                ~running_same_feed,
-            )
+            .where(*conditions)
             .order_by(j.priority, j.run_after, j.id)
             .with_for_update(skip_locked=True)
             .limit(1)

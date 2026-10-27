@@ -35,7 +35,7 @@ async def test_default_bucket_is_idempotent_and_never_deleted(container: Contain
     first = await container.services.ensure_default_bucket()
     second = await container.services.ensure_default_bucket()
     assert first.id == second.id and first.name == "Copycast"
-    assert container.layout.descriptor_path(first.id).is_file()
+    assert container.layout.store.exists(container.layout.descriptor_key(first.id))
     by_name = await container.services.resolve_bucket("copycast")
     assert by_name.id == first.id
     with pytest.raises(Conflict):
@@ -250,7 +250,8 @@ async def test_prune_on_demand_and_autoprune(
         rows = await unit.catalog.for_feed(bucket.id)
         hidden = [row for row in rows if row.archive_state == ArchiveState.deleted]
         assert len(hidden) == 2 and all(not row.listed for row in hidden)
-        assert not container.layout.resolve(bucket.id, f"media/{hidden[0].id}.m4a").exists()
+        gone = container.layout.resolve(bucket.id, f"media/{hidden[0].id}.m4a")
+        assert not container.layout.store.exists(gone)
     page = await container.services.list_items(bucket.id, listed=True)
     assert page.total == 1
 

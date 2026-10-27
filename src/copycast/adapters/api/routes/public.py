@@ -5,11 +5,16 @@
 conditionals; a GET of a Mirror first runs a light Refresh inline
 (``services.light_refresh``: the Source's newest items within a short deadline
 and a cooldown, never a wait on the worker) so new items are in the answer.
-``/feeds/{id}/media/{item_id}.{ext}`` is a ``FileResponse`` (Range 206/416,
-strong ETag) counted as a download only on a GET without Range or with a
-Range starting at byte 0; ``ext`` is the one the feed advertises (fixed for
-the item's life), the archived file's own, or an Automatic feed's legacy
-``mp3`` placeholder. ``/feeds/{id}/assets/{basename}`` is matched
+``/feeds/{id}/media/{item_id}.{ext}`` proxies the Episode's object from the
+Object store (``ObjectResponse``: Range 206/416, the object's strong ETag) counted
+as a download only on a GET without Range or with a Range starting at byte 0;
+``ext`` is the one the feed advertises (fixed for the item's life), the
+archived file's own, or an Automatic feed's legacy ``mp3`` placeholder. An
+Ephemeral feed's unarchived item is archived on the first request, which holds
+the line (no byte sent, woken by the item's ``archived`` event) for up to
+``ON_DEMAND_WAIT_SECONDS`` and then serves the finished object, bit-perfect,
+or answers 503 with ``Retry-After`` before a podcast app gives up (iOS drops a
+silent request after 60 s). ``/feeds/{id}/assets/{basename}`` is matched
 against the feed's archived asset rows and never counted. While authentication
 is on, every route here takes the operator pair or the feed's own pair
 (``adapters.api.auth.require_feed_access``).
@@ -23,7 +28,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from email.utils import format_datetime, parsedate_to_datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import FileResponse
@@ -33,6 +38,7 @@ from copycast.adapters.api.auth import FeedAccess
 from copycast.adapters.api.cache import CachedFeed, FeedCache
 from copycast.adapters.api.container import ApiContainer, FeedHeadLike
 from copycast.adapters.api.deps import ContainerDep, FeedCacheDep, ServicesDep
+from copycast.adapters.api.objects import ObjectResponse
 from copycast.adapters.api.problems import problem_response
 from copycast.application.models import ItemRead
 from copycast.application.services import Services
@@ -42,6 +48,9 @@ from copycast.domain.exceptions import Conflict, Unsupported
 from copycast.domain.urls import COPYCAST_ARTWORK_PATH
 from copycast.logging import get_logger
 
+if TYPE_CHECKING:
+    from copycast.adapters.api.events import EventHub
+
 router = APIRouter(tags=["public"], dependencies=[FeedAccess])
 log = get_logger(__name__)
 
@@ -50,8 +59,10 @@ MEDIA_CACHE_CONTROL = "public, max-age=86400"
 MEDIA_NAME_RE = re.compile(r"^(?P<item_id>[0-9a-f]{16})\.(?P<ext>[A-Za-z0-9]{1,8})$")
 LEGACY_PLACEHOLDER_EXT = "mp3"
 """What an Automatic feed advertised for unarchived items before 1.3; apps still hold it."""
-ON_DEMAND_WAIT_SECONDS = 120.0
-ON_DEMAND_POLL_SECONDS = 2.0
+ON_DEMAND_WAIT_SECONDS = 50.0
+"""How long a first request holds the line for its archive; under iOS's 60 s idle timeout."""
+ON_DEMAND_POLL_SECONDS = 5.0
+"""The re-check interval when no event arrives (the event hub reconnecting, a missed NOTIFY)."""
 ON_DEMAND_RETRY_AFTER = 30
 ASSET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 # LIGHT_REFRESH_DEADLINE_SECONDS (8 s, imported from the service) is a module global here so
@@ -99,10 +110,6 @@ def counts_as_download(method: str, range_header: str | None) -> bool:
     return first.startswith("0-")
 
 
-async def _is_file(path: Path) -> bool:
-    return await asyncio.to_thread(path.is_file)
-
-
 async def _safe_count(services: Services, feed_id: str, item_id: str) -> None:
     try:
         await services.record_download(feed_id, item_id)
@@ -113,19 +120,7 @@ async def _safe_count(services: Services, feed_id: str, item_id: str) -> None:
 async def _cached_feed(
     container: ApiContainer, cache: FeedCache, feed_id: str, revision: int
 ) -> CachedFeed | None:
-    entry = cache.get(feed_id, revision)
-    if entry is not None:
-        return entry
-    rendered = await container.renderer.render(feed_id)
-    if rendered is None:
-        return None
-    return cache.put(
-        feed_id,
-        revision=rendered.revision,
-        body=rendered.body,
-        last_modified=rendered.last_modified,
-        content_type=rendered.content_type,
-    )
+    return await cache.fetch(feed_id, revision, lambda: container.renderer.render(feed_id))
 
 
 async def feed_xml(
@@ -195,7 +190,8 @@ async def media(
         head = head or await container.renderer.head(feed_id)
         if head is None or not head.automatic or not _on_demand(item):
             return problem_response(request, status=404, slug="not-found", detail="no such media")
-        item = await _archive_on_demand(services, feed_id, item_id)
+        hub: EventHub | None = getattr(request.app.state, "event_hub", None)
+        item = await _archive_on_demand(services, hub, feed_id, item_id)
         if item.media is None:
             return problem_response(
                 request,
@@ -204,17 +200,19 @@ async def media(
                 detail="the episode is being archived; try again shortly",
                 headers={"Retry-After": str(ON_DEMAND_RETRY_AFTER)},
             )
-    path: Path = container.layout.media_path(feed_id, item_id, item.media.ext)
-    if not await _is_file(path):
+    layout = container.layout
+    store = layout.store
+    obj = await store.head_async(layout.media_key(feed_id, item_id, item.media.ext))
+    if obj is None:
         return problem_response(request, status=404, slug="not-found", detail="media missing")
     background: BackgroundTask | None = None
     if counts_as_download(request.method, request.headers.get("range")):
         background = BackgroundTask(_safe_count, services, feed_id, item_id)
-    return FileResponse(
-        path,
+    return ObjectResponse(
+        store,
+        obj,
         media_type=item.media.mime,
         headers={"Cache-Control": MEDIA_CACHE_CONTROL},
-        content_disposition_type="inline",
         background=background,
     )
 
@@ -229,25 +227,54 @@ def _on_demand(item: ItemRead) -> bool:
     return item.listed
 
 
-async def _archive_on_demand(services: Services, feed_id: str, item_id: str) -> ItemRead:
-    """Queue the archive (a no-op when one is running) and wait for it, up to the deadline.
+async def _archive_on_demand(
+    services: Services, hub: EventHub | None, feed_id: str, item_id: str
+) -> ItemRead:
+    """Queue the archive (a no-op when one is running) and hold the line, up to the deadline.
 
-    The job keeps running when the wait ends; the client is told to retry.
+    The job runs on the worker's on-demand slot (never behind a Backfill); the wait
+    wakes on the feed's events (the worker's NOTIFY) and re-checks every
+    ``ON_DEMAND_POLL_SECONDS`` in case one is missed. The job keeps running when the
+    wait ends; the client is told to retry.
     """
+    subscription = hub.subscribe(feed_id=feed_id) if hub is not None else None
     try:
-        await services.archive_item(feed_id, item_id, trigger=JobTrigger.feed_fetch)
-    except Conflict:
-        pass  # archived or being archived meanwhile: the poll below settles it
-    except Unsupported:
-        return await services.get_item(feed_id, item_id)
-    deadline = asyncio.get_running_loop().time() + ON_DEMAND_WAIT_SECONDS
-    while True:
-        item = await services.get_item(feed_id, item_id)
-        if item.media is not None or item.state is ArchiveState.failed:
-            return item
-        if asyncio.get_running_loop().time() >= deadline:
-            return item
-        await asyncio.sleep(ON_DEMAND_POLL_SECONDS)
+        try:
+            await services.archive_item(feed_id, item_id, trigger=JobTrigger.feed_fetch)
+        except Conflict:
+            pass  # archived or being archived meanwhile: the wait below settles it
+        except Unsupported:
+            return await services.get_item(feed_id, item_id)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + ON_DEMAND_WAIT_SECONDS
+        while True:
+            item = await services.get_item(feed_id, item_id)
+            if item.media is not None or item.state is ArchiveState.failed:
+                return item
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return item
+            await _next_change(subscription, item_id, min(remaining, ON_DEMAND_POLL_SECONDS))
+    finally:
+        if hub is not None and subscription is not None:
+            hub.unsubscribe(subscription)
+
+
+async def _next_change(subscription: Any, item_id: str, within: float) -> None:
+    """Return once ``item_id`` changed (or anything resynced), or after ``within`` seconds."""
+    if subscription is None:
+        await asyncio.sleep(within)
+        return
+    loop = asyncio.get_running_loop()
+    until = loop.time() + within
+    while (left := until - loop.time()) > 0:
+        envelope = await subscription.next(left)
+        if envelope is None:
+            if subscription.closed:
+                await asyncio.sleep(max(0.0, until - loop.time()))
+            return
+        if envelope.name == "resync" or getattr(envelope.event, "item_id", None) == item_id:
+            return
 
 
 async def asset(request: Request, container: ContainerDep, feed_id: str, filename: str) -> Response:
@@ -259,17 +286,19 @@ async def asset(request: Request, container: ContainerDep, feed_id: str, filenam
         mime: str | None = row.mime if row is not None else None
     if row is None or not local_path:
         return problem_response(request, status=404, slug="not-found", detail="no such asset")
+    layout = container.layout
     try:
-        path: Path = container.layout.resolve(feed_id, local_path)
+        key: str = layout.resolve(feed_id, local_path)
     except ValueError:
         return problem_response(request, status=404, slug="not-found", detail="no such asset")
-    if not await _is_file(path):
+    obj = await layout.store.head_async(key)
+    if obj is None:
         return problem_response(request, status=404, slug="not-found", detail="asset missing")
-    return FileResponse(
-        path,
+    return ObjectResponse(
+        layout.store,
+        obj,
         media_type=mime or "application/octet-stream",
         headers={"Cache-Control": MEDIA_CACHE_CONTROL},
-        content_disposition_type="inline",
     )
 
 

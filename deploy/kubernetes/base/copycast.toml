@@ -2,6 +2,13 @@
 # base_url must be the address podcast clients reach the Tailscale Ingress at.
 base_url = "https://copycast.example-tailnet.ts.net"
 
+[storage]                     # the Object store; keys come from the Secret copycast-storage
+url      = "s3://copycast"
+endpoint = "http://seaweedfs-s3.storage.svc:8333"   # empty for AWS S3
+
+[cache]
+url = "redis://copycast-valkey:6379/0"
+
 [refresh]
 interval_hours         = 24
 fetch_cooldown_minutes = 15

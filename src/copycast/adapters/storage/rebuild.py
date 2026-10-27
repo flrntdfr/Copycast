@@ -1,8 +1,10 @@
-"""``copycast rebuild``: reconstruct the database from the data directory.
+"""``copycast rebuild``: reconstruct the database from the Object store.
 
 Postgres is authoritative at runtime, but everything except telemetry can be
-recovered from ``feeds/*/feed.json`` plus the files next to it. The rebuild
-is idempotent: running it on a healthy database changes nothing.
+recovered from ``feeds/*/feed.json`` plus the objects next to it. Each feed's
+prefix is listed once (:class:`FeedObjects`) and every media, sidecar and asset
+lookup is answered from that listing. The rebuild is idempotent: running it on
+a healthy database changes nothing.
 """
 
 from __future__ import annotations
@@ -11,8 +13,8 @@ import asyncio
 import json
 import mimetypes
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from lxml import etree
@@ -36,7 +38,10 @@ from copycast.adapters.storage.layout import (
     INFO_JSON_SUFFIX,
     ITEM_XML_SUFFIX,
     Layout,
+    is_media_name,
 )
+from copycast.adapters.storage.objects import open_store
+from copycast.application.ports import StoredObject
 from copycast.domain.credentials import new_feed_password, new_feed_username
 from copycast.domain.enums import (
     ArchiveState,
@@ -114,6 +119,56 @@ class RebuildReport(BaseModel):
     default_bucket_id: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class FeedObjects:
+    """One listing of ``feeds/{feed_id}/``: every lookup of a rebuild answered from memory."""
+
+    layout: Layout
+    feed_id: str
+    objects: dict[str, StoredObject]
+
+    @classmethod
+    def list(cls, layout: Layout, feed_id: str) -> FeedObjects:
+        listed = layout.store.list(layout.feed_prefix(feed_id))
+        return cls(layout, feed_id, {o.key: o for o in listed})
+
+    def get(self, key: str) -> StoredObject | None:
+        return self.objects.get(key)
+
+    def resolve(self, relative: str) -> StoredObject | None:
+        return self.objects.get(self.layout.resolve(self.feed_id, relative))
+
+    def find_media(self, item_id: str) -> StoredObject | None:
+        prefix = self.layout.media_prefix(self.feed_id) + f"{item_id}."
+        for key in sorted(self.objects):
+            if key.startswith(prefix) and is_media_name(self.objects[key].name):
+                return self.objects[key]
+        return None
+
+    def media(self) -> list[StoredObject]:
+        prefix = self.layout.media_prefix(self.feed_id)
+        return [
+            o
+            for k, o in sorted(self.objects.items())
+            if k.startswith(prefix) and is_media_name(o.name)
+        ]
+
+    def assets(self) -> list[StoredObject]:
+        prefix = self.layout.assets_prefix(self.feed_id)
+        return [
+            o
+            for k, o in sorted(self.objects.items())
+            if k.startswith(prefix) and not o.name.startswith(".")
+        ]
+
+    def read(self, key: str) -> bytes | None:
+        return self.layout.store.get_bytes(key) if key in self.objects else None
+
+
+def _ext_of(obj: StoredObject) -> str:
+    return obj.name.rsplit(".", 1)[-1].lower()
+
+
 class _Counters:
     def __init__(self, layout_version: str, yes: bool) -> None:
         self.data: dict[str, Any] = {"layout_version": layout_version, "yes": yes}
@@ -140,15 +195,15 @@ async def rebuild(
     *,
     db_engine: AsyncEngine | None = None,
 ) -> RebuildReport:
-    """Rebuild the database from ``settings.data_dir``.
+    """Rebuild the database from the Object store (``[storage] url``).
 
-    ``yes`` also deletes database rows that have no trace on disk; without it
+    ``yes`` also deletes database rows that have no trace in the Object store; without it
     they are only counted. ``lock_held`` says the caller (the worker's rebuild
     job) already holds ``WORKER_LOCK``; otherwise it is taken here and the
     rebuild is refused while the worker runs.
     """
-    layout = Layout(settings.data_dir)
-    version = layout.ensure_version()
+    layout = Layout(open_store(settings.storage))
+    version = await asyncio.to_thread(layout.ensure_version)
     own_engine = db_engine is None
     engine = db_engine or create_db_engine(settings, application_name="copycast-rebuild")
     try:
@@ -172,7 +227,7 @@ async def _rebuild(
     sessionmaker: async_sessionmaker[AsyncSession], layout: Layout, version: str, yes: bool
 ) -> RebuildReport:
     counters = _Counters(version, yes)
-    on_disk = layout.feed_ids_on_disk()
+    on_disk = await asyncio.to_thread(layout.feed_ids)
     counters.data["feeds_on_disk"] = len(on_disk)
     rebuilt: set[str] = set()
     # Descriptors written before feeds carried a Basic pair: the row's pair (kept or minted)
@@ -180,12 +235,13 @@ async def _rebuild(
     stale_pair: set[str] = set()
 
     for feed_id in on_disk:
-        path = layout.descriptor_path(feed_id)
-        if not path.is_file():
+        objects = await asyncio.to_thread(FeedObjects.list, layout, feed_id)
+        key = layout.descriptor_key(feed_id)
+        if objects.get(key) is None:
             counters.skipped.append(SkippedDir(feed_id=feed_id, reason="no feed.json"))
             continue
         try:
-            descriptor = FeedDescriptor.read(path)
+            descriptor = await asyncio.to_thread(FeedDescriptor.read, layout.store, key)
         except DescriptorError as exc:
             counters.skipped.append(SkippedDir(feed_id=feed_id, reason=str(exc)))
             continue
@@ -196,7 +252,7 @@ async def _rebuild(
             continue
         try:
             async with sessionmaker() as session, session.begin():
-                await _rebuild_feed(session, layout, descriptor, yes, counters)
+                await _rebuild_feed(session, objects, descriptor, yes, counters)
             rebuilt.add(feed_id)
             if not _carries_pair(descriptor):
                 stale_pair.add(feed_id)
@@ -206,8 +262,9 @@ async def _rebuild(
 
     async with sessionmaker() as session, session.begin():
         feeds = FeedRepository(session)
+        listed = set(on_disk)
         for feed_id in await feeds.ids():
-            if feed_id in rebuilt or layout.has_feed(feed_id):
+            if feed_id in rebuilt or feed_id in listed:
                 continue
             if yes:
                 await feeds.delete(feed_id)
@@ -221,7 +278,9 @@ async def _rebuild(
         for feed_id in [*rebuilt, counters.data["default_bucket_id"]]:
             if not feed_id:
                 continue
-            if feed_id in stale_pair or not layout.descriptor_path(feed_id).is_file():
+            key = layout.descriptor_key(feed_id)
+            described = await asyncio.to_thread(layout.store.exists, key)
+            if feed_id in stale_pair or not described:
                 await export_descriptor(session, layout, feed_id, force=True)
     return counters.report()
 
@@ -235,26 +294,28 @@ def _carries_pair(descriptor: FeedDescriptor) -> bool:
 
 async def _rebuild_feed(
     session: AsyncSession,
-    layout: Layout,
+    objects: FeedObjects,
     descriptor: FeedDescriptor,
     yes: bool,
     counters: _Counters,
 ) -> None:
     feed_id = descriptor.feed.id
-    await _upsert_feed(session, layout, descriptor)
+    layout = objects.layout
+    await _upsert_feed(session, descriptor)
     counters.add("feeds_upserted")
 
-    counters.add("items_upserted", await _upsert_items(session, layout, descriptor))
+    counters.add("items_upserted", await _upsert_items(session, objects, descriptor))
     counters.add("assets_upserted", await _upsert_assets(session, descriptor))
     counters.add("requests_upserted", await _upsert_requests(session, descriptor))
 
     catalog = CatalogRepository(session)
     rows = {row.id: row for row in await catalog.for_feed(feed_id)}
 
-    # Media: a file makes the row archived; a missing file makes archiving/archived rows wanted.
+    # Media: an object makes the row archived; a missing one makes archiving/archived rows
+    # wanted.
     known_stems: set[str] = set()
     for item in rows.values():
-        media = layout.find_media(feed_id, item.id)
+        media = objects.find_media(item.id)
         if media is not None:
             known_stems.add(item.id)
             await _mark_archived_from_file(session, layout, feed_id, item, media)
@@ -273,44 +334,42 @@ async def _rebuild_feed(
                 )
             )
             counters.add("media_reset_to_wanted")
-        xml_path = layout.item_xml_path(feed_id, item.id)
-        if xml_path.is_file():
+        item_xml = await asyncio.to_thread(objects.read, layout.item_xml_key(feed_id, item.id))
+        if item_xml is not None:
             await session.execute(
                 update(CatalogItem)
                 .where(CatalogItem.id == item.id)
-                .values(source_item_xml=xml_path.read_text(encoding="utf-8"))
+                .values(source_item_xml=item_xml.decode("utf-8", errors="replace"))
             )
 
     orphans = [
-        path
-        for path in layout.media_files(feed_id)
-        if (stem := Layout.media_stem(path)) is not None and stem not in rows
+        obj
+        for obj in objects.media()
+        if (stem := Layout.media_stem(obj.name)) is not None and stem not in rows
     ]
-    counters.add("rows_from_files", await _rows_from_files(session, layout, feed_id, orphans))
+    counters.add("rows_from_files", await _rows_from_files(session, objects, orphans))
 
-    counters.add("assets_from_files", await _reconcile_assets(session, layout, feed_id))
+    counters.add("assets_from_files", await _reconcile_assets(session, objects))
 
-    source_xml = layout.source_xml_path(feed_id)
-    if source_xml.is_file():
+    source_xml = await asyncio.to_thread(objects.read, layout.source_xml_key(feed_id))
+    if source_xml is not None:
         await session.execute(
             update(Feed)
             .where(Feed.id == feed_id)
-            .values(source_channel_xml=_channel_xml(source_xml.read_bytes()))
+            .values(source_channel_xml=_channel_xml(source_xml))
         )
 
-    # Rows absent from disk: neither in the descriptor nor backed by a file.
+    # Rows absent from the Object store: neither in the descriptor nor backed by an object.
     described_items = {i.id for i in descriptor.items}
     stale_items = [
-        iid
-        for iid in rows
-        if iid not in described_items and layout.find_media(feed_id, iid) is None
+        iid for iid in rows if iid not in described_items and objects.find_media(iid) is None
     ]
     described_assets = {a.id for a in descriptor.assets}
     stale_assets = [
         a.id
         for a in (await session.execute(select(Asset).where(Asset.feed_id == feed_id))).scalars()
         if a.id not in described_assets
-        and (not a.local_path or not layout.resolve(feed_id, a.local_path).is_file())
+        and (not a.local_path or objects.resolve(a.local_path) is None)
     ]
     if yes:
         if stale_items:
@@ -328,7 +387,7 @@ async def _rebuild_feed(
     await feeds.bump_revision(feed_id)
 
 
-async def _upsert_feed(session: AsyncSession, layout: Layout, descriptor: FeedDescriptor) -> None:
+async def _upsert_feed(session: AsyncSession, descriptor: FeedDescriptor) -> None:
     feed, policy = descriptor.feed, descriptor.policy
     if feed.is_default:
         await session.execute(
@@ -381,16 +440,17 @@ async def _upsert_feed(session: AsyncSession, layout: Layout, descriptor: FeedDe
             set_={k: v for k, v in values.items() if k not in untouched},
         )
     )
-    layout.ensure_feed_dirs(feed.id)
 
 
-async def _upsert_items(session: AsyncSession, layout: Layout, descriptor: FeedDescriptor) -> int:
+async def _upsert_items(
+    session: AsyncSession, objects: FeedObjects, descriptor: FeedDescriptor
+) -> int:
     if not descriptor.items:
         return 0
     feed_id = descriptor.feed.id
     source_kind = descriptor.feed.source_kind
     rows = [
-        _item_values(feed_id, item, _restored_public_ext(layout, feed_id, source_kind, item))
+        _item_values(feed_id, item, _restored_public_ext(objects, source_kind, item))
         for item in descriptor.items
     ]
     # Ordinals are unique per feed: park conflicting existing rows first so an
@@ -418,7 +478,7 @@ async def _upsert_items(session: AsyncSession, layout: Layout, descriptor: FeedD
 
 
 def _restored_public_ext(
-    layout: Layout, feed_id: str, source_kind: SourceKind | None, item: DescriptorItem
+    objects: FeedObjects, source_kind: SourceKind | None, item: DescriptorItem
 ) -> str:
     """The item's stable URL extension: as written, else its media file's, else predicted.
 
@@ -430,9 +490,9 @@ def _restored_public_ext(
     """
     if item.public_ext:
         return item.public_ext
-    media = layout.find_media(feed_id, item.id)
+    media = objects.find_media(item.id)
     if media is not None:
-        return media.suffix.lstrip(".").lower()
+        return _ext_of(media)
     return predicted_ext(source_kind)
 
 
@@ -552,11 +612,10 @@ async def _upsert_requests(session: AsyncSession, descriptor: FeedDescriptor) ->
 
 
 async def _mark_archived_from_file(
-    session: AsyncSession, layout: Layout, feed_id: str, item: CatalogItem, media: Path
+    session: AsyncSession, layout: Layout, feed_id: str, item: CatalogItem, media: StoredObject
 ) -> None:
-    stat = await asyncio.to_thread(media.stat)
-    relative = layout.relative(feed_id, media)
-    ext = media.suffix.lstrip(".").lower()
+    relative = layout.relative(feed_id, media.key)
+    ext = _ext_of(media)
     mime = item.media_mime if item.media_path == relative and item.media_mime else mime_for(ext)
     await session.execute(
         update(CatalogItem)
@@ -565,21 +624,22 @@ async def _mark_archived_from_file(
             archive_state=ArchiveState.archived.value,
             media_path=relative,
             media_mime=mime,
-            media_bytes=stat.st_size,
-            archived_at=item.archived_at or datetime.fromtimestamp(stat.st_mtime, tz=UTC),
+            media_bytes=media.size,
+            archived_at=item.archived_at or media.last_modified,
             deleted_at=None,
         )
     )
 
 
 async def _rows_from_files(
-    session: AsyncSession, layout: Layout, feed_id: str, files: Sequence[Path]
+    session: AsyncSession, objects: FeedObjects, files: Sequence[StoredObject]
 ) -> int:
-    """Catalog rows for media files nobody knows about, ordinals appended by ``published_at``."""
+    """Catalog rows for media objects nobody knows about, ordinals appended by ``published_at``."""
     if not files:
         return 0
+    feed_id = objects.feed_id
     catalog = CatalogRepository(session)
-    drafts = [_draft_from_sidecars(layout, feed_id, path) for path in files]
+    drafts = [await asyncio.to_thread(_draft_from_sidecars, objects, obj) for obj in files]
     drafts.sort(key=lambda d: (d["published_at"] or datetime.min.replace(tzinfo=UTC), d["id"]))
     next_ordinal = await catalog.max_ordinal(feed_id) + 1
     now = datetime.now(UTC)
@@ -602,25 +662,25 @@ async def _rows_from_files(
     return len(rows)
 
 
-def _draft_from_sidecars(layout: Layout, feed_id: str, media: Path) -> dict[str, Any]:
-    stem = Layout.media_stem(media) or media.stem
-    stat = media.stat()
+def _draft_from_sidecars(objects: FeedObjects, media: StoredObject) -> dict[str, Any]:
+    layout, feed_id = objects.layout, objects.feed_id
+    stem = Layout.media_stem(media.name) or media.name.partition(".")[0]
     info: dict[str, Any] = {}
-    info_path = media.with_name(f"{stem}{INFO_JSON_SUFFIX}")
-    if info_path.is_file():
+    info_raw = objects.read(layout.media_prefix(feed_id) + f"{stem}{INFO_JSON_SUFFIX}")
+    if info_raw is not None:
         try:
-            loaded: object = json.loads(info_path.read_text(encoding="utf-8"))
+            loaded: object = json.loads(info_raw)
             if isinstance(loaded, dict):
                 info = cast("dict[str, Any]", loaded)
         except ValueError:
             info = {}
-    xml_path = media.with_name(f"{stem}{ITEM_XML_SUFFIX}")
-    from_xml = _parse_item_xml(xml_path.read_bytes()) if xml_path.is_file() else {}
+    xml_raw = objects.read(layout.media_prefix(feed_id) + f"{stem}{ITEM_XML_SUFFIX}")
+    from_xml = _parse_item_xml(xml_raw) if xml_raw is not None else {}
 
     published = from_xml.get("published_at") or _info_timestamp(info)
     source_key = from_xml.get("source_key") or _info_source_key(info) or f"urn:copycast:{stem}"
     title = from_xml.get("title") or _str(info.get("title")) or stem
-    ext = media.suffix.lstrip(".").lower()
+    ext = _ext_of(media)
     return {
         "id": stem,
         "source_key": source_key,
@@ -634,11 +694,11 @@ def _draft_from_sidecars(layout: Layout, feed_id: str, media: Path) -> dict[str,
         "source_number": _int(info.get("episode_number") or info.get("playlist_index")),
         "source_season": _int(info.get("season_number")),
         "source_item_xml": from_xml.get("xml"),
-        "media_path": layout.relative(feed_id, media),
+        "media_path": layout.relative(feed_id, media.key),
         "media_mime": mime_for(ext),
-        "media_bytes": stat.st_size,
+        "media_bytes": media.size,
         "public_ext": ext,
-        "archived_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC),
+        "archived_at": media.last_modified,
     }
 
 
@@ -676,20 +736,21 @@ def _channel_xml(raw: bytes) -> str | None:
     return etree.tostring(root, encoding="unicode")
 
 
-async def _reconcile_assets(session: AsyncSession, layout: Layout, feed_id: str) -> int:
-    """Stat every asset row's file; rows for files nobody knows about."""
+async def _reconcile_assets(session: AsyncSession, objects: FeedObjects) -> int:
+    """Check every asset row's object; rows for objects nobody knows about."""
+    layout, feed_id = objects.layout, objects.feed_id
     rows = list((await session.execute(select(Asset).where(Asset.feed_id == feed_id))).scalars())
     known_paths: set[str] = set()
     for asset in rows:
         if not asset.local_path:
             continue
         known_paths.add(asset.local_path)
-        path = layout.resolve(feed_id, asset.local_path)
-        if path.is_file():
+        found = objects.resolve(asset.local_path)
+        if found is not None:
             await session.execute(
                 update(Asset)
                 .where(Asset.id == asset.id)
-                .values(state=AssetState.archived.value, size_bytes=path.stat().st_size)
+                .values(state=AssetState.archived.value, size_bytes=found.size)
             )
         elif asset.state == AssetState.archived.value:
             await session.execute(
@@ -703,11 +764,11 @@ async def _reconcile_assets(session: AsyncSession, layout: Layout, feed_id: str)
             await session.execute(select(CatalogItem.id).where(CatalogItem.feed_id == feed_id))
         ).scalars()
     )
-    for path in layout.asset_files(feed_id):
-        relative = layout.relative(feed_id, path)
+    for obj in objects.assets():
+        relative = layout.relative(feed_id, obj.key)
         if relative in known_paths:
             continue
-        parsed = Layout.parse_asset_name(path.name)
+        parsed = Layout.parse_asset_name(obj.name)
         if parsed is None or (parsed.item_id is not None and parsed.item_id not in item_ids):
             continue
         fmt = _asset_format(parsed.kind, parsed.ext)
@@ -731,9 +792,9 @@ async def _reconcile_assets(session: AsyncSession, layout: Layout, feed_id: str)
             slot=parsed.slot,
             local_path=relative,
             mime=mime_for(parsed.ext),
-            size_bytes=path.stat().st_size,
+            size_bytes=obj.size,
             state=AssetState.archived.value,
-            fetched_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC),
+            fetched_at=obj.last_modified,
         )
         await session.execute(stmt.on_conflict_do_nothing())
         created += 1
@@ -841,6 +902,7 @@ def rebuild_blocking(settings: Settings, yes: bool) -> RebuildReport:
 
 __all__ = [
     "MEDIA_MIME",
+    "FeedObjects",
     "RebuildRefused",
     "RebuildReport",
     "SkippedDir",

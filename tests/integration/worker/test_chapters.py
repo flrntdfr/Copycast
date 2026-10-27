@@ -11,7 +11,6 @@ import structlog
 from lxml import etree
 
 from copycast.adapters.sources.rss import NS_PODCAST, tag
-from copycast.adapters.storage.atomic import write_json_atomic
 from copycast.app import Container
 from copycast.domain.enums import ArchiveState, AssetFormat, AssetKind, AssetState
 from copycast.worker import main as worker_main
@@ -76,9 +75,9 @@ async def test_engine_chapters_are_archived_as_podcasting_2_json_and_advertised(
 ) -> None:
     feed_id, items = await _archived_channel(container, runner, engine)
     layout = container.layout
-    path = layout.chapters_path(feed_id, items[2])
+    key = layout.chapters_key(feed_id, items[2])
 
-    assert json.loads(path.read_text(encoding="utf-8")) == PODCAST_CHAPTERS
+    assert json.loads(layout.store.get_bytes(key) or b"") == PODCAST_CHAPTERS
     async with uow(container) as unit:
         (row,) = [a for a in await unit.assets.for_item(items[2]) if a.kind == AssetKind.chapters]
         assert (row.state, row.mime, row.format) == (
@@ -87,10 +86,11 @@ async def test_engine_chapters_are_archived_as_podcasting_2_json_and_advertised(
             AssetFormat.json,
         )
         assert row.local_path == f"assets/{items[2]}.chapters.json"
-        assert row.size_bytes == path.stat().st_size
+        stored = layout.store.head(key)
+        assert stored is not None and row.size_bytes == stored.size
         # No chapters from the Engine, no file: an empty document is never written.
         assert not [a for a in await unit.assets.for_item(items[1]) if a.kind == AssetKind.chapters]
-    assert not layout.chapters_path(feed_id, items[1]).exists()
+    assert not layout.store.exists(layout.chapters_key(feed_id, items[1]))
 
     # The Mirror Feed links the file under the type it now really is, and serves it.
     (link,) = await _advertised(client, feed_id)
@@ -107,8 +107,8 @@ async def test_worker_startup_upgrades_chapters_archived_raw(
 ) -> None:
     feed_id, items = await _archived_channel(container, runner, engine)
     layout = container.layout
-    path = layout.chapters_path(feed_id, items[2])
-    write_json_atomic(path, RAW_CHAPTERS[:2])  # what archives before 1.4 left on disk
+    key = layout.chapters_key(feed_id, items[2])
+    layout.write_json(key, RAW_CHAPTERS[:2])  # what archives before 1.4 left behind
 
     with structlog.testing.capture_logs() as events:
         await worker_main._upgrade_chapters(layout)
@@ -119,7 +119,7 @@ async def test_worker_startup_upgrades_chapters_archived_raw(
         (1, 1, 0),
         (1, 0, 0),
     ]
-    assert json.loads(path.read_text(encoding="utf-8")) == PODCAST_CHAPTERS
+    assert json.loads(layout.store.get_bytes(key) or b"") == PODCAST_CHAPTERS
     (link,) = await _advertised(client, feed_id)
     assert (await client.get(link.get("url"))).json() == PODCAST_CHAPTERS
 

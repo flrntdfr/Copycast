@@ -32,8 +32,16 @@ from copycast.worker.constants import EXIT_LOCKED, EXIT_STUCK
 from copycast.worker.health import HealthServer, WorkerState, create_health_app, readiness
 from copycast.worker.runner import SHUTDOWN_ERROR, Runner
 from copycast.worker.scheduler import Scheduler
-from tests.integration.worker.conftest import Source, create_mirror, jobs_of, uow
-from tests.support.fake_engine import FakeEngine, part_files
+from tests.integration.worker.conftest import (
+    Source,
+    create_mirror,
+    jobs_of,
+    media_keys,
+    scratch_jobs,
+    scratch_parts,
+    uow,
+)
+from tests.support.fake_engine import FakeEngine
 
 pytestmark = pytest.mark.integration
 
@@ -165,12 +173,11 @@ async def test_shutdown_drains_and_requeues_running_jobs(
     gate = threading.Event()
     engine.block_fetches(gate)
     run_task = asyncio.create_task(runner.run())
-    tmp = container.layout.tmp_dir(mirror.id)
     for _ in range(200):
-        if part_files(tmp):
+        if scratch_parts(container):
             break
         await asyncio.sleep(0.05)
-    assert part_files(tmp)
+    assert scratch_parts(container)
     runner.request_stop()
     assert await asyncio.wait_for(run_task, timeout=10) == 0
     archives = await jobs_of(container, mirror.id, kind=JobKind.archive_item)
@@ -181,7 +188,8 @@ async def test_shutdown_drains_and_requeues_running_jobs(
     async with uow(container) as unit:
         item = await unit.catalog.require(job.item_id)
         assert item.archive_state == ArchiveState.wanted
-    assert part_files(tmp), "the .part stays for the resume"
+    assert not scratch_jobs(container), "Scratch goes with the job; the retry downloads again"
+    assert not media_keys(container, mirror.id)
     gate.set()
 
 
@@ -190,16 +198,18 @@ async def test_descriptor_export_is_debounced_for_archive_jobs(
 ) -> None:
     url = source.write_rss("debounce", items=[1], artwork=False)
     mirror = await create_mirror(container, url, selection="1")
-    path = container.layout.descriptor_path(mirror.id)
-    before = read_intent_version(path)
+    store, path = container.layout.store, container.layout.descriptor_key(mirror.id)
+    before = read_intent_version(store, path)
     assert before is not None
     await runner.run_until_idle()
     async with uow(container) as unit:
         feed = await unit.feeds.require(mirror.id)
         assert feed.intent_version > before
-    assert read_intent_version(path) == before, "archive jobs export through the 5 s debounce"
+    assert read_intent_version(store, path) == before, (
+        "archive jobs export through the 5 s debounce"
+    )
     await container.uow_factory.flush_exports()
-    assert read_intent_version(path) == feed.intent_version
+    assert read_intent_version(store, path) == feed.intent_version
 
 
 async def test_rebuild_job_runs_under_the_worker_lock(
@@ -224,7 +234,21 @@ async def test_health_endpoints(container: Container, unused_tcp_port: int) -> N
     state = WorkerState(ffmpeg_version="fake 0.0")
     report = await readiness(container, state)
     assert report.status == "degraded"
+    assert set(report.checks) == {
+        "db",
+        "schema",
+        "storage",
+        "layout",
+        "scratch",
+        "worker_seen_at",
+        "scheduler",
+        "ffmpeg",
+    }
     assert report.checks["db"].ok and report.checks["schema"].ok and report.checks["layout"].ok
+    assert report.checks["storage"].ok and report.checks["layout"].detail == "2"
+    assert not report.checks["scratch"].ok, "copycast worker creates Scratch before it starts"
+    container.settings.check_scratch_dir()
+    assert (await readiness(container, state)).checks["scratch"].ok
     assert not report.checks["worker_seen_at"].ok and not report.checks["scheduler"].ok
     state.last_heartbeat_at = datetime.now(UTC)
     state.scheduler_last_tick_at = datetime.now(UTC)
@@ -268,7 +292,7 @@ async def test_main_starts_serves_and_stops_on_sigterm(
 
     own = get_settings(
         base_url=settings.base_url,
-        data_dir=settings.data_dir,
+        storage=settings.storage.model_dump(),
         database_url=db,
         refresh={"interval_hours": 24, "fetch_cooldown_minutes": 15, "concurrency": 1},
         COPYCAST_WORKER_PORT=unused_tcp_port,
@@ -300,7 +324,11 @@ async def test_worker_subprocess_exits_zero_on_sigterm(
     env.update(
         {
             "COPYCAST__DATABASE_URL": db,
-            "COPYCAST__DATA_DIR": str(settings.data_dir),
+            "COPYCAST__STORAGE__URL": settings.storage.url,
+            "COPYCAST__STORAGE__SCRATCH_DIR": str(settings.storage.scratch_dir),
+            "COPYCAST__STORAGE__ENDPOINT": settings.storage.endpoint,
+            "COPYCAST__STORAGE__ACCESS_KEY_ID": settings.storage.access_key_id or "",
+            "COPYCAST__STORAGE__SECRET_ACCESS_KEY": settings.storage.secret_access_key or "",
             "COPYCAST__BASE_URL": settings.base_url,
             "COPYCAST_WORKER_PORT": str(unused_tcp_port),
             "COPYCAST_BIND": "127.0.0.1",

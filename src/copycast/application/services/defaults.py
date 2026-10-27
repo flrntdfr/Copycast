@@ -1,15 +1,13 @@
 """Operator defaults every Mirror may override: language, minimum item length, default policy.
 
-They live in ``engine/defaults.json`` under the data directory so a rebuild
-keeps them, and both processes read them: the API to show and edit, the
-worker to fill in what a Mirror leaves null (:func:`effective`).
+They live in ``engine/defaults.json`` in the Object store so a rebuild keeps them,
+and both processes read them: the API to show and edit, the worker to fill in
+what a Mirror leaves null (:func:`effective`).
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
-from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
@@ -23,24 +21,27 @@ log = get_logger(__name__)
 
 
 def load_defaults(layout: LayoutPort) -> MirrorDefaults:
-    """The stored defaults, or the built-in ones when the file is absent or unreadable."""
-    path = layout.defaults_path()
+    """The stored defaults, or the built-in ones when the object is absent or unreadable."""
+    key = layout.defaults_key()
     try:
-        data: Any = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data: Any = layout.read_json(key)
+    except OSError:
+        return MirrorDefaults()
+    if data is None:
         return MirrorDefaults()
     try:
         return MirrorDefaults.model_validate(data)
     except ValidationError:
-        log.warning("defaults.unreadable", path=str(path))
+        log.warning("defaults.unreadable", key=key)
         return MirrorDefaults()
 
 
-def store_defaults(path: Path, defaults: MirrorDefaults) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(defaults.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+def store_defaults(layout: LayoutPort, defaults: MirrorDefaults) -> None:
+    layout.store.put_bytes(
+        layout.defaults_key(),
+        defaults.model_dump_json(indent=2) + "\n",
+        content_type="application/json",
+    )
 
 
 def effective(
@@ -72,7 +73,7 @@ async def get_mirror_defaults(ctx: ServiceContext) -> MirrorDefaults:
 @capability("set_mirror_defaults", request=MirrorDefaults, response=MirrorDefaults)
 async def set_mirror_defaults(ctx: ServiceContext, body: MirrorDefaults) -> MirrorDefaults:
     """Replace the operator defaults; Mirrors with their own value are unaffected."""
-    await asyncio.to_thread(store_defaults, ctx.layout.defaults_path(), body)
+    await asyncio.to_thread(store_defaults, ctx.layout, body)
     log.info(
         "defaults.stored",
         language=body.language,

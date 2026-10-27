@@ -1,5 +1,12 @@
 base_url = "https://copycast.tail1234.ts.net"
 
+[storage]
+url      = "s3://copycast"
+endpoint = "http://seaweedfs-s3.storage.svc:8333"
+
+[cache]
+url = "redis://copycast-valkey:6379/0"
+
 [refresh]
 interval_hours         = 12
 fetch_cooldown_minutes = 15

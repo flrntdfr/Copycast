@@ -1,0 +1,63 @@
+# Valkey: the shared Feed cache every api replica reads (docs/adr/0019). A cache only:
+# nothing persisted, the least recently used feeds make room. Losing it costs renders, not data.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: copycast-valkey
+  labels:
+    app.kubernetes.io/name: copycast
+    app.kubernetes.io/component: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: copycast
+      app.kubernetes.io/component: cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: copycast
+        app.kubernetes.io/component: cache
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+      containers:
+        - name: valkey
+          image: valkey/valkey:9.0.7-alpine@sha256:2d04268dfa26ab31cfa3fdc538866e76438b2d00e41db41b8cb86d780ac5a416
+          args: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+          ports:
+            - name: valkey
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 320Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: copycast-valkey
+  labels:
+    app.kubernetes.io/name: copycast
+    app.kubernetes.io/component: cache
+spec:
+  selector:
+    app.kubernetes.io/name: copycast
+    app.kubernetes.io/component: cache
+  ports:
+    - name: valkey
+      port: 6379
+      targetPort: valkey

@@ -26,9 +26,17 @@ from copycast.domain.exceptions import Conflict
 from copycast.worker.constants import LIVE_RETRY, LIVE_WAIT_MAX
 from copycast.worker.jobs import archive_item
 from copycast.worker.runner import STORAGE_FULL_ERROR, Runner
-from tests.integration.worker.conftest import Source, create_mirror, jobs_of, uow
+from tests.integration.worker.conftest import (
+    Source,
+    create_mirror,
+    jobs_of,
+    media_keys,
+    scratch_jobs,
+    scratch_parts,
+    uow,
+)
 from tests.support.factories import listing
-from tests.support.fake_engine import FakeEngine, part_files
+from tests.support.fake_engine import FakeEngine
 
 pytestmark = pytest.mark.integration
 
@@ -145,6 +153,25 @@ async def test_storage_full_requeues_without_counting_and_pauses_archive_claims(
     async with uow(container) as unit:
         states = {i.archive_state for i in await unit.catalog.for_feed(mirror.id)}
         assert states == {ArchiveState.archived}
+
+
+async def test_a_scratch_below_its_floor_is_storage_full_before_any_download(
+    container: Container,
+    source: Source,
+    runner: Runner,
+    engine: FakeEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = source.write_rss("tight", items=[1], artwork=False)
+    mirror = await create_mirror(container, url, selection="1")
+    monkeypatch.setattr(container.scratch, "free_bytes", lambda: 10 * 1024 * 1024)
+    await runner.run_until_idle()
+    (archive,) = await jobs_of(container, mirror.id, kind=JobKind.archive_item)
+    assert (archive.status, archive.attempt) == (JobStatus.queued.value, 0)
+    assert archive.error_kind == ErrorKind.storage_full.value
+    assert "Scratch has 10 MiB free, below 512 MiB" in (archive.error or "")
+    assert engine.records.fetches == [], "nothing was downloaded"
+    assert runner.storage_full_until is not None
 
 
 async def _run_now(container: Container, job_id: object) -> None:
@@ -315,7 +342,7 @@ async def test_a_streams_wait_is_never_scheduled_past_the_jobs_ceiling(
         assert (await unit.catalog.require(item_id)).archive_state == ArchiveState.wanted
 
 
-async def test_pause_cancels_a_running_download_and_keeps_the_part_file(
+async def test_pause_cancels_a_running_download_and_cleans_its_scratch(
     container: Container, source: Source, runner: Runner, engine: FakeEngine
 ) -> None:
     feed_id, item_id = await _one_wanted_item(container, source, runner, "pause")
@@ -324,12 +351,11 @@ async def test_pause_cancels_a_running_download_and_keeps_the_part_file(
     engine.block_fetches(gate)
     claimed = await runner.claim_available()
     assert [j.id for j in claimed] == [job.id]
-    tmp = container.layout.tmp_dir(feed_id)
     for _ in range(100):
-        if part_files(tmp):
+        if scratch_parts(container):
             break
         await asyncio.sleep(0.05)
-    assert part_files(tmp), "the download wrote its .part file"
+    assert scratch_parts(container), "the download wrote its .part file in Scratch"
 
     paused = await container.services.set_paused(feed_id, True)
     assert paused.paused
@@ -343,8 +369,8 @@ async def test_pause_cancels_a_running_download_and_keeps_the_part_file(
         assert item.archive_state == ArchiveState.wanted and item.attempt_count == 0
         feed = await unit.feeds.require(feed_id)
         assert feed.paused and feed.revision >= 1
-    assert part_files(tmp), ".part stays in tmp/ for a later resume"
-    assert not list(container.layout.media_dir(feed_id).glob("*.m4a"))
+    assert not scratch_jobs(container), "the job's Scratch directory goes with it"
+    assert not media_keys(container, feed_id)
     gate.set()
 
 
@@ -363,7 +389,8 @@ async def test_delete_item_during_archive_leaves_no_media(
         assert row.status == JobStatus.cancelled.value
         item = await unit.catalog.require(item_id)
         assert item.archive_state == ArchiveState.deleted and item.listed is True
-    assert not part_files(container.layout.tmp_dir(feed_id))
+    assert not scratch_jobs(container)
+    assert not media_keys(container, feed_id)
     page = await container.services.list_items(feed_id)
     assert page.items[0].state is ArchiveState.deleted and page.items[0].media is None
     gate.set()

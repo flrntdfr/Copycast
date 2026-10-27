@@ -6,6 +6,8 @@ metadata:
     app.kubernetes.io/name: copycast
     app.kubernetes.io/component: api
 spec:
+  # Stateless since 2.0: the Object store holds the archive and Valkey the shared Feed cache, so
+  # the api scales out (raise replicas, or add a HorizontalPodAutoscaler).
   replicas: 1
   strategy:
     type: RollingUpdate
@@ -44,9 +46,21 @@ spec:
                 secretKeyRef:
                   name: copycast-db-app
                   key: uri
+            - name: COPYCAST__STORAGE__ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: copycast-storage
+                  key: access_key_id
+            - name: COPYCAST__STORAGE__SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: copycast-storage
+                  key: secret_access_key
+            - name: COPYCAST__STORAGE__SCRATCH_DIR
+              value: /scratch
           volumeMounts:
-            - name: data
-              mountPath: /data
+            - name: scratch
+              mountPath: /scratch
             - name: config
               mountPath: /config
               readOnly: true
@@ -80,9 +94,10 @@ spec:
             capabilities:
               drop: ["ALL"]
       volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: copycast-data
+        # A listing's private cookie copy, and an Upload (up to 4 GiB) while its tags are read.
+        - name: scratch
+          emptyDir:
+            sizeLimit: 8Gi
         - name: config
           configMap:
             name: copycast-config

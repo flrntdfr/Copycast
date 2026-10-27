@@ -1,6 +1,6 @@
 """``/healthz/live`` and ``/healthz/ready``.
 
-Readiness reports ``{status, checks{db, schema, data_dir, layout, worker_seen_at}}``
+Readiness reports ``{status, checks{db, schema, storage, layout, worker_seen_at}}``
 and answers 503 when degraded. ``worker_seen_at`` is reported (the About page
 shows it) but does not degrade the api: the api keeps serving feeds while the
 worker restarts. The worker serves the same shape on its own port with extra
@@ -9,7 +9,7 @@ worker restarts. The worker serves the same shape on its own port with extra
 
 from __future__ import annotations
 
-import os
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 
@@ -23,7 +23,7 @@ from copycast.application.models import ReadyCheck, ReadyRead
 LIVE_PATH = "/live"
 READY_PATH = "/ready"
 WORKER_STALE_SECONDS = 90.0
-STATUS_CHECKS: tuple[str, ...] = ("db", "schema", "data_dir", "layout")
+STATUS_CHECKS: tuple[str, ...] = ("db", "schema", "storage", "layout")
 """Checks that decide ``status``; the others are informational."""
 
 ExtraCheck = Callable[[], Awaitable[ReadyCheck]]
@@ -51,10 +51,12 @@ async def readiness(
     else:
         checks["schema"] = ReadyCheck(ok=False, detail="database unavailable")
 
-    data_dir = container.settings.data_dir
-    writable = data_dir.is_dir() and os.access(data_dir, os.W_OK)
-    checks["data_dir"] = ReadyCheck(ok=writable, detail=str(data_dir))
-    version = container.layout.read_version()
+    try:
+        version = await asyncio.to_thread(container.layout.read_version)
+        checks["storage"] = ReadyCheck(ok=True, detail=container.layout.store.url)
+    except Exception as exc:  # unreachable endpoint, refused credentials, missing bucket
+        version = None
+        checks["storage"] = ReadyCheck(ok=False, detail=str(exc).splitlines()[0][:200])
     expected = container.expected_layout_version
     checks["layout"] = ReadyCheck(ok=version == expected, detail=version or "missing")
 

@@ -3,17 +3,14 @@
 Limits: Artwork 10 MiB and must sniff as an image; chapters 2 MiB and must
 be JSON; transcripts 20 MiB in a known format. A failed asset raises
 :class:`AssetError` so the caller marks the row ``failed`` while the archive
-job itself still succeeds. Files are written atomically (``.part`` then
-``os.replace``) under the plan's basenames.
+job itself still succeeds. Each asset is one PUT to the Object store (atomic in S3)
+under ``feeds/{feed_id}/assets/`` and the plan's basename.
 """
 
 from __future__ import annotations
 
-import contextlib
 import json
-import os
 from dataclasses import dataclass
-from pathlib import Path
 from posixpath import basename as posix_basename
 from typing import TYPE_CHECKING, Final
 from urllib.parse import urljoin, urlsplit
@@ -23,6 +20,7 @@ from lxml import etree
 
 from copycast.adapters.sources.http import BodyTooLarge, SourceError, fetch
 from copycast.adapters.sources.rss import NS_ITUNES, NS_PODCAST, PARSER, tag
+from copycast.adapters.storage.layout import Layout
 from copycast.domain.enums import AssetFormat, AssetKind, AssetProvenance
 from copycast.domain.ids import attachment_slot
 
@@ -138,7 +136,7 @@ class RemoteAsset:
 
 @dataclass(frozen=True, slots=True)
 class MirroredAsset:
-    """A mirrored file under ``assets/``; ``local_path`` is relative to the feed directory."""
+    """A mirrored object under ``assets/``; ``local_path`` is relative to the feed prefix."""
 
     kind: AssetKind
     item_id: str | None
@@ -146,7 +144,7 @@ class MirroredAsset:
     format: AssetFormat | None
     provenance: AssetProvenance
     basename: str
-    path: Path
+    key: str
     mime: str
     size_bytes: int
     slot: str | None = None
@@ -346,9 +344,9 @@ def _resolve(base: str | None, url: str) -> str:
 
 
 def mirror_asset(
-    asset: RemoteAsset, assets_dir: Path, *, client: httpx.Client | None = None
+    asset: RemoteAsset, layout: Layout, feed_id: str, *, client: httpx.Client | None = None
 ) -> MirroredAsset:
-    """Download ``asset`` into ``assets_dir`` under its plan basename, enforcing the limits."""
+    """Download ``asset`` into the feed's ``assets/`` under its plan basename, enforcing limits."""
     limit = LIMITS[asset.kind]
     try:
         fetched = fetch(asset.url, max_bytes=limit, client=client)
@@ -391,7 +389,11 @@ def mirror_asset(
         provenance=asset.provenance,
         slot=asset.slot,
     )
-    path = write_atomic(assets_dir / name, body)
+    key = layout.asset_key(feed_id, name)
+    try:
+        layout.store.put_bytes(key, body, content_type=mime)
+    except Exception as exc:  # the Object store refused or is unreachable: this asset fails
+        raise AssetError(f"cannot store {name}: {exc}") from exc
     return MirroredAsset(
         kind=asset.kind,
         item_id=asset.item_id,
@@ -399,7 +401,7 @@ def mirror_asset(
         format=fmt,
         provenance=asset.provenance,
         basename=name,
-        path=path,
+        key=key,
         mime=mime,
         size_bytes=len(body),
         slot=asset.slot,
@@ -418,23 +420,6 @@ def _attachment_type(body: bytes, content_type: str | None, url: str) -> tuple[s
     if ext in _ATTACHMENT_EXT_MIME:
         return ("jpg" if ext == "jpeg" else ext), _ATTACHMENT_EXT_MIME[ext]
     raise AssetError(f"not an image, PDF or audio file ({served or 'unknown type'}): {url}")
-
-
-def write_atomic(path: Path, data: bytes) -> Path:
-    """Write ``data`` next to ``path`` and ``os.replace`` it into place, fsynced."""
-    tmp = path.with_name(path.name + ".part")
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with tmp.open("wb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)
-    except OSError as exc:
-        with contextlib.suppress(OSError):
-            tmp.unlink(missing_ok=True)
-        raise AssetError(f"cannot write {path.name}: {exc.strerror or exc}") from exc
-    return path
 
 
 __all__ = [
@@ -456,5 +441,4 @@ __all__ = [
     "remote_attachments_from_description",
     "sniff_image",
     "transcript_format",
-    "write_atomic",
 ]

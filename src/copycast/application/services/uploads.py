@@ -1,11 +1,12 @@
 """Uploads and Serial Buckets (ADR 0015).
 
-An upload is staged on disk, not in Postgres: ``create_upload`` writes
-``uploads/<id>/upload.json`` with a digest of a one-time token and returns the
-upload URL; ``put_upload`` streams the bytes to ``uploads/<id>/file.<ext>`` and
-reads the file's tags; ``create_serial_bucket`` moves every named upload into a
-new Bucket as an archived Episode, in the order the agent gave, and removes the
-staging directory; ``add_uploads`` does the same into an existing Bucket, in
+An upload is staged in the Object store, not in Postgres: ``create_upload``
+writes ``uploads/<id>/upload.json`` with a digest of a one-time token and
+returns the upload URL; ``put_upload`` streams the bytes into a Scratch file,
+reads its tags there (they need a seekable file) and uploads it to
+``uploads/<id>/file.<ext>``; ``create_serial_bucket`` copies every named upload
+(server-side) into a new Bucket as an archived Episode, in the order the agent
+gave, and removes the staged objects; ``add_uploads`` does the same into an existing Bucket, in
 natural file-name order, dated by arrival (ADR 0018). Staged uploads older
 than :data:`UPLOAD_TTL` are swept on the next ``create_upload``.
 """
@@ -16,13 +17,10 @@ import asyncio
 import hashlib
 import hmac
 import json
-import os
 import secrets
-import shutil
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from copycast.application.capabilities import capability
 from copycast.application.events import FeedEvent
@@ -36,7 +34,7 @@ from copycast.application.models import (
     UploadsAdd,
 )
 from copycast.application.services.buckets import bucket_read_for
-from copycast.application.services.context import ServiceContext
+from copycast.application.services.context import ObjectStorePort, ServiceContext
 from copycast.application.services.feeds import require_bucket
 from copycast.domain.enums import ArchiveState, FeedKind, ListingOrder
 from copycast.domain.exceptions import Conflict, NotFound, Unsupported
@@ -79,29 +77,35 @@ def served_ext(filename: str) -> str | None:
 
 
 class _Staged:
-    """One ``uploads/<id>`` directory."""
+    """One ``uploads/<id>/`` prefix of the Object store."""
 
-    def __init__(self, root: Path, upload_id: str) -> None:
+    def __init__(self, store: ObjectStorePort, root: str, upload_id: str) -> None:
         if not upload_id.isalnum():
             raise NotFound("upload", upload_id)
+        self.store = store
         self.id = upload_id
-        self.dir = root / upload_id
-        self.meta_path = self.dir / _META
+        self.prefix = f"{root}{upload_id}/"
+        self.meta_key = self.prefix + _META
 
     def load(self) -> dict[str, Any]:
         try:
-            meta: dict[str, Any] = json.loads(self.meta_path.read_text("utf-8"))
+            body = self.store.get_bytes(self.meta_key)
+            loaded: Any = json.loads(body) if body is not None else None
         except (OSError, ValueError):
             raise NotFound("upload", self.id) from None
-        return meta
+        if not isinstance(loaded, dict):
+            raise NotFound("upload", self.id)
+        return cast("dict[str, Any]", loaded)
 
     def save(self, meta: dict[str, Any]) -> None:
-        tmp = self.meta_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(meta), "utf-8")
-        tmp.replace(self.meta_path)
+        self.store.put_bytes(self.meta_key, json.dumps(meta), content_type="application/json")
 
-    def file(self, meta: dict[str, Any]) -> Path:
-        return self.dir / str(meta["file"])
+    def file(self, meta: dict[str, Any]) -> str:
+        return self.prefix + str(meta["file"])
+
+
+def _staged(ctx: ServiceContext, upload_id: str) -> _Staged:
+    return _Staged(ctx.layout.store, ctx.layout.uploads_prefix(), upload_id)
 
 
 def _read(ctx: ServiceContext, meta: dict[str, Any], token: str | None = None) -> UploadRead:
@@ -120,18 +124,21 @@ def _read(ctx: ServiceContext, meta: dict[str, Any], token: str | None = None) -
     )
 
 
-def _sweep(root: Path, now: datetime) -> None:
+def _sweep(store: ObjectStorePort, root: str, now: datetime) -> None:
     """Remove staged uploads older than :data:`UPLOAD_TTL` (abandoned batches)."""
-    if not root.is_dir():
-        return
-    for entry in root.iterdir():
+    for name in store.list_dirs(root):
+        prefix = f"{root}{name}/"
+        objects = store.list(prefix)
+        if not objects:
+            continue
         try:
-            meta = json.loads((entry / _META).read_text("utf-8"))
-            stale = now - datetime.fromisoformat(meta["created_at"]) > UPLOAD_TTL
-        except (OSError, ValueError, KeyError):
-            stale = now - datetime.fromtimestamp(entry.stat().st_mtime, UTC) > UPLOAD_TTL
+            body = store.get_bytes(prefix + _META)
+            meta: Any = json.loads(body) if body is not None else {}
+            stale = now - datetime.fromisoformat(str(meta["created_at"])) > UPLOAD_TTL
+        except (OSError, ValueError, KeyError, TypeError):
+            stale = now - max(o.last_modified for o in objects) > UPLOAD_TTL
         if stale:
-            shutil.rmtree(entry, ignore_errors=True)
+            store.delete_prefix(prefix)
 
 
 @capability("create_upload", request=UploadCreate, response=UploadRead)
@@ -139,13 +146,11 @@ async def create_upload(ctx: ServiceContext, body: UploadCreate) -> UploadRead:
     """Stage one audio file: returns the one-time ``upload_url`` to PUT its bytes to."""
     if served_ext(body.filename) is None:
         raise Unsupported(f"{body.filename!r} is not mp3, m4a or m4b; convert it before uploading")
-    root = ctx.layout.uploads_dir
     now = _now()
-    await asyncio.to_thread(_sweep, root, now)
+    await asyncio.to_thread(_sweep, ctx.layout.store, ctx.layout.uploads_prefix(), now)
     upload_id = secrets.token_hex(8)
     token = secrets.token_urlsafe(24)
-    staged = _Staged(root, upload_id)
-    staged.dir.mkdir(parents=True, exist_ok=False)
+    staged = _staged(ctx, upload_id)
     _, _, ext = body.filename.rpartition(".")
     meta: dict[str, Any] = {
         "id": upload_id,
@@ -155,7 +160,7 @@ async def create_upload(ctx: ServiceContext, body: UploadCreate) -> UploadRead:
         "state": "pending",
         "created_at": now.isoformat(),
     }
-    staged.save(meta)
+    await asyncio.to_thread(staged.save, meta)
     log.info("upload.created", upload_id=upload_id, filename=body.filename)
     return _read(ctx, meta, token)
 
@@ -165,14 +170,13 @@ async def put_upload(
     ctx: ServiceContext, upload_id: str, token: str, chunks: AsyncIterator[bytes]
 ) -> UploadRead:
     """Receive an upload's bytes (once) and read its tags."""
-    staged = _Staged(ctx.layout.uploads_dir, upload_id)
-    meta = staged.load()
+    staged = _staged(ctx, upload_id)
+    meta = await asyncio.to_thread(staged.load)
     if not hmac.compare_digest(_digest(token), str(meta.get("token_sha256", ""))):
         raise NotFound("upload", upload_id)
     if meta["state"] != "pending":
         raise Conflict(f"upload {upload_id} was already received")
-    target = staged.file(meta)
-    partial = target.with_suffix(target.suffix + ".part")
+    partial = ctx.scratch.temp_file(f".{str(meta['file']).rpartition('.')[2]}")
     size = 0
     try:
         with partial.open("wb") as out:
@@ -184,13 +188,18 @@ async def put_upload(
     except BaseException:
         partial.unlink(missing_ok=True)
         raise
-    tags = await asyncio.to_thread(ctx.sources.read_audio_tags, partial)
-    if tags is None:
+    try:
+        tags = await asyncio.to_thread(ctx.sources.read_audio_tags, partial)
+        if tags is None:
+            raise Unsupported(f"{meta['filename']!r} is not an audio file Copycast can read")
+        ext = served_ext(str(meta["filename"]))
+        mime = mime_for_ext(ext) if ext is not None else None
+        key = staged.file(meta)
+        await asyncio.to_thread(staged.store.put_file, key, partial, content_type=mime)
+    finally:
         partial.unlink(missing_ok=True)
-        raise Unsupported(f"{meta['filename']!r} is not an audio file Copycast can read")
-    os.replace(partial, target)
     meta.update(state="received", size_bytes=size, tags=tags.model_dump(mode="json"))
-    staged.save(meta)
+    await asyncio.to_thread(staged.save, meta)
     log.info("upload.received", upload_id=upload_id, bytes=size)
     return _read(ctx, meta)
 
@@ -198,7 +207,7 @@ async def put_upload(
 @capability("get_upload", response=UploadRead)
 async def get_upload(ctx: ServiceContext, upload_id: str) -> UploadRead:
     """A staged upload and, once received, the tags read from it."""
-    return _read(ctx, _Staged(ctx.layout.uploads_dir, upload_id).load())
+    return _read(ctx, await asyncio.to_thread(_staged(ctx, upload_id).load))
 
 
 def _tags(meta: dict[str, Any]) -> AudioTags:
@@ -210,11 +219,13 @@ def _duration(meta: dict[str, Any]) -> int | None:
     return _tags(meta).duration_seconds
 
 
-def _received(root: Path, upload_ids: list[str]) -> list[tuple[_Staged, dict[str, Any], str]]:
+def _received(
+    ctx: ServiceContext, upload_ids: list[str]
+) -> list[tuple[_Staged, dict[str, Any], str]]:
     """Each named upload with its metadata and served extension; 409 until its PUT."""
     staged: list[tuple[_Staged, dict[str, Any], str]] = []
     for upload_id in upload_ids:
-        upload = _Staged(root, upload_id)
+        upload = _staged(ctx, upload_id)
         meta = upload.load()
         if meta["state"] != "received":
             raise Conflict(f"upload {upload_id} has no file yet; PUT it first")
@@ -231,7 +242,9 @@ def _description(progress: str, episode: SerialEpisode) -> str:
 @capability("create_serial_bucket", request=SerialBucketCreate, response=BucketRead)
 async def create_serial_bucket(ctx: ServiceContext, body: SerialBucketCreate) -> BucketRead:
     """A new Bucket holding the given uploads as Episodes, in exactly the given order."""
-    staged = _received(ctx.layout.uploads_dir, [episode.upload_id for episode in body.episodes])
+    staged = await asyncio.to_thread(
+        _received, ctx, [episode.upload_id for episode in body.episodes]
+    )
 
     now = _now()
     durations = [_duration(meta) for _, meta, _ in staged]
@@ -288,13 +301,12 @@ async def create_serial_bucket(ctx: ServiceContext, body: SerialBucketCreate) ->
                 engine_options={},
             )
         )
-        layout.ensure_feed_dirs(feed.id)
         upsert = await uow.catalog.upsert_listing(feed.id, listing, now=now)
         rows = {row.source_key: row for row in await uow.catalog.get_many(upsert.seen_item_ids)}
         for upload, meta, ext in staged:
             row = rows[f"upload:{upload.id}"]
-            target = layout.media_path(feed.id, row.id, ext)
-            await asyncio.to_thread(os.replace, upload.file(meta), target)
+            target = layout.media_key(feed.id, row.id, ext)
+            await asyncio.to_thread(layout.store.copy, upload.file(meta), target)
             await uow.catalog.mark_state(
                 row.id,
                 ArchiveState.archived,
@@ -307,8 +319,8 @@ async def create_serial_bucket(ctx: ServiceContext, body: SerialBucketCreate) ->
         await uow.feeds.recount_storage(feed.id)
         _, revision = await uow.update_intent(feed.id)
         await uow.publish(FeedEvent(feed_id=feed.id, revision=revision, reason="created"))
-        dirs = [upload.dir for upload, _, _ in staged]
-        uow.after_commit(lambda: _remove_all(dirs))
+        prefixes = [upload.prefix for upload, _, _ in staged]
+        uow.after_commit(lambda: _remove_all(layout.store, prefixes))
         read = await bucket_read_for(uow, ctx, feed)
     log.info("serial_bucket.created", feed_id=read.id, episodes=total)
     return read
@@ -317,13 +329,12 @@ async def create_serial_bucket(ctx: ServiceContext, body: SerialBucketCreate) ->
 @capability("add_uploads", request=UploadsAdd, response=BucketRead)
 async def add_uploads(ctx: ServiceContext, bucket: str, body: UploadsAdd) -> BucketRead:
     """Received uploads as archived Episodes of an existing Bucket, in natural file-name order."""
-    staged = _received(ctx.layout.uploads_dir, body.upload_ids)
+    staged = await asyncio.to_thread(_received, ctx, body.upload_ids)
     staged.sort(key=lambda entry: natural_key(str(entry[1]["filename"])))
     now = _now()
     layout = ctx.layout
     async with ctx.uow_factory() as uow:
         feed = await require_bucket(uow, bucket)
-        layout.ensure_feed_dirs(feed.id)
         total = len(staged)
         for index, (upload, meta, ext) in enumerate(staged):
             # A Bucket dates Episodes by arrival: one second apart, the last one now.
@@ -342,8 +353,8 @@ async def add_uploads(ctx: ServiceContext, bucket: str, body: UploadsAdd) -> Buc
             # partial: a Bucket has no listing to delist the rows it already holds against.
             upsert = await uow.catalog.upsert_listing(feed.id, listing, now=arrived, partial=True)
             [row] = await uow.catalog.get_many(upsert.seen_item_ids)
-            target = layout.media_path(feed.id, row.id, ext)
-            await asyncio.to_thread(os.replace, upload.file(meta), target)
+            target = layout.media_key(feed.id, row.id, ext)
+            await asyncio.to_thread(layout.store.copy, upload.file(meta), target)
             await uow.catalog.mark_state(
                 row.id,
                 ArchiveState.archived,
@@ -356,16 +367,16 @@ async def add_uploads(ctx: ServiceContext, bucket: str, body: UploadsAdd) -> Buc
         await uow.feeds.recount_storage(feed.id)
         _, revision = await uow.update_intent(feed.id)
         await uow.publish(FeedEvent(feed_id=feed.id, revision=revision, reason="uploads"))
-        dirs = [upload.dir for upload, _, _ in staged]
-        uow.after_commit(lambda: _remove_all(dirs))
+        prefixes = [upload.prefix for upload, _, _ in staged]
+        uow.after_commit(lambda: _remove_all(layout.store, prefixes))
         read = await bucket_read_for(uow, ctx, feed)
     log.info("bucket.uploads_added", feed_id=read.id, episodes=total)
     return read
 
 
-def _remove_all(dirs: list[Path]) -> None:
-    for path in dirs:
-        shutil.rmtree(path, ignore_errors=True)
+async def _remove_all(store: ObjectStorePort, prefixes: list[str]) -> None:
+    for prefix in prefixes:
+        await asyncio.to_thread(store.delete_prefix, prefix)
 
 
 __all__ = [

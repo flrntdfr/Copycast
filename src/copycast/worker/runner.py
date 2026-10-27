@@ -2,20 +2,23 @@
 
 One :class:`Runner` per process. Every second (or on ``NOTIFY copycast_jobs``)
 it claims runnable jobs while it has free slots and runs each in its own task:
-the job's blocking parts execute on a ``ThreadPoolExecutor`` sized like the
-pool of slots; a monitor task per job heartbeats, flushes progress (at most
-twice a second) and log lines, polls ``cancel_requested`` every two seconds and
-enforces the soft timeouts. Outcomes: transient errors back off
-(``60s * 2^attempt`` capped at 6 h, +-20 %), permanent ones fail, ``StorageFull``
-re-queues in ten minutes without counting the attempt and pauses archive
-claims, ``NotReady`` (a stream with no recording yet) re-queues in
-``LIVE_RETRY`` (or at the stream's start, never past the job's ceiling)
-without counting the attempt: the job that raises it has decided the wait
-goes on, and the archive job turns an expired wait into a permanent error
-itself, so the runner never measures the ceiling; a cancel finishes the job
-``cancelled``. SIGTERM stops claiming, sets every token, drains for up to
-``DRAIN_SECONDS`` and re-queues what is still running (``.part`` files stay
-in ``tmp/``).
+``concurrency`` general slots take any job, and ``ON_DEMAND_SLOTS`` more take
+only the archives a podcast app is holding the line for, so a Backfill never
+delays a first play. The job's blocking parts execute on a
+``ThreadPoolExecutor`` sized like the pool of slots; a monitor task per job
+heartbeats, flushes progress (at most twice a second) and log lines, polls
+``cancel_requested`` every two seconds and enforces the soft timeouts.
+Outcomes: transient errors back off (``60s * 2^attempt`` capped at 6 h,
++-20 %), permanent ones fail, ``StorageFull`` re-queues in ten minutes
+without counting the attempt and pauses archive claims, ``NotReady`` (a
+stream with no recording yet) re-queues in ``LIVE_RETRY`` (or at the
+stream's start, never past the job's ceiling) without counting the attempt:
+the job that raises it has decided the wait goes on, and the archive job
+turns an expired wait into a permanent error itself, so the runner never
+measures the ceiling; a cancel finishes the job ``cancelled``. SIGTERM stops
+claiming, sets every token, drains for up to ``DRAIN_SECONDS`` and re-queues
+what is still running (its Scratch directory goes with it; the retry
+downloads again).
 """
 
 from __future__ import annotations
@@ -78,6 +81,8 @@ log = get_logger(__name__)
 SHUTDOWN_ERROR = "worker shutdown"
 QUARANTINE_ERROR = "feed quarantined after an unresponsive job"
 STORAGE_FULL_ERROR = "storage full; archive claims paused"
+ON_DEMAND_SLOTS = 1
+"""Worker slots kept for archives a podcast app is waiting for, on top of ``concurrency``."""
 
 
 def backoff_seconds(attempt: int, *, rng: random.Random | None = None) -> float:
@@ -118,6 +123,8 @@ class RunningJob:
     timed_out_at: float | None = None
     stuck: bool = False
     user_cancelled: bool = False
+    reserved: bool = False
+    """Runs on the on-demand slot (a podcast app holds the line for it)."""
 
 
 @dataclass(slots=True)
@@ -158,8 +165,9 @@ class Runner:
         self._unresponsive_grace = unresponsive_grace
         self._drain_seconds = drain_seconds
         self._clock = clock
+        self.on_demand_slots = ON_DEMAND_SLOTS
         self._executor = ThreadPoolExecutor(
-            max_workers=self.concurrency, thread_name_prefix="copycast-job"
+            max_workers=self.concurrency + self.on_demand_slots, thread_name_prefix="copycast-job"
         )
         self._running: dict[uuid.UUID, RunningJob] = {}
         self._stuck = 0
@@ -174,7 +182,15 @@ class Runner:
 
     @property
     def free_slots(self) -> int:
-        return max(0, self.concurrency - len(self._running) - self._stuck)
+        """General slots free: any job may take one, on-demand archives first by priority."""
+        general = sum(1 for r in self._running.values() if not r.reserved)
+        return max(0, self.concurrency - general - self._stuck)
+
+    @property
+    def free_on_demand_slots(self) -> int:
+        """Reserved slots free: only an archive a podcast app is waiting for may take one."""
+        reserved = sum(1 for r in self._running.values() if r.reserved)
+        return max(0, self.on_demand_slots - reserved)
 
     @property
     def running_jobs(self) -> list[Job]:
@@ -233,15 +249,22 @@ class Runner:
     # ------------------------------------------------------------------ claiming
 
     async def claim_available(self) -> list[Job]:
+        """Fill the general slots, then the on-demand slot with what a podcast app waits for.
+
+        A Backfill that takes every general slot therefore never delays a first play.
+        """
         claimed: list[Job] = []
-        while self.free_slots > 0 and not self.stop_event.is_set():
-            job = await self._claim_one()
-            if job is None:
-                break
-            if await self._defer_if_needed(job):
-                continue
-            claimed.append(job)
-            self._start(job, log_start=await self._last_log_seq(job))
+        for reserved in (False, True):
+            while not self.stop_event.is_set() and (
+                self.free_on_demand_slots if reserved else self.free_slots
+            ):
+                job = await self._claim_one(on_demand_only=reserved)
+                if job is None:
+                    break
+                if await self._defer_if_needed(job):
+                    continue
+                claimed.append(job)
+                self._start(job, log_start=await self._last_log_seq(job), reserved=reserved)
         return claimed
 
     async def _last_log_seq(self, job: Job) -> int:
@@ -256,9 +279,9 @@ class Runner:
             )
             return int(result.scalar_one())
 
-    async def _claim_one(self) -> Job | None:
+    async def _claim_one(self, *, on_demand_only: bool = False) -> Job | None:
         async with self._uow() as uow:
-            job = await uow.jobs.claim(self.worker_id)
+            job = await uow.jobs.claim(self.worker_id, on_demand_only=on_demand_only)
         if job is not None:
             self.stats.claimed += 1
         return job
@@ -278,13 +301,14 @@ class Runner:
             return True
         return False
 
-    def _start(self, job: Job, *, log_start: int = 0) -> None:
+    def _start(self, job: Job, *, log_start: int = 0, reserved: bool = False) -> None:
         running = RunningJob(
             job=job,
             cancel=CancelToken(),
             log=JobLog(job.id, start=log_start),
             progress=ProgressTracker(item_id=job.item_id),
             started=self._clock(),
+            reserved=reserved,
         )
         self._running[job.id] = running
         running.task = asyncio.create_task(self._execute(running), name=f"job-{job.id}")

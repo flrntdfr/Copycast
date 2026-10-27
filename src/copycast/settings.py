@@ -103,6 +103,75 @@ class AuthSettings(BaseModel):
         return self.password is not None
 
 
+DEFAULT_STORAGE_URL = "s3://copycast"
+DEFAULT_SCRATCH_DIR = Path("./scratch")
+
+
+class StorageSettings(BaseModel):
+    """The Object store (every byte Copycast keeps) and the local Scratch the worker transcodes in.
+
+    ``url`` is ``s3://<bucket>[/<prefix>]``; ``memory://<name>`` keeps the
+    objects in the process (tests, ``copycast openapi``) and is never durable.
+    Credentials come from here or from the usual ``AWS_*`` environment.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    url: str = DEFAULT_STORAGE_URL
+    endpoint: str = ""
+    region: str = "us-east-1"
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    virtual_hosted_style: bool = False
+    scratch_dir: Path = DEFAULT_SCRATCH_DIR
+    min_free_scratch_mb: int = Field(default=512, ge=0)
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        parts = urlsplit(value)
+        if parts.scheme not in {"s3", "memory"} or not (parts.netloc or parts.path.strip("/")):
+            raise ValueError(f"storage.url must be s3://<bucket> or memory://<name>, got {value!r}")
+        return value
+
+    @field_validator("endpoint")
+    @classmethod
+    def _endpoint(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if value and urlsplit(value).scheme not in {"http", "https"}:
+            raise ValueError(f"storage.endpoint must be an http(s) URL, got {value!r}")
+        return value
+
+    @field_validator("scratch_dir", mode="after")
+    @classmethod
+    def _absolute_scratch(cls, value: Path) -> Path:
+        return value.expanduser().resolve()
+
+    @property
+    def durable(self) -> bool:
+        return self.url.startswith("s3://")
+
+
+class CacheSettings(BaseModel):
+    """The shared Feed cache (Valkey or Redis); unset, each api process caches alone."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    url: str | None = None
+    ttl_seconds: int = Field(default=86_400, ge=60)
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        value = value.strip()
+        if urlsplit(value).scheme not in {"redis", "rediss", "valkey", "valkeys"}:
+            raise ValueError(f"cache.url must be a redis:// or valkey:// URL, got {value!r}")
+        return value
+
+
 def config_path() -> Path:
     return Path(os.environ.get(CONFIG_ENV) or DEFAULT_CONFIG_PATH)
 
@@ -118,11 +187,12 @@ class Settings(BaseSettings):
     )
 
     base_url: str = "http://localhost:8080"
-    data_dir: Path = Path("./data")
     database_url: str = "postgresql+psycopg://copycast:copycast@localhost:5432/copycast"
     refresh: RefreshSettings = Field(default_factory=RefreshSettings)
     engine: EngineSettings = Field(default_factory=EngineSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    storage: StorageSettings = Field(default_factory=StorageSettings)
+    cache: CacheSettings = Field(default_factory=CacheSettings)
 
     # Environment-only knobs (flat COPYCAST_<NAME>, never read from the TOML file).
     bind: str = Field(default="0.0.0.0", validation_alias="COPYCAST_BIND")
@@ -177,11 +247,6 @@ class Settings(BaseSettings):
             )
         return value
 
-    @field_validator("data_dir", mode="after")
-    @classmethod
-    def _absolute_data_dir(cls, value: Path) -> Path:
-        return value.expanduser().resolve()
-
     @field_validator("log_level")
     @classmethod
     def _upper_level(cls, value: str) -> str:
@@ -198,15 +263,15 @@ class Settings(BaseSettings):
             raise ValueError("COPYCAST_PORT and COPYCAST_WORKER_PORT must differ")
         return self
 
-    def check_data_dir(self) -> Path:
-        """Create the data directory when absent and prove it is writable.
+    def check_scratch_dir(self) -> Path:
+        """Create the Scratch directory when absent and prove it is writable.
 
         Raises SettingsError with a chown hint, the one actionable line the
         startup paths print before exiting 2.
         """
-        path = self.data_dir
-        # The api and the worker start together on a shared directory: a per-process
-        # probe name keeps one process from unlinking the other's probe mid-check.
+        path = self.storage.scratch_dir
+        # The api and the worker may share the directory: a per-process probe name keeps
+        # one process from unlinking the other's probe mid-check.
         probe = path / f".write-test.{os.getpid()}.{uuid.uuid4().hex[:8]}"
         try:
             path.mkdir(parents=True, exist_ok=True)
@@ -215,7 +280,7 @@ class Settings(BaseSettings):
         except OSError as exc:
             uid = os.getuid() if hasattr(os, "getuid") else "copycast"
             raise SettingsError(
-                f"data directory {path} is not writable ({exc.strerror or exc}); "
+                f"scratch directory {path} is not writable ({exc.strerror or exc}); "
                 f"run: chown -R {uid}:{uid} {path}"
             ) from exc
         return path
@@ -226,6 +291,10 @@ class Settings(BaseSettings):
         data["database_url"] = redact_url(self.database_url)
         if self.auth.password is not None:
             data["auth"]["password"] = "***"
+        if self.storage.secret_access_key is not None:
+            data["storage"]["secret_access_key"] = "***"
+        if self.cache.url is not None:
+            data["cache"]["url"] = redact_url(self.cache.url)
         return data
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 
 import httpx
 import pytest
@@ -24,7 +23,7 @@ from tests.support.paths import (
 pytestmark = pytest.mark.integration
 
 
-async def test_live_and_ready(client: httpx.AsyncClient) -> None:
+async def test_live_and_ready(client: httpx.AsyncClient, container: Container) -> None:
     live = await client.get(HEALTH_LIVE)
     assert live.status_code == 200 and live.json() == {"status": "ok"}
     assert live.headers["cache-control"] == "no-store"
@@ -34,18 +33,18 @@ async def test_live_and_ready(client: httpx.AsyncClient) -> None:
     report = ready.json()
     assert report["status"] == "ok"
     checks = report["checks"]
-    assert set(checks) == {"db", "schema", "data_dir", "layout", "worker_seen_at"}
-    assert all(checks[name]["ok"] for name in ("db", "schema", "data_dir", "layout"))
+    assert set(checks) == {"db", "schema", "storage", "layout", "worker_seen_at"}
+    assert all(checks[name]["ok"] for name in ("db", "schema", "storage", "layout"))
+    assert checks["storage"]["detail"] == container.settings.storage.url
     # No worker ran in this test: reported, not degrading.
     assert checks["worker_seen_at"] == {"ok": False, "detail": "never"}
-    assert checks["layout"]["detail"] == "1"
+    assert checks["layout"]["detail"] == "2"
 
 
 async def test_ready_degrades_on_layout_mismatch(
     client: httpx.AsyncClient, container: Container
 ) -> None:
-    layout_file: Path = container.settings.data_dir / "LAYOUT_VERSION"
-    layout_file.write_text("999\n", encoding="utf-8")  # noqa: ASYNC240 - test setup
+    container.layout.store.put_bytes("LAYOUT_VERSION", "999\n")
     ready = await client.get(HEALTH_READY)
     assert ready.status_code == 503
     report = ready.json()
@@ -90,7 +89,7 @@ async def test_json_responses_are_no_store(client: httpx.AsyncClient) -> None:
     body = about.json()
     assert body["version"] == APP_VERSION
     assert body["engine"]["name"] == "fake-engine"
-    assert body["layout_version"] == "1"
+    assert body["layout_version"] == "2"
     assert body["totals"]["feeds"] == 1  # the default Bucket
 
 

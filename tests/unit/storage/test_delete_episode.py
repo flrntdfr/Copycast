@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import inspect
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -72,19 +72,25 @@ class FakeAssets:
 
 
 @dataclass
+class FakeStore:
+    objects: set[str] = field(default_factory=set[str])
+    deletes: int = 0
+
+    def delete(self, keys: str | Iterable[str]) -> None:
+        self.deletes += 1
+        for key in [keys] if isinstance(keys, str) else list(keys):
+            self.objects.discard(key)
+
+
+@dataclass
 class FakeLayout:
-    root: Path
-    tmp_removed: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+    store: FakeStore = field(default_factory=FakeStore)
 
-    def resolve(self, feed_id: str, relative: str) -> Path:
-        return self.root / feed_id / relative
+    def resolve(self, feed_id: str, relative: str) -> str:
+        return f"feeds/{feed_id}/{relative}"
 
-    def info_json_path(self, feed_id: str, item_id: str) -> Path:
-        return self.root / feed_id / "media" / f"{item_id}.info.json"
-
-    def remove_tmp_leftovers(self, feed_id: str, item_id: str) -> int:
-        self.tmp_removed.append((feed_id, item_id))
-        return 0
+    def info_json_key(self, feed_id: str, item_id: str) -> str:
+        return f"feeds/{feed_id}/media/{item_id}.info.json"
 
 
 @dataclass
@@ -103,22 +109,20 @@ class FakeUow:
     def after_commit(self, hook: Callable[[], Any]) -> None:
         self.hooks.append(hook)
 
-    def commit(self) -> None:
+    async def commit(self) -> None:
         for hook in self.hooks:
-            hook()
+            outcome = hook()
+            if inspect.isawaitable(outcome):
+                await outcome
 
 
-def _uow(tmp_path: Path, kind: FeedKind, archived: bool = True) -> tuple[FakeUow, dict[str, Path]]:
-    feed_dir = tmp_path / "f1"
+def _uow(kind: FeedKind, archived: bool = True) -> tuple[FakeUow, dict[str, str]]:
     files = {
-        "media": feed_dir / "media" / "i1.m4a",
-        "info": feed_dir / "media" / "i1.info.json",
-        "xml": feed_dir / "media" / "i1.item.xml",
-        "art": feed_dir / "assets" / "i1.artwork.jpg",
+        "media": "feeds/f1/media/i1.m4a",
+        "info": "feeds/f1/media/i1.info.json",
+        "xml": "feeds/f1/media/i1.item.xml",
+        "art": "feeds/f1/assets/i1.artwork.jpg",
     }
-    for path in files.values():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"x")
     item = Item(
         "i1",
         "f1",
@@ -132,13 +136,13 @@ def _uow(tmp_path: Path, kind: FeedKind, archived: bool = True) -> tuple[FakeUow
         assets=FakeAssets(
             {"i1": [AssetRow("a1", "assets/i1.artwork.jpg", 10), AssetRow("a2", None, None)]}
         ),
-        layout=FakeLayout(tmp_path),
+        layout=FakeLayout(FakeStore(set(files.values()))),
     )
     return uow, files
 
 
-async def test_mirror_deletion_tombstones_listed_and_unlinks_after_commit(tmp_path: Path) -> None:
-    uow, files = _uow(tmp_path, FeedKind.mirror)
+async def test_mirror_deletion_tombstones_listed_and_deletes_after_commit() -> None:
+    uow, files = _uow(FeedKind.mirror)
     result = await delete_episode(uow, "i1")
     assert isinstance(result, DeletedEpisode)
     assert result.reason is DeleteReason.user
@@ -148,32 +152,32 @@ async def test_mirror_deletion_tombstones_listed_and_unlinks_after_commit(tmp_pa
     assert set(result.files) == {files["media"], files["info"], files["art"]}
     assert uow.catalog.tombstoned == [("i1", True)]
     assert uow.feeds.recounted == ["f1"] and uow.intents == ["f1"]
-    assert all(path.exists() for path in files.values())  # nothing touched before commit
-    uow.commit()
-    assert not files["media"].exists() and not files["info"].exists() and not files["art"].exists()
-    assert files["xml"].exists()
-    assert uow.layout.tmp_removed == [("f1", "i1")]
-    uow.commit()  # unlinking again is harmless
+    stored = uow.layout.store.objects
+    assert stored == set(files.values())  # nothing touched before commit
+    await uow.commit()
+    assert stored == {files["xml"]}
+    assert uow.layout.store.deletes == 1
+    await uow.commit()  # deleting again is harmless
 
 
-async def test_bucket_deletion_hides_the_row(tmp_path: Path) -> None:
-    uow, _ = _uow(tmp_path, FeedKind.bucket)
+async def test_bucket_deletion_hides_the_row() -> None:
+    uow, _ = _uow(FeedKind.bucket)
     result = await delete_episode(uow, "i1", DeleteReason.prune)
     assert result.reason is DeleteReason.prune
     assert uow.catalog.tombstoned == [("i1", False)]
 
 
-async def test_never_archived_item_is_still_tombstoned(tmp_path: Path) -> None:
-    uow, files = _uow(tmp_path, FeedKind.mirror, archived=False)
+async def test_never_archived_item_is_still_tombstoned() -> None:
+    uow, files = _uow(FeedKind.mirror, archived=False)
     result = await delete_episode(uow, "i1")
     assert result.was_archived is False and result.bytes_freed == 10
     assert files["media"] not in result.files
-    uow.commit()
-    assert files["media"].exists()  # not ours to remove: the row never pointed at it
+    await uow.commit()
+    assert files["media"] in uow.layout.store.objects  # the row never pointed at it
 
 
-async def test_not_found(tmp_path: Path) -> None:
-    uow, _ = _uow(tmp_path, FeedKind.mirror)
+async def test_not_found() -> None:
+    uow, _ = _uow(FeedKind.mirror)
     with pytest.raises(NotFound, match="item"):
         await delete_episode(uow, "missing")
     uow.feeds.feeds.clear()

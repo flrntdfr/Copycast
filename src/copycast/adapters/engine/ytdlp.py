@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import Callable, Generator, Mapping
+from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Final, cast
@@ -43,6 +44,8 @@ from copycast.adapters.sources.listing import live_status_of, normalize
 from copycast.adapters.sources.youtube_feed import SourceError, enrich_from_youtube_feed
 from copycast.adapters.storage.atomic import write_atomic
 from copycast.adapters.storage.layout import Layout
+from copycast.adapters.storage.objects import open_store
+from copycast.adapters.storage.scratch import Scratch
 from copycast.application.ports import (
     Cancelled,
     CancelToken,
@@ -157,18 +160,35 @@ def engine_info() -> EngineVersion:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class StoredCookies:
+    """The cookie file in the Object store (``engine/cookies.txt``) and the Scratch its
+    private copies go to."""
+
+    layout: Layout
+    scratch: Scratch
+
+    @property
+    def key(self) -> str:
+        return self.layout.cookies_key()
+
+
 class YtDlpEngine:
     """Implements :class:`copycast.application.ports.Engine` over ``yt_dlp.YoutubeDL``.
 
-    A cookie file stored under the data directory (``Layout.cookies_path``)
-    rides along with every call as ``cookiefile`` unless the options name
-    one; yt-dlp's refreshed cookies are written back atomically afterwards.
+    A cookie file stored in the Object store (``Layout.cookies_key``) rides along
+    with every call as ``cookiefile`` (a private Scratch copy) unless the
+    options name one; yt-dlp's refreshed cookies are written back afterwards.
     """
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings
-        self._cookies_path: Path | None = (
-            Layout(settings.data_dir).cookies_path() if settings is not None else None
+        self._cookies: StoredCookies | None = (
+            StoredCookies(
+                Layout(open_store(settings.storage)), Scratch(settings.storage.scratch_dir)
+            )
+            if settings is not None
+            else None
         )
 
     def version(self) -> EngineVersion:
@@ -186,7 +206,7 @@ class YtDlpEngine:
         _check_cancel(cancel, f"listing of {url}")
         errors = _LastErrorLog(log)
         try:
-            with cookie_scope(self._cookies_path, options) as with_cookies:
+            with cookie_scope(self._cookies, options) as with_cookies:
                 params = listing_params(with_cookies, log=errors, limit=limit)
                 with yt_dlp.YoutubeDL(params) as ydl:
                     info = ydl.extract_info(url, download=False)
@@ -227,7 +247,7 @@ class YtDlpEngine:
         state = _HookState()
         pp_hook = _postprocessor_hook(cancel, on_progress, state)
         try:
-            with cookie_scope(self._cookies_path, options) as with_cookies:
+            with cookie_scope(self._cookies, options) as with_cookies:
                 params = fetch_params_for(
                     spec,
                     with_cookies,
@@ -340,28 +360,31 @@ def _starts_in(info: Mapping[str, Any]) -> timedelta | None:
 
 @contextlib.contextmanager
 def cookie_scope(
-    cookies_path: Path | None, options: Mapping[str, Any]
+    cookies: StoredCookies | None, options: Mapping[str, Any]
 ) -> Generator[dict[str, Any]]:
-    """Options with ``cookiefile`` pointing at a private copy of the stored cookie file.
+    """Options with ``cookiefile`` pointing at a private Scratch copy of the stored cookie file.
 
     yt-dlp rewrites the file it is given (sites rotate cookies), and two jobs
-    may run at once, so each call works on its own copy and the shared file
-    is replaced atomically only when the call changed it.
+    may run at once, so each call works on its own copy and the stored object
+    is replaced only when the call changed it (and it was not removed meanwhile).
     """
-    if cookies_path is None or "cookiefile" in options or not cookies_path.is_file():
+    if cookies is None or "cookiefile" in options:
         yield dict(options)
         return
-    original = cookies_path.read_bytes()
-    scratch = cookies_path.with_name(f"{cookies_path.stem}.{os.getpid()}.{id(options):x}.txt")
-    scratch.write_bytes(original)
+    original = cookies.layout.store.get_bytes(cookies.key)
+    if original is None:
+        yield dict(options)
+        return
+    scratch = cookies.scratch.temp_file(".cookies.txt")
+    write_atomic(scratch, original, mode=0o600)
     try:
         yield with_cookiefile(options, scratch)
         try:
             updated = scratch.read_bytes()
         except OSError:
             return
-        if updated and updated != original and cookies_path.is_file():
-            write_atomic(cookies_path, updated)
+        if updated and updated != original and cookies.layout.store.exists(cookies.key):
+            cookies.layout.store.put_bytes(cookies.key, updated, content_type="text/plain")
     finally:
         scratch.unlink(missing_ok=True)
 

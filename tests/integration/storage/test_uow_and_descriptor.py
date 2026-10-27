@@ -101,14 +101,15 @@ async def test_update_intent_exports_once_per_transaction(
         assert versions == (4, 4)
         assert spy.calls == []
     assert spy.calls == [feed.id]
-    path = layout.descriptor_path(feed.id)
-    assert path.is_file()
-    assert read_intent_version(path) == 4
-    descriptor = FeedDescriptor.read(path)
+    store = layout.store
+    path = layout.descriptor_key(feed.id)
+    assert store.exists(path)
+    assert read_intent_version(store, path) == 4
+    descriptor = FeedDescriptor.read(store, path)
     assert descriptor.format == DESCRIPTOR_FORMAT
     assert descriptor.feed.id == feed.id and len(descriptor.items) == 2
     assert descriptor.policy.follow is True
-    raw = json.loads(path.read_text())
+    raw = json.loads(store.get_text(path) or "")
     assert "download_count" not in json.dumps(raw)  # no telemetry in the descriptor
 
 
@@ -118,28 +119,29 @@ async def test_export_skips_when_disk_carries_newer_intent(
     async with spied_factory() as uow:
         feed = await uow.feeds.add(mirror_row())
         await uow.update_intent(feed.id)
-    path = layout.descriptor_path(feed.id)
-    newer = json.loads(path.read_text())
+    store = layout.store
+    path = layout.descriptor_key(feed.id)
+    newer = json.loads(store.get_text(path) or "")
     newer["intent_version"] = 999
     newer["feed"]["title"] = "from a newer process"
-    path.write_text(json.dumps(newer))
+    store.put_bytes(path, json.dumps(newer))
     async with spied_factory() as uow:
         await uow.update_intent(feed.id)
-    assert json.loads(path.read_text())["feed"]["title"] == "from a newer process"
+    assert json.loads(store.get_text(path) or "")["feed"]["title"] == "from a newer process"
     async with sessionmaker() as session:
         assert await export_descriptor(session, layout, feed.id) is None
         written = await export_descriptor(session, layout, feed.id, force=True)
         assert written == path
         assert await export_descriptor(session, layout, "nope") is None
         assert await build_descriptor(session, "nope") is None
-    assert json.loads(path.read_text())["feed"]["title"] == "Test Podcast"
+    assert json.loads(store.get_text(path) or "")["feed"]["title"] == "Test Podcast"
 
 
-async def _wait_for_file(path: Path) -> None:
-    """Poll (up to 5 s) until ``path`` exists: the debounced export runs a DB read and
-    an atomic write after its delay, which takes longer than the delay under coverage."""
+async def _wait_for_object(layout: Layout, key: str) -> None:
+    """Poll (up to 5 s) until ``key`` exists: the debounced export runs a DB read and
+    a PUT after its delay, which takes longer than the delay under coverage."""
     for _ in range(250):
-        if await asyncio.to_thread(path.is_file):
+        if await asyncio.to_thread(layout.store.exists, key):
             return
         await asyncio.sleep(0.02)
 
@@ -150,27 +152,28 @@ async def test_debounced_export_coalesces_and_flushes(
     async with spied_factory() as uow:
         feed = await uow.feeds.add(mirror_row())
         await uow.update_intent(feed.id, debounce=True)
-    path = layout.descriptor_path(feed.id)
-    assert not path.exists()
+    store = layout.store
+    path = layout.descriptor_key(feed.id)
+    assert not store.exists(path)
     assert spied_factory.debounced_exporter.pending == {feed.id}
-    await _wait_for_file(path)  # the debounce fires on its own, without flush()
-    assert path.is_file()
+    await _wait_for_object(layout, path)  # the debounce fires on its own, without flush()
+    assert store.exists(path)
     assert spied_factory.debounced_exporter.pending == set()
 
-    path.unlink()
+    store.delete(path)
     async with spied_factory() as uow:
         await uow.bump_revision(feed.id)
         uow.export_after_commit(feed.id, debounce=True)
         uow.export_after_commit(feed.id, debounce=True)
-    assert not path.exists()
+    assert not store.exists(path)
     await spied_factory.flush_exports()
-    assert path.is_file()
+    assert store.exists(path)
 
-    path.unlink()
+    store.delete(path)
     async with spied_factory() as uow:
         uow.export_after_commit(feed.id, debounce=True)
         uow.export_after_commit(feed.id)  # immediate wins over debounced
-    assert path.is_file()
+    assert store.exists(path)
     await spied_factory.aclose()
 
 

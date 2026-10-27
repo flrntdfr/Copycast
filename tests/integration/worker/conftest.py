@@ -179,11 +179,30 @@ async def wait_status(container: Container, job_id: Any, *statuses: JobStatus) -
         return job
 
 
+def scratch_jobs(container: Container) -> list[Path]:
+    """The job directories in Scratch right now (each archive works in one of its own)."""
+    jobs = container.settings.storage.scratch_dir / "jobs"
+    return sorted(p for p in jobs.iterdir() if p.is_dir()) if jobs.is_dir() else []
+
+
+def scratch_parts(container: Container) -> list[Path]:
+    """yt-dlp partials in any job's Scratch ``tmp/``."""
+    return sorted(p for job in scratch_jobs(container) for p in (job / "tmp").glob("*.part"))
+
+
+def media_keys(container: Container, feed_id: str) -> list[str]:
+    """The media objects of ``feed_id`` in the Object store."""
+    return [o.key for o in container.layout.media_objects(feed_id)]
+
+
 __all__ = [
     "EPOCH",
     "Source",
     "create_mirror",
     "jobs_of",
+    "media_keys",
+    "scratch_jobs",
+    "scratch_parts",
     "uow",
     "wait_status",
 ]

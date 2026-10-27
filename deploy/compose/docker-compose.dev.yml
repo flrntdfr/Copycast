@@ -1,6 +1,6 @@
-# Development Postgres only, for `make db-up` / `make db-down`.
-# Matches the default database_url in config/copycast.toml:
-#   postgresql+psycopg://copycast:copycast@localhost:5432/copycast
+# Development backing services for `make db-up` / `make db-down`: Postgres, SeaweedFS (the
+# Object store, S3 on localhost:8333, bucket "copycast", keys copycast/copycast) and Valkey (the
+# Feed cache, localhost:6379). Matches config/copycast.toml.
 services:
   postgres:
     image: postgres:17.11@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
@@ -18,5 +18,34 @@ services:
       timeout: 3s
       retries: 20
 
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    entrypoint: ["/bin/sh", "/copycast/entrypoint.sh"]
+    environment:
+      COPYCAST_S3_ACCESS_KEY: copycast
+      COPYCAST_S3_SECRET_KEY: copycast
+    ports:
+      - "${COPYCAST_DEV_S3_PORT:-8333}:8333"
+    volumes:
+      - ./seaweedfs/entrypoint.sh:/copycast/entrypoint.sh:ro
+      - seaweedfs-dev:/data
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+
+  valkey:
+    image: valkey/valkey:9.0.7-alpine@sha256:2d04268dfa26ab31cfa3fdc538866e76438b2d00e41db41b8cb86d780ac5a416
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${COPYCAST_DEV_VALKEY_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
 volumes:
   pgdata-dev:
+  seaweedfs-dev:

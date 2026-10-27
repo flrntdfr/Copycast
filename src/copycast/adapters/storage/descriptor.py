@@ -12,7 +12,6 @@ import json
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
-from pathlib import Path
 from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -26,8 +25,8 @@ from copycast.adapters.db.repositories import (
     FeedRepository,
     RequestRepository,
 )
-from copycast.adapters.storage.atomic import write_atomic
 from copycast.adapters.storage.layout import LAYOUT_VERSION, Layout
+from copycast.adapters.storage.objects import ObjectStore
 from copycast.domain.enums import (
     ArchiveState,
     AssetFormat,
@@ -203,16 +202,24 @@ class FeedDescriptor(_Strict):
     def to_json(self) -> str:
         return self.model_dump_json(indent=2) + "\n"
 
-    def write(self, path: Path) -> Path:
-        return write_atomic(path, self.to_json())
+    def write(self, store: ObjectStore, key: str) -> str:
+        store.put_bytes(key, self.to_json(), content_type="application/json")
+        return key
 
     @classmethod
-    def read(cls, path: Path) -> FeedDescriptor:
+    def read(cls, store: ObjectStore, key: str) -> FeedDescriptor:
         """Parse a descriptor; raises :class:`DescriptorError` for anything unreadable."""
+        path = key
         try:
-            raw = path.read_text(encoding="utf-8")
+            body = store.get_bytes(key)
         except OSError as exc:
-            raise DescriptorError(f"{path}: {exc.strerror or exc}") from exc
+            raise DescriptorError(f"{key}: {exc}") from exc
+        if body is None:
+            raise DescriptorError(f"{key}: no such object")
+        try:
+            raw = body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise DescriptorError(f"{key}: not UTF-8") from exc
         try:
             data: object = json.loads(raw)
         except ValueError as exc:
@@ -232,10 +239,11 @@ class DescriptorError(ValueError):
     """A ``feed.json`` could not be read or does not validate."""
 
 
-def read_intent_version(path: Path) -> int | None:
+def read_intent_version(store: ObjectStore, key: str) -> int | None:
     """Only the ``intent_version`` of an existing descriptor, or ``None`` when unreadable."""
     try:
-        data: object = json.loads(path.read_text(encoding="utf-8"))
+        body = store.get_bytes(key)
+        data: object = json.loads(body) if body is not None else None
     except (OSError, ValueError):
         return None
     if not isinstance(data, dict):
@@ -259,18 +267,18 @@ async def build_descriptor(session: AsyncSession, feed_id: str) -> FeedDescripto
 
 async def export_descriptor(
     session: AsyncSession, layout: Layout, feed_id: str, *, force: bool = False
-) -> Path | None:
-    """Write ``feed.json`` for ``feed_id`` unless the file already carries a newer intent.
+) -> str | None:
+    """Write ``feed.json`` for ``feed_id`` unless the object already carries a newer intent.
 
-    Returns the path written, or ``None`` when skipped (feed deleted, or the
-    on-disk ``intent_version`` is newer than the database's).
+    Returns the key written, or ``None`` when skipped (feed deleted, or the
+    stored ``intent_version`` is newer than the database's).
     """
     descriptor = await build_descriptor(session, feed_id)
     if descriptor is None:
         return None
-    path = layout.descriptor_path(feed_id)
+    key = layout.descriptor_key(feed_id)
     if not force:
-        on_disk = read_intent_version(path)
+        on_disk = await asyncio.to_thread(read_intent_version, layout.store, key)
         if on_disk is not None and on_disk > descriptor.intent_version:
             log.info(
                 "descriptor.skip_newer",
@@ -279,8 +287,7 @@ async def export_descriptor(
                 database=descriptor.intent_version,
             )
             return None
-    layout.ensure_feed_dirs(feed_id)
-    return await asyncio.to_thread(descriptor.write, path)
+    return await asyncio.to_thread(descriptor.write, layout.store, key)
 
 
 class DescriptorExporter:
@@ -290,7 +297,7 @@ class DescriptorExporter:
         self._sessionmaker = sessionmaker
         self._layout = layout
 
-    async def export(self, feed_id: str) -> Path | None:
+    async def export(self, feed_id: str) -> str | None:
         async with self._sessionmaker() as session:
             return await export_descriptor(session, self._layout, feed_id)
 
@@ -316,7 +323,7 @@ class DebouncedExporter(DescriptorExporter):
         self._pending: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
 
-    async def export(self, feed_id: str) -> Path | None:
+    async def export(self, feed_id: str) -> str | None:
         async with self._lock:
             if feed_id not in self._pending:
                 self._pending[feed_id] = asyncio.create_task(self._later(feed_id))

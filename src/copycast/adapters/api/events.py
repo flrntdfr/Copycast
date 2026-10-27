@@ -105,6 +105,16 @@ class Subscription:
             if self.closed and self._queue.empty():
                 return
 
+    async def next(self, within: float) -> Envelope | None:
+        """The next envelope within ``within`` seconds; ``None`` on timeout or once closed."""
+        if self.closed and self._queue.empty():
+            return None
+        try:
+            async with asyncio.timeout(within):
+                return await self._queue.get()
+        except TimeoutError:
+            return None
+
     def __enter__(self) -> Subscription:
         return self
 

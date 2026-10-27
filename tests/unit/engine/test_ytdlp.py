@@ -26,6 +26,7 @@ from copycast.adapters.engine.ytdlp import (
     live_match_filter,
     release_date,
 )
+from copycast.adapters.storage.layout import Layout
 from copycast.application.ports import (
     Cancelled,
     CancelToken,
@@ -493,41 +494,55 @@ def test_fix_thumbnail_extensions_renames_by_bytes_and_keeps_files_to_move(tmp_p
     assert fix_thumbnail_extensions(info, said.append) == 0
 
 
-def test_cookie_scope_copies_the_file_and_writes_changes_back(tmp_path: Path) -> None:
-    from copycast.adapters.engine.ytdlp import cookie_scope
+def test_cookie_scope_copies_the_object_and_writes_changes_back(
+    tmp_path: Path, layout: Layout
+) -> None:
+    from copycast.adapters.engine.ytdlp import StoredCookies, cookie_scope
+    from copycast.adapters.storage.scratch import Scratch
 
-    stored = tmp_path / "engine" / "cookies.txt"
-    stored.parent.mkdir()
-    stored.write_text("# v1\n", encoding="utf-8")
+    store = layout.store
+    store.put_bytes(layout.cookies_key(), "# v1\n")
+    stored = StoredCookies(layout, Scratch(tmp_path / "scratch"))
 
     with cookie_scope(stored, {"ratelimit": 1}) as options:
         scratch = Path(options["cookiefile"])
-        assert scratch != stored and scratch.parent == stored.parent
+        assert scratch.is_relative_to(tmp_path / "scratch")
         assert scratch.read_text(encoding="utf-8") == "# v1\n"
+        assert scratch.stat().st_mode & 0o777 == 0o600
         assert options["ratelimit"] == 1
         scratch.write_text("# v2 rotated by yt-dlp\n", encoding="utf-8")
     assert not scratch.exists()
-    assert stored.read_text(encoding="utf-8") == "# v2 rotated by yt-dlp\n"
-    assert sorted(p.name for p in stored.parent.iterdir()) == ["cookies.txt"]
+    assert store.get_text(layout.cookies_key()) == "# v2 rotated by yt-dlp\n"
 
-    # Unchanged: the stored file is left alone (no rewrite, no leftovers).
+    # Unchanged: the stored object is left alone (no rewrite, no leftovers).
     with cookie_scope(stored, {}) as options:
         scratch = Path(options["cookiefile"])
-    assert not scratch.exists() and stored.read_text(encoding="utf-8").startswith("# v2")
+    assert not scratch.exists()
+    assert (store.get_text(layout.cookies_key()) or "").startswith("# v2")
 
-    # No stored file, or an explicit cookiefile: options pass through untouched.
-    with cookie_scope(tmp_path / "absent.txt", {"a": 1}) as options:
+    # Removed while the call ran: the rotated copy is not written back.
+    with cookie_scope(stored, {}) as options:
+        store.delete(layout.cookies_key())
+        Path(options["cookiefile"]).write_text("# v3\n", encoding="utf-8")
+    assert store.get_bytes(layout.cookies_key()) is None
+
+    # No stored object, or an explicit cookiefile: options pass through untouched.
+    with cookie_scope(stored, {"a": 1}) as options:
         assert options == {"a": 1}
+    store.put_bytes(layout.cookies_key(), "# v4\n")
     with cookie_scope(stored, {"cookiefile": "/etc/mine.txt"}) as options:
         assert options == {"cookiefile": "/etc/mine.txt"}
     with cookie_scope(None, {"a": 1}) as options:
         assert options == {"a": 1}
 
 
-def test_engine_reads_the_cookie_path_from_the_settings(settings: Settings) -> None:
+def test_engine_reads_the_cookies_from_the_bucket_of_the_settings(settings: Settings) -> None:
     engine = build_engine(settings)
-    assert engine._cookies_path == settings.data_dir / "engine" / "cookies.txt"
-    assert YtDlpEngine()._cookies_path is None
+    assert engine._cookies is not None
+    assert engine._cookies.key == "engine/cookies.txt"
+    assert engine._cookies.layout.store.url == settings.storage.url
+    assert engine._cookies.scratch.root == settings.storage.scratch_dir
+    assert YtDlpEngine()._cookies is None
 
 
 @pytest.mark.parametrize(

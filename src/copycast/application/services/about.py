@@ -33,7 +33,7 @@ async def about(ctx: ServiceContext) -> AboutRead:
     engine = await asyncio.to_thread(ctx.engine.version)
     async with ctx.uow_factory() as uow:
         totals = await uow.feeds.totals()
-    layout_version = ctx.layout.read_version() or DEFAULT_LAYOUT_VERSION
+    layout_version = await asyncio.to_thread(ctx.layout.read_version) or DEFAULT_LAYOUT_VERSION
     return AboutRead(
         version=APP_VERSION,
         engine=EngineRead(

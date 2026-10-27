@@ -1,6 +1,10 @@
 """Shared fixtures.
 
-Unit tests use only ``settings``, ``data_dir``, ``engine`` and ``origin``.
+Unit tests use only ``settings``, ``store``, ``layout``, ``engine`` and ``origin``.
+Every test gets an Object store of its own: a ``memory://`` store by default, or a
+fresh prefix of the S3 bucket ``COPYCAST_TEST_S3_URL`` names (with
+``COPYCAST_TEST_S3_ENDPOINT``, ``..._ACCESS_KEY_ID``, ``..._SECRET_ACCESS_KEY``)
+so the whole suite can run against a real S3 server.
 Postgres-backed fixtures (``pg_url``, ``db``, ``container``, ``client``,
 ``mcp_client``) import the adapters lazily so the unit suite runs before those
 packages exist, and touch Docker only when a test asks for them.
@@ -24,7 +28,7 @@ from tests.support.fake_engine import FakeEngine
 from tests.support.origin import FIXTURES_DIR, Origin
 
 TEMPLATE_DB = "copycast_template"
-LAYOUT_VERSION = "1\n"
+LAYOUT_VERSION = "2\n"
 TEST_BASE_URL = "http://testserver"
 
 
@@ -67,12 +71,39 @@ def fixtures_dir() -> Path:
 
 
 @pytest.fixture
-def data_dir(tmp_path: Path) -> Path:
-    """A data directory already carrying LAYOUT_VERSION and an empty feeds/."""
-    root = tmp_path / "data"
-    (root / "feeds").mkdir(parents=True)
-    (root / "LAYOUT_VERSION").write_text(LAYOUT_VERSION, encoding="utf-8")
-    return root
+def storage_config() -> Iterator[dict[str, Any]]:
+    """``[storage]`` for this test's own Object store (without ``scratch_dir``)."""
+    name = f"t{uuid.uuid4().hex[:12]}"
+    base = os.environ.get("COPYCAST_TEST_S3_URL")
+    if base:
+        yield {
+            "url": f"{base.rstrip('/')}/{name}",
+            "endpoint": os.environ.get("COPYCAST_TEST_S3_ENDPOINT", ""),
+            "access_key_id": os.environ.get("COPYCAST_TEST_S3_ACCESS_KEY_ID"),
+            "secret_access_key": os.environ.get("COPYCAST_TEST_S3_SECRET_ACCESS_KEY"),
+        }
+        return
+    yield {"url": f"memory://{name}"}
+    _load("copycast.adapters.storage.objects", "forget_memory_store")(name)
+
+
+@pytest.fixture
+def scratch_dir(tmp_path: Path) -> Path:
+    return tmp_path / "scratch"
+
+
+@pytest.fixture
+def store(storage_config: dict[str, Any]) -> Any:
+    """This test's Object store, already carrying ``LAYOUT_VERSION``."""
+    storage_settings = _load("copycast.settings", "StorageSettings")(**storage_config)
+    opened = _load("copycast.adapters.storage.objects", "open_store")(storage_settings)
+    opened.put_bytes("LAYOUT_VERSION", LAYOUT_VERSION)
+    return opened
+
+
+@pytest.fixture
+def layout(store: Any) -> Any:
+    return _load("copycast.adapters.storage.layout", "Layout")(store)
 
 
 @pytest.fixture
@@ -152,14 +183,16 @@ def db(pg_url: str, template_db_url: str) -> Iterator[str]:
 
 
 @pytest.fixture
-def settings(data_dir: Path, request: pytest.FixtureRequest) -> Settings:
-    """Settings over ``data_dir``; uses the per-test ``db`` only when the test asked for it."""
+def settings(
+    store: Any, storage_config: dict[str, Any], scratch_dir: Path, request: pytest.FixtureRequest
+) -> Settings:
+    """Settings over this test's Object store; uses the per-test ``db`` only when the test asked."""
     database_url = "postgresql+psycopg://copycast:copycast@localhost:5432/copycast_unused"
     if "db" in request.fixturenames:
         database_url = request.getfixturevalue("db")
     return get_settings(
         base_url=TEST_BASE_URL,
-        data_dir=data_dir,
+        storage={**storage_config, "scratch_dir": scratch_dir},
         database_url=database_url,
         refresh={"interval_hours": 24, "fetch_cooldown_minutes": 15, "concurrency": 1},
     )

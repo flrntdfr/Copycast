@@ -1,8 +1,8 @@
-"""Layout: version guard, path helpers, traversal refusal, asset-name parsing, disk helpers."""
+"""Layout: version guard, key helpers, traversal refusal, asset-name parsing, store helpers."""
 
 from __future__ import annotations
 
-from pathlib import Path
+from collections.abc import Iterator
 
 import pytest
 
@@ -13,139 +13,138 @@ from copycast.adapters.storage.layout import (
     Layout,
     LayoutMismatch,
     UnsafePath,
-    is_media_file,
+    is_media_name,
 )
+from copycast.adapters.storage.objects import ObjectStore, forget_memory_store, open_store
 from copycast.domain.enums import AssetKind, AssetProvenance
+from copycast.settings import StorageSettings
 
 FEED = "0123456789abcdef"
 ITEM = "fedcba9876543210"
 
 
-def test_ensure_version_writes_when_fresh(tmp_path: Path) -> None:
-    layout = Layout(tmp_path / "data")
+@pytest.fixture
+def empty() -> Iterator[ObjectStore]:
+    yield open_store(StorageSettings(url="memory://layout-empty"))
+    forget_memory_store("layout-empty")
+
+
+def test_ensure_version_writes_when_fresh(empty: ObjectStore) -> None:
+    layout = Layout(empty)
     assert layout.read_version() is None
     assert layout.ensure_version() == LAYOUT_VERSION
-    assert (tmp_path / "data" / LAYOUT_VERSION_FILE).read_text() == "1\n"
-    assert layout.feeds_dir.is_dir()
+    assert empty.get_text(LAYOUT_VERSION_FILE) == "2\n"
     assert layout.ensure_version() == LAYOUT_VERSION  # idempotent
 
 
-def test_ensure_version_refuses_mismatch_and_unversioned_feeds(tmp_path: Path) -> None:
-    layout = Layout(tmp_path)
-    layout.version_file.write_text("7\n")
-    with pytest.raises(LayoutMismatch, match="layout version '7'"):
+def test_ensure_version_refuses_mismatch_and_unversioned_feeds(empty: ObjectStore) -> None:
+    layout = Layout(empty)
+    empty.put_bytes(LAYOUT_VERSION_FILE, "1\n")
+    with pytest.raises(LayoutMismatch, match="layout version '1'"):
         layout.ensure_version()
-    layout.version_file.unlink()
-    (layout.feeds_dir / FEED).mkdir(parents=True)
+    empty.delete(LAYOUT_VERSION_FILE)
+    empty.put_bytes(layout.descriptor_key(FEED), "{}")
     with pytest.raises(LayoutMismatch, match="contains feeds but no LAYOUT_VERSION"):
         layout.ensure_version()
 
 
-def test_paths_follow_the_plan(data_dir: Path) -> None:
-    layout = Layout(data_dir)
-    base = data_dir / "feeds" / FEED
-    assert layout.feed_dir(FEED) == base
-    assert layout.descriptor_path(FEED) == base / "feed.json"
-    assert layout.source_xml_path(FEED) == base / "source" / "feed.xml"
-    assert layout.source_listing_path(FEED) == base / "source" / "listing.json"
-    assert layout.media_path(FEED, ITEM, ".m4a") == base / "media" / f"{ITEM}.m4a"
-    assert layout.info_json_path(FEED, ITEM) == base / "media" / f"{ITEM}.info.json"
-    assert layout.item_xml_path(FEED, ITEM) == base / "media" / f"{ITEM}.item.xml"
-    assert layout.tmp_dir(FEED) == base / "tmp"
-    assert layout.feed_artwork_path(FEED, "jpg") == base / "assets" / "feed.artwork.jpg"
-    assert layout.item_artwork_path(FEED, ITEM, "png") == base / "assets" / f"{ITEM}.artwork.png"
-    assert layout.chapters_path(FEED, ITEM) == base / "assets" / f"{ITEM}.chapters.json"
+def test_keys_follow_the_plan(layout: Layout) -> None:
+    base = f"feeds/{FEED}/"
+    assert layout.feed_prefix(FEED) == base
+    assert layout.descriptor_key(FEED) == base + "feed.json"
+    assert layout.source_xml_key(FEED) == base + "source/feed.xml"
+    assert layout.source_listing_key(FEED) == base + "source/listing.json"
+    assert layout.media_key(FEED, ITEM, ".m4a") == base + f"media/{ITEM}.m4a"
+    assert layout.info_json_key(FEED, ITEM) == base + f"media/{ITEM}.info.json"
+    assert layout.item_xml_key(FEED, ITEM) == base + f"media/{ITEM}.item.xml"
+    assert layout.feed_artwork_key(FEED, "jpg") == base + "assets/feed.artwork.jpg"
+    assert layout.item_artwork_key(FEED, ITEM, "png") == base + f"assets/{ITEM}.artwork.png"
+    assert layout.chapters_key(FEED, ITEM) == base + f"assets/{ITEM}.chapters.json"
     assert (
-        layout.transcript_path(FEED, ITEM, "en", AssetProvenance.generated, "vtt")
-        == base / "assets" / f"{ITEM}.transcript.en.generated.vtt"
+        layout.transcript_key(FEED, ITEM, "en", AssetProvenance.generated, "vtt")
+        == base + f"assets/{ITEM}.transcript.en.generated.vtt"
     )
-    assert layout.asset_path(FEED, "artwork", None, "jpg") == layout.feed_artwork_path(FEED, "jpg")
-    assert layout.asset_path(FEED, AssetKind.artwork, ITEM, "jpg") == layout.item_artwork_path(
-        FEED, ITEM, "jpg"
+    assert (
+        layout.attachment_key(FEED, ITEM, "0123456789ab", "pdf")
+        == base + f"assets/{ITEM}.attachment.0123456789ab.pdf"
     )
-    assert layout.asset_path(FEED, AssetKind.chapters, ITEM, "json") == layout.chapters_path(
-        FEED, ITEM
-    )
-    assert layout.asset_path(
-        FEED, AssetKind.transcript, ITEM, "srt", language="de"
-    ) == layout.transcript_path(FEED, ITEM, "de", "mirrored", "srt")
+    assert layout.asset_key(FEED, "feed.artwork.jpg") == layout.feed_artwork_key(FEED, "jpg")
+    assert layout.cookies_key() == "engine/cookies.txt"
+    assert layout.defaults_key() == "engine/defaults.json"
 
 
-def test_unsafe_inputs_are_refused(data_dir: Path) -> None:
-    layout = Layout(data_dir)
+def test_unsafe_inputs_are_refused(layout: Layout) -> None:
     with pytest.raises(UnsafePath):
-        layout.feed_dir("../etc")
+        layout.feed_prefix("../etc")
     with pytest.raises(UnsafePath):
-        layout.feed_dir("Upper")
+        layout.feed_prefix("Upper")
     with pytest.raises(UnsafePath):
-        layout.media_path(FEED, "not-an-item-id", "m4a")
+        layout.media_key(FEED, "not-an-item-id", "m4a")
     with pytest.raises(UnsafePath):
-        layout.media_path(FEED, ITEM, "m4a/../../x")
+        layout.media_key(FEED, ITEM, "m4a/../../x")
     with pytest.raises(UnsafePath):
-        layout.transcript_path(FEED, ITEM, "en/../x", "mirrored", "vtt")
+        layout.transcript_key(FEED, ITEM, "en/../x", "mirrored", "vtt")
     with pytest.raises(UnsafePath):
-        layout.asset_path(FEED, AssetKind.chapters, None, "json")
-    with pytest.raises(UnsafePath):
-        layout.asset_path(FEED, AssetKind.transcript, ITEM, "vtt")
+        layout.attachment_key(FEED, ITEM, "short", "pdf")
     with pytest.raises(UnsafePath):
         layout.resolve(FEED, "../other/feed.json")
     with pytest.raises(UnsafePath):
         layout.resolve(FEED, "/etc/passwd")
-    for bad in ("", "../x", "a/b", ".hidden"):
+    for bad in ("", "../x", "a/b", ".hidden", "..", "a\\\\b"):
         with pytest.raises(UnsafePath):
             Layout.safe_basename(bad)
     assert Layout.safe_basename("feed.artwork.jpg") == "feed.artwork.jpg"
 
 
-def test_relative_and_resolve_round_trip(data_dir: Path) -> None:
-    layout = Layout(data_dir)
-    layout.ensure_feed_dirs(FEED)
-    media = layout.media_path(FEED, ITEM, "m4a")
+def test_relative_and_resolve_round_trip(layout: Layout) -> None:
+    media = layout.media_key(FEED, ITEM, "m4a")
     assert layout.relative(FEED, media) == f"media/{ITEM}.m4a"
     assert layout.resolve(FEED, f"media/{ITEM}.m4a") == media
     with pytest.raises(UnsafePath):
-        layout.relative(FEED, data_dir / "feeds" / "other" / "x")
+        layout.relative(FEED, f"feeds/aaaaaaaaaaaaaaaa/media/{ITEM}.m4a")
+    with pytest.raises(UnsafePath):
+        layout.relative(FEED, f"feeds/{FEED}/../aaaaaaaaaaaaaaaa/x")
 
 
-def test_disk_helpers(data_dir: Path) -> None:
-    layout = Layout(data_dir)
-    assert layout.feed_ids_on_disk() == []
-    layout.ensure_feed_dirs(FEED)
-    (layout.feeds_dir / "Not-A-Feed").mkdir()
-    (layout.feeds_dir / "stray-file").write_text("x")
-    assert layout.feed_ids_on_disk() == [FEED]
+def test_bucket_helpers(layout: Layout, store: ObjectStore) -> None:
+    assert layout.feed_ids() == []
+    store.put_bytes(layout.descriptor_key(FEED), "{}")
+    store.put_bytes("feeds/Not-A-Feed/feed.json", "{}")
+    store.put_bytes("feeds/stray-file", "x")
+    assert layout.feed_ids() == [FEED]
     assert layout.has_feed(FEED) and not layout.has_feed("aaaaaaaaaaaaaaaa")
     assert layout.find_media(FEED, ITEM) is None
-    layout.info_json_path(FEED, ITEM).write_text("{}")
-    layout.item_xml_path(FEED, ITEM).write_text("<item/>")
+    store.put_bytes(layout.info_json_key(FEED, ITEM), "{}")
+    store.put_bytes(layout.item_xml_key(FEED, ITEM), "<item/>")
     assert layout.find_media(FEED, ITEM) is None  # sidecars are not media
-    media = layout.media_path(FEED, ITEM, "m4a")
-    media.write_bytes(b"x")
-    (layout.media_dir(FEED) / ".hidden.m4a").write_bytes(b"x")
-    (layout.media_dir(FEED) / "notes.txt").write_text("x")
-    assert layout.find_media(FEED, ITEM) == media
-    assert list(layout.media_files(FEED)) == [media]
-    assert Layout.media_stem(media) == ITEM
-    assert Layout.media_stem(layout.info_json_path(FEED, ITEM)) is None
-    assert Layout.media_stem(Path("zzz.m4a")) is None
+    media = layout.media_key(FEED, ITEM, "m4a")
+    store.put_bytes(media, b"x")
+    store.put_bytes(layout.media_prefix(FEED) + ".hidden.m4a", b"x")
+    store.put_bytes(layout.media_prefix(FEED) + "notes.txt", "x")
+    found = layout.find_media(FEED, ITEM)
+    assert found is not None and found.key == media and found.size == 1
+    assert [o.key for o in layout.media_objects(FEED)] == [media]
+    assert Layout.media_stem(f"{ITEM}.m4a") == ITEM
+    assert Layout.media_stem(f"{ITEM}.info.json") is None
+    assert Layout.media_stem("zzz.m4a") is None
 
-    (layout.tmp_dir(FEED) / f"{ITEM}.m4a.part").write_bytes(b"x")
-    (layout.tmp_dir(FEED) / f"{ITEM}.m4a.ytdl").write_bytes(b"x")
-    (layout.tmp_dir(FEED) / "other.part").write_bytes(b"x")
-    assert layout.remove_tmp_leftovers(FEED, ITEM) == 2
-    assert layout.remove_tmp_leftovers(FEED, ITEM) == 0
-    assert layout.remove_tmp_leftovers("aaaaaaaaaaaaaaaa", ITEM) == 0
-
-    art = layout.item_artwork_path(FEED, ITEM, "jpg")
-    art.write_bytes(b"x")
-    (layout.assets_dir(FEED) / ".feed.json.abcd.tmp").write_bytes(b"x")
-    assert list(layout.asset_files(FEED)) == [art]
-    assert list(layout.asset_files("aaaaaaaaaaaaaaaa")) == []
-    assert list(layout.media_files("aaaaaaaaaaaaaaaa")) == []
+    art = layout.item_artwork_key(FEED, ITEM, "jpg")
+    store.put_bytes(art, b"x")
+    store.put_bytes(layout.assets_prefix(FEED) + ".feed.json.abcd.tmp", b"x")
+    assert [o.key for o in layout.asset_objects(FEED)] == [art]
+    assert layout.asset_objects("aaaaaaaaaaaaaaaa") == []
+    assert layout.media_objects("aaaaaaaaaaaaaaaa") == []
     assert layout.find_media("aaaaaaaaaaaaaaaa", ITEM) is None
+
+    layout.write_json(layout.defaults_key(), {"language": "fr"})
+    assert layout.read_json(layout.defaults_key()) == {"language": "fr"}
+    store.put_bytes(layout.defaults_key(), "not json")
+    assert layout.read_json(layout.defaults_key()) is None
+    assert layout.read_json("engine/absent.json") is None
 
     assert layout.remove_feed(FEED) is True
     assert layout.remove_feed(FEED) is False
+    assert store.exists(layout.defaults_key())
 
 
 @pytest.mark.parametrize(
@@ -193,5 +192,5 @@ def test_parse_asset_name(name: str, expected: AssetFileName | None) -> None:
         (f"{ITEM}.toolongextension", False),
     ],
 )
-def test_is_media_file(name: str, expected: bool) -> None:
-    assert is_media_file(Path(name)) is expected
+def test_is_media_name(name: str, expected: bool) -> None:
+    assert is_media_name(name) is expected

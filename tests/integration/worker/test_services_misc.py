@@ -40,7 +40,7 @@ async def test_about_reports_normalized_engine_version_and_totals(
     about = await container.services.about()
     assert about.version == APP_VERSION
     assert about.engine.name == "fake-engine" and about.engine.version == "2026.8.19"
-    assert about.ffmpeg_version == "fake 0.0" and about.layout_version == "1"
+    assert about.ffmpeg_version == "fake 0.0" and about.layout_version == "2"
     assert about.base_url == container.settings.base_url
     assert about.totals.feeds == 1 and about.totals.episodes == 1
     assert about.totals.storage_bytes > 0
@@ -132,7 +132,8 @@ async def test_update_mirror_retarget_and_policy_changes(
     refreshes = await jobs_of(container, a.id, kind=JobKind.refresh)
     assert [j.status for j in refreshes] == [JobStatus.queued.value]
     assert refreshes[0].trigger == JobTrigger.manual.value
-    assert container.layout.source_xml_path(a.id).read_bytes().count(b"<item>") == 3
+    snapshot = container.layout.store.get_bytes(container.layout.source_xml_key(a.id)) or b""
+    assert snapshot.count(b"<item>") == 3
     async with uow(container) as unit:
         feed = await unit.feeds.require(a.id)
         assert feed.source_dedup_key and feed.source_dedup_key.endswith("/rss/rc.xml")

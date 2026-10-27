@@ -198,7 +198,6 @@ async def create_mirror(
             ctx.rows.feed(**_feed_values(snapshot, dedup_key, body, backfill, follow))
         )
         feed_id = feed.id
-        ctx.layout.ensure_feed_dirs(feed_id)
         await uow.catalog.upsert_listing(feed_id, snapshot.listing)
         if backfill.mode is BackfillMode.selection:
             expression = backfill.selection

@@ -37,7 +37,7 @@ async def test_defaults_round_trip_and_validation(
         "backfill": {"mode": "all", "latest_n": None, "retention_days": None, "selection": None},
         "refresh_interval_hours": 24,
     }
-    assert container.layout.defaults_path().is_file()
+    assert container.layout.store.exists(container.layout.defaults_key())
     assert (await client.get(api("/settings/defaults"))).json()["language"] == "fr-CA"
 
     for body in (

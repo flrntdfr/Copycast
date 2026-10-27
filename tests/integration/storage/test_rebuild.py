@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -89,8 +87,22 @@ async def _snapshot(sessionmaker: async_sessionmaker[AsyncSession]) -> dict[str,
         }
 
 
+def _put(layout: Layout, key: str, data: bytes | str) -> str:
+    layout.store.put_bytes(key, data)
+    return key
+
+
+def _descriptor(layout: Layout, feed_id: str) -> dict[str, Any]:
+    raw: Any = json.loads(layout.store.get_text(layout.descriptor_key(feed_id)) or "")
+    return raw
+
+
+def _write_descriptor(layout: Layout, feed_id: str, data: dict[str, Any]) -> None:
+    _put(layout, layout.descriptor_key(feed_id), json.dumps(data))
+
+
 async def _populate(uow_factory: UnitOfWorkFactory, layout: Layout) -> tuple[str, str]:
-    """A Mirror with real files and a Bucket with a Request; descriptors exported."""
+    """A Mirror with real objects and a Bucket with a Request; descriptors exported."""
     async with uow_factory() as uow:
         default = await uow.feeds.ensure_default_bucket()
         mirror = await uow.feeds.add(
@@ -98,35 +110,30 @@ async def _populate(uow_factory: UnitOfWorkFactory, layout: Layout) -> tuple[str
         )
         await uow.catalog.upsert_listing(mirror.id, listing(5))
         rows = await uow.catalog.for_feed(mirror.id)
-        layout.ensure_feed_dirs(mirror.id)
-        layout.source_xml_path(mirror.id).write_text(CHANNEL_XML)
-        for row in rows[:3]:  # ordinals 1..3 archived with files on disk
-            media = layout.media_path(mirror.id, row.id, "m4a")
-            media.write_bytes(b"\0" * (1000 + row.ordinal))
-            layout.item_xml_path(mirror.id, row.id).write_text(
-                f"<item><guid>{row.source_key}</guid><title>{row.title}</title></item>"
+        _put(layout, layout.source_xml_key(mirror.id), CHANNEL_XML)
+        for row in rows[:3]:  # ordinals 1..3 archived with objects in the Object store
+            media = _put(
+                layout, layout.media_key(mirror.id, row.id, "m4a"), b"\0" * (1000 + row.ordinal)
             )
+            item_xml = f"<item><guid>{row.source_key}</guid><title>{row.title}</title></item>"
+            _put(layout, layout.item_xml_key(mirror.id, row.id), item_xml)
             await uow.catalog.mark_state(
                 row.id,
                 ArchiveState.archived,
                 media_path=layout.relative(mirror.id, media),
                 media_mime="audio/mp4",
-                media_bytes=media.stat().st_size,
+                media_bytes=1000 + row.ordinal,
                 archived_at=NOW,
             )
-            await uow.catalog.set_source_item_xml(
-                row.id, layout.item_xml_path(mirror.id, row.id).read_text()
-            )
+            await uow.catalog.set_source_item_xml(row.id, item_xml)
         await uow.catalog.set_wanted([rows[3].id], WantedReason.backfill)
         await uow.catalog.set_live_status(rows[3].id, LiveStatus.post_live)  # intent, kept
         await uow.catalog.tombstone(rows[4].id, listed=True, at=NOW)
         await uow.catalog.record_download(rows[0].id, at=NOW)  # telemetry, lost on rebuild
-        feed_art = layout.feed_artwork_path(mirror.id, "jpg")
-        feed_art.write_bytes(b"jpg" * 10)
-        item_art = layout.item_artwork_path(mirror.id, rows[0].id, "jpg")
-        item_art.write_bytes(b"jpg" * 5)
-        transcript = layout.transcript_path(mirror.id, rows[1].id, "en", "mirrored", "vtt")
-        transcript.write_text("WEBVTT\n")
+        feed_art = _put(layout, layout.feed_artwork_key(mirror.id, "jpg"), b"jpg" * 10)
+        item_art = _put(layout, layout.item_artwork_key(mirror.id, rows[0].id, "jpg"), b"jpg" * 5)
+        transcript = layout.transcript_key(mirror.id, rows[1].id, "en", "mirrored", "vtt")
+        _put(layout, transcript, "WEBVTT\n")
         await uow.assets.upsert(
             mirror.id,
             None,
@@ -174,8 +181,7 @@ async def _populate(uow_factory: UnitOfWorkFactory, layout: Layout) -> tuple[str
         bucket = await uow.feeds.add(bucket_row("Later", autoprune_days=14))
         bucket_item = item_row(bucket, 1, state=ArchiveState.archived)
         await seed(uow, bucket_item)
-        layout.ensure_feed_dirs(bucket.id)
-        layout.media_path(bucket.id, bucket_item.id, "m4a").write_bytes(b"\0" * 1000)
+        _put(layout, layout.media_key(bucket.id, bucket_item.id, "m4a"), b"\0" * 1000)
         request = await uow.requests.add(bucket.id, "https://x.example/v", RequestedVia.mcp)
         await uow.requests.link_items(request.id, [bucket_item.id])
         await uow.requests.mark_expanded(request.id, 1, at=NOW)
@@ -241,10 +247,10 @@ async def test_round_trip_restores_everything_but_telemetry(
 
 
 async def test_wrong_layout_version_refuses(
-    settings: Settings, data_dir: Path, db_engine: AsyncEngine
+    settings: Settings, layout: Layout, db_engine: AsyncEngine
 ) -> None:
-    (data_dir / LAYOUT_VERSION_FILE).write_text("2\n")
-    with pytest.raises(LayoutMismatch, match="layout version '2'"):
+    _put(layout, LAYOUT_VERSION_FILE, "1\n")
+    with pytest.raises(LayoutMismatch, match="layout version '1'"):
         await rebuild(settings, yes=False, db_engine=db_engine)
 
 
@@ -272,8 +278,7 @@ async def test_reconciles_media_and_ignores_tmp_leftovers(
         mirror = await uow.feeds.add(mirror_row())
         await uow.catalog.upsert_listing(mirror.id, listing(3))
         rows = await uow.catalog.for_feed(mirror.id)
-        layout.ensure_feed_dirs(mirror.id)
-        # ordinal 1: claims archived but the file is gone -> wanted
+        # ordinal 1: claims archived but the object is gone -> wanted
         await uow.catalog.mark_state(
             rows[0].id,
             ArchiveState.archived,
@@ -281,16 +286,18 @@ async def test_reconciles_media_and_ignores_tmp_leftovers(
             media_mime="audio/mp4",
             media_bytes=5,
         )
-        # ordinal 2: archiving with only a .part in tmp/ -> wanted, .part ignored
+        # ordinal 2: archiving with only a stray .part object -> wanted, .part ignored
         await uow.catalog.mark_state(rows[1].id, ArchiveState.archiving)
-        (layout.tmp_dir(mirror.id) / f"{rows[1].id}.m4a.part").write_bytes(b"\0" * 999)
-        # ordinal 3: available but a file exists -> archived from the file
-        layout.media_path(mirror.id, rows[2].id, "mp3").write_bytes(b"\0" * 4407)
+        _put(layout, layout.media_prefix(mirror.id) + f"{rows[1].id}.m4a.part", b"\0" * 999)
+        # ordinal 3: available but an object exists -> archived from the object
+        _put(layout, layout.media_key(mirror.id, rows[2].id, "mp3"), b"\0" * 4407)
         await uow.update_intent(mirror.id)
-    # An orphan media file with sidecars: a row is created, ordinal appended.
+    # An orphan media object with sidecars: a row is created, ordinal appended.
     orphan_id = "abcdef0123456789"
-    layout.media_path(mirror.id, orphan_id, "m4a").write_bytes(b"\0" * 10)
-    layout.info_json_path(mirror.id, orphan_id).write_text(
+    _put(layout, layout.media_key(mirror.id, orphan_id, "m4a"), b"\0" * 10)
+    _put(
+        layout,
+        layout.info_json_key(mirror.id, orphan_id),
         json.dumps(
             {
                 "id": "xyz",
@@ -302,12 +309,12 @@ async def test_reconciles_media_and_ignores_tmp_leftovers(
                 "uploader": "Someone",
                 "webpage_url": "https://youtube.example/xyz",
             }
-        )
+        ),
     )
-    # A stray asset file for the orphan and one for nobody.
-    layout.item_artwork_path(mirror.id, orphan_id, "jpg").write_bytes(b"x")
-    (layout.assets_dir(mirror.id) / "README.txt").write_text("not ours")
-    (layout.assets_dir(mirror.id) / ".feed.json.deadbeef.tmp").write_text("leftover")
+    # A stray asset object for the orphan and one for nobody.
+    _put(layout, layout.item_artwork_key(mirror.id, orphan_id, "jpg"), b"x")
+    _put(layout, layout.assets_prefix(mirror.id) + "README.txt", "not ours")
+    _put(layout, layout.assets_prefix(mirror.id) + ".feed.json.deadbeef.tmp", "leftover")
 
     report = await rebuild(settings, yes=False, db_engine=db_engine)
     assert report.media_reset_to_wanted == 2
@@ -365,10 +372,8 @@ async def test_rebuild_keeps_public_ext_and_falls_back_for_older_descriptors(
         await uow.catalog.upsert_listing(mirror.id, listing(3, service="YouTube"))
         rows = await uow.catalog.for_feed(mirror.id)
         assert {r.public_ext for r in rows} == {"m4a"}
-        layout.ensure_feed_dirs(mirror.id)
         # ordinal 1 archived in another container than the URL the feed advertises.
-        media = layout.media_path(mirror.id, rows[0].id, "mp3")
-        media.write_bytes(b"\0" * 10)
+        media = _put(layout, layout.media_key(mirror.id, rows[0].id, "mp3"), b"\0" * 10)
         await uow.catalog.mark_state(
             rows[0].id,
             ArchiveState.archived,
@@ -397,11 +402,10 @@ async def test_rebuild_keeps_public_ext_and_falls_back_for_older_descriptors(
     # A descriptor written before 1.3 carries no public_ext: the archived row gets its
     # file's extension (the URL apps have been downloading), the rest the prediction
     # for their Source.
-    path = layout.descriptor_path(mirror.id)
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = _descriptor(layout, mirror.id)
     for item in data["items"]:
         del item["public_ext"]
-    path.write_text(json.dumps(data), encoding="utf-8")
+    _write_descriptor(layout, mirror.id, data)
     await _wipe(sessionmaker)
     await rebuild(settings, yes=False, db_engine=db_engine)
     assert await public_exts() == {ids[0]: "mp3", ids[1]: "m4a", ids[2]: "m4a"}
@@ -422,21 +426,21 @@ async def test_yes_deletes_rows_absent_from_disk_and_skips_unreadable_dirs(
         ghost = await uow.feeds.add(mirror_row("https://ghost.example/feed"))  # never exported
         stale_only_in_db = item_row(kept, 9, state=ArchiveState.available)
         await seed(uow, stale_only_in_db, asset_row(kept, stale_only_in_db))
-    # Unreadable directories are reported, not fatal.
-    (layout.feeds_dir / "no-descriptor").mkdir()
-    corrupt = layout.feeds_dir / "corrupt"
-    corrupt.mkdir()
-    (corrupt / "feed.json").write_text("{not json")
-    foreign = layout.feeds_dir / "foreign"
-    foreign.mkdir()
-    shutil.copy(layout.descriptor_path(kept.id), foreign / "feed.json")
+    # Unreadable prefixes are reported, not fatal.
+    _put(layout, "feeds/no-descriptor/media/stray.bin", b"x")
+    _put(layout, "feeds/corrupt/feed.json", "{not json")
+    _put(
+        layout,
+        "feeds/foreign/feed.json",
+        layout.store.get_bytes(layout.descriptor_key(kept.id)) or b"",
+    )
 
     dry = await rebuild(settings, yes=False, db_engine=db_engine)
     assert dry.would_delete_feeds == [ghost.id]
     assert (dry.would_delete_items, dry.would_delete_assets) == (1, 1)
     skipped = {s.feed_id: s.reason for s in dry.skipped}
     assert skipped["no-descriptor"] == "no feed.json"
-    assert skipped["corrupt"].startswith(f"{corrupt / 'feed.json'}: not JSON")
+    assert skipped["corrupt"].startswith("feeds/corrupt/feed.json: not JSON")
     assert skipped["foreign"] == f"feed.json belongs to {kept.id!r}"
     async with sessionmaker() as session:
         assert await session.get(Feed, ghost.id) is not None
@@ -468,10 +472,9 @@ async def test_rebuild_keeps_the_feed_pair_and_mints_one_for_old_descriptors(
         assert mirror is not None
         pair = (mirror.auth_username, mirror.auth_password)
     # A descriptor written before credentials existed carries none of them.
-    bucket_descriptor = layout.descriptor_path(bucket_id)
-    data = json.loads(bucket_descriptor.read_text(encoding="utf-8"))
+    data = _descriptor(layout, bucket_id)
     del data["feed"]["auth_username"], data["feed"]["auth_password"]
-    bucket_descriptor.write_text(json.dumps(data), encoding="utf-8")
+    _write_descriptor(layout, bucket_id, data)
     await _wipe(sessionmaker)
 
     await rebuild(settings, yes=False, db_engine=db_engine)
@@ -483,7 +486,7 @@ async def test_rebuild_keeps_the_feed_pair_and_mints_one_for_old_descriptors(
         assert len(bucket.auth_username) == 8 and len(bucket.auth_password) == 24
         minted = (bucket.auth_username, bucket.auth_password)
     # The minted pair is written back, so the next rebuild finds it instead of minting again.
-    on_disk = json.loads(bucket_descriptor.read_text(encoding="utf-8"))["feed"]
+    on_disk = _descriptor(layout, bucket_id)["feed"]
     assert (on_disk["auth_username"], on_disk["auth_password"]) == minted
     await rebuild(settings, yes=False, db_engine=db_engine)
     async with sessionmaker() as session:
@@ -506,10 +509,9 @@ async def test_rebuild_never_replaces_the_pair_of_a_row_that_still_exists(
             row = await session.get(Feed, feed_id)
             assert row is not None
             pairs[feed_id] = (row.auth_username, row.auth_password)
-        path = layout.descriptor_path(feed_id)
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = _descriptor(layout, feed_id)
         del data["feed"]["auth_username"], data["feed"]["auth_password"]
-        path.write_text(json.dumps(data), encoding="utf-8")
+        _write_descriptor(layout, feed_id, data)
 
     report = await rebuild(settings, yes=False, db_engine=db_engine)
     assert report.feeds_upserted == 3 and report.deleted_feeds == []
@@ -518,5 +520,5 @@ async def test_rebuild_never_replaces_the_pair_of_a_row_that_still_exists(
             row = await session.get(Feed, feed_id)
             assert row is not None
             assert (row.auth_username, row.auth_password) == pair, feed_id
-    on_disk = json.loads(layout.descriptor_path(bucket_id).read_text(encoding="utf-8"))["feed"]
+    on_disk = _descriptor(layout, bucket_id)["feed"]
     assert (on_disk["auth_username"], on_disk["auth_password"]) == pairs[bucket_id]

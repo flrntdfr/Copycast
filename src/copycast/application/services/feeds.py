@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from email.utils import format_datetime
 
@@ -84,10 +85,10 @@ async def delete_feed(ctx: ServiceContext, feed_id: str) -> None:
             await uow.publish(FeedEvent(feed_id=feed_id, revision=revision, reason="deleted"))
             layout = ctx.layout
 
-            def _remove_files() -> None:
-                layout.remove_feed(feed_id)
+            async def _remove_objects() -> None:
+                await asyncio.to_thread(layout.remove_feed, feed_id)
 
-            uow.after_commit(_remove_files)
+            uow.after_commit(_remove_objects)
 
     await retry_concurrent(_delete, what=f"delete_feed:{feed_id}")
     log.info("feed.deleted", feed_id=feed_id)
@@ -116,7 +117,6 @@ async def ensure_default_bucket(ctx: ServiceContext) -> BucketRead:
         feed = await uow.feeds.ensure_default_bucket()
         if existed is None:
             await uow.update_intent(feed.id)
-            ctx.layout.ensure_feed_dirs(feed.id)
             log.info("bucket.default_created", feed_id=feed.id)
         counts = await uow.catalog.count_by_state(feed.id)
         request_count = (await uow.requests.count_for_feeds([feed.id])).get(feed.id, 0)

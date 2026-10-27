@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 
@@ -135,12 +134,11 @@ def test_info_helpers() -> None:
     assert rb._chunks([{"a": 1}, {"a": 2}, {"a": 3}], 2) == [[{"a": 1}, {"a": 2}], [{"a": 3}]]
 
 
-def test_draft_from_sidecars_prefers_item_xml(data_dir: Path) -> None:
-    layout = Layout(data_dir)
-    layout.ensure_feed_dirs(FEED)
-    media = layout.media_path(FEED, ITEM, "mp3")
-    media.write_bytes(b"\0" * 4407)
-    layout.info_json_path(FEED, ITEM).write_text(
+def test_draft_from_sidecars_prefers_item_xml(layout: Layout) -> None:
+    store = layout.store
+    store.put_bytes(layout.media_key(FEED, ITEM, "mp3"), b"\0" * 4407)
+    store.put_bytes(
+        layout.info_json_key(FEED, ITEM),
         json.dumps(
             {
                 "title": "From info",
@@ -154,13 +152,17 @@ def test_draft_from_sidecars_prefers_item_xml(data_dir: Path) -> None:
                 "season_number": 2,
                 "webpage_url": "https://x/page",
             }
-        )
+        ),
     )
-    layout.item_xml_path(FEED, ITEM).write_text(
+    store.put_bytes(
+        layout.item_xml_key(FEED, ITEM),
         "<item><guid>urn:x:4</guid><title>From XML</title>"
-        "<pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate></item>"
+        "<pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate></item>",
     )
-    draft = rb._draft_from_sidecars(layout, FEED, media)
+    objects = rb.FeedObjects.list(layout, FEED)
+    media = objects.find_media(ITEM)
+    assert media is not None
+    draft = rb._draft_from_sidecars(objects, media)
     assert draft["id"] == ITEM
     assert draft["source_key"] == "urn:x:4"
     assert draft["title"] == "From XML"
@@ -176,12 +178,10 @@ def test_draft_from_sidecars_prefers_item_xml(data_dir: Path) -> None:
     assert isinstance(draft["archived_at"], datetime)
 
 
-def test_restored_public_ext_mirrors_migration_0010(data_dir: Path) -> None:
+def test_restored_public_ext_mirrors_migration_0010(layout: Layout) -> None:
     """As written; else the media file's (the URL apps hold); else by Source kind alone,
     the rule migration 0010 applied to pre-1.3 rows in Postgres: mp3 for RSS (the 1.2
     placeholder), m4a for an Engine Source and for a Bucket."""
-    layout = Layout(data_dir)
-    layout.ensure_feed_dirs(FEED)
     stamp = datetime(2024, 1, 1, tzinfo=UTC)
     other = "0000000000000001"
 
@@ -197,22 +197,23 @@ def test_restored_public_ext_mirrors_migration_0010(data_dir: Path) -> None:
         fields.update(overrides)
         return DescriptorItem.model_validate(fields)
 
-    layout.media_path(FEED, ITEM, "M4A").write_bytes(b"\0")
-    restored = rb._restored_public_ext(layout, FEED, SourceKind.rss, item(ITEM, public_ext="ogg"))
+    layout.store.put_bytes(layout.media_key(FEED, ITEM, "M4A"), b"\0")
+    objects = rb.FeedObjects.list(layout, FEED)
+    restored = rb._restored_public_ext(objects, SourceKind.rss, item(ITEM, public_ext="ogg"))
     assert restored == "ogg"
-    assert rb._restored_public_ext(layout, FEED, SourceKind.rss, item(ITEM)) == "m4a"
-    assert rb._restored_public_ext(layout, FEED, SourceKind.rss, item()) == "mp3"
-    assert rb._restored_public_ext(layout, FEED, SourceKind.ytdlp, item()) == "m4a"
-    assert rb._restored_public_ext(layout, FEED, None, item()) == "m4a"
+    assert rb._restored_public_ext(objects, SourceKind.rss, item(ITEM)) == "m4a"
+    assert rb._restored_public_ext(objects, SourceKind.rss, item()) == "mp3"
+    assert rb._restored_public_ext(objects, SourceKind.ytdlp, item()) == "m4a"
+    assert rb._restored_public_ext(objects, None, item()) == "m4a"
 
 
-def test_draft_from_sidecars_without_sidecars_or_with_broken_info(data_dir: Path) -> None:
-    layout = Layout(data_dir)
-    layout.ensure_feed_dirs(FEED)
-    media = layout.media_path(FEED, ITEM, "m4a")
-    media.write_bytes(b"\0")
-    layout.info_json_path(FEED, ITEM).write_text("{broken")
-    draft = rb._draft_from_sidecars(layout, FEED, media)
+def test_draft_from_sidecars_without_sidecars_or_with_broken_info(layout: Layout) -> None:
+    layout.store.put_bytes(layout.media_key(FEED, ITEM, "m4a"), b"\0")
+    layout.store.put_bytes(layout.info_json_key(FEED, ITEM), "{broken")
+    objects = rb.FeedObjects.list(layout, FEED)
+    media = objects.find_media(ITEM)
+    assert media is not None
+    draft = rb._draft_from_sidecars(objects, media)
     assert draft["source_key"] == f"urn:copycast:{ITEM}"
     assert draft["title"] == ITEM
     assert draft["published_at"] is None and draft["source_item_xml"] is None

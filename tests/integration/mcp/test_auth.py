@@ -32,10 +32,10 @@ MCP_HEADERS = {"Accept": "application/json, text/event-stream"}
 
 
 @pytest.fixture
-def settings(data_dir: Path, db: str) -> Settings:
+def settings(store: Any, storage_config: dict[str, Any], scratch_dir: Path, db: str) -> Settings:
     return get_settings(
         base_url=TEST_BASE_URL,
-        data_dir=data_dir,
+        storage={**storage_config, "scratch_dir": scratch_dir},
         database_url=db,
         refresh={"interval_hours": 24, "fetch_cooldown_minutes": 15, "concurrency": 1},
         auth={"username": OPERATOR[0], "password": OPERATOR[1]},

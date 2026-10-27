@@ -115,7 +115,7 @@ def test_liveness_and_readiness(http: httpx.Client, stack: Stack) -> None:
     assert ready.status_code == 200, ready.text
     body = ready.json()
     assert body["status"] == "ok", body
-    for name in ("db", "schema", "data_dir", "layout"):
+    for name in ("db", "schema", "storage", "layout"):
         assert body["checks"][name]["ok"], (name, body["checks"][name])
 
     def worker_seen() -> bool:
@@ -263,7 +263,7 @@ def test_about_reports_the_locked_engine(http: httpx.Client, stack: Stack) -> No
 
     assert about["version"] == APP_VERSION
     assert about["base_url"] == stack.base_url
-    assert about["layout_version"] == "1"
+    assert about["layout_version"] == "2"
 
     engine = about["engine"]
     assert engine["name"] == "yt-dlp"

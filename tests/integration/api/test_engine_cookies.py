@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import stat
-
 import httpx
 import pytest
 
@@ -46,37 +44,36 @@ async def test_cookies_lifecycle(client: httpx.AsyncClient, container: Container
     assert _services(body)["youtube"] is True and _services(body)["twitch"] is False
     assert "secret-value" not in stored.text
 
-    file = container.layout.cookie_files_dir() / "youtube-cookies.txt"
-    jar = container.layout.cookies_path()
-    assert file.read_text(encoding="utf-8") == COOKIES + "\n"
-    assert stat.S_IMODE(file.stat().st_mode) == 0o600
-    assert stat.S_IMODE(jar.stat().st_mode) == 0o600
-    assert "secret-value" in jar.read_text(encoding="utf-8")
+    store = container.layout.store
+    file = container.layout.cookie_file_key("youtube-cookies.txt")
+    jar = container.layout.cookies_key()
+    assert store.get_text(file) == COOKIES + "\n"
+    assert "secret-value" in (store.get_text(jar) or "")
 
     rejected = await client.put(api("/engine/cookies"), json={"content": "SID=abc; HSID=def"})
     assert rejected.status_code == 422
     assert rejected.json()["type"] == "urn:copycast:problem:invalid-cookies"
-    assert file.read_text(encoding="utf-8") == COOKIES + "\n"  # a rejected file changes nothing
+    assert store.get_text(file) == COOKIES + "\n"  # a rejected file changes nothing
 
     # A second file adds a row; the jar the Engine reads carries both.
     second = await client.put(api("/engine/cookies"), json={"content": TWITCH, "name": "twitch"})
     body = second.json()
     assert [file["name"] for file in body["files"]] == ["twitch", "youtube-cookies"]
     assert _services(body)["twitch"] is True and body["cookie_count"] == 4
-    assert "auth-token" in jar.read_text(encoding="utf-8")
+    assert "auth-token" in (store.get_text(jar) or "")
 
     # The Engine rotated a cookie in the jar: removing another file keeps the rotation.
-    jar.write_text(jar.read_text(encoding="utf-8").replace("secret-value", "rotated"))
+    store.put_bytes(jar, (store.get_text(jar) or "").replace("secret-value", "rotated"))
     assert (
         await client.delete(api("/engine/cookies"), params={"name": "twitch"})
     ).status_code == 204
-    assert "rotated" in file.read_text(encoding="utf-8")
-    assert "auth-token" not in jar.read_text(encoding="utf-8")
+    assert "rotated" in (store.get_text(file) or "")
+    assert "auth-token" not in (store.get_text(jar) or "")
     missing = await client.delete(api("/engine/cookies"), params={"name": "twitch"})
     assert missing.status_code == 404
 
     removed = await client.delete(api("/engine/cookies"))
-    assert removed.status_code == 204 and not jar.exists() and not file.exists()
+    assert removed.status_code == 204 and not store.exists(jar) and not store.exists(file)
     assert (await client.delete(api("/engine/cookies"))).status_code == 204
     assert (await client.get(api("/engine/cookies"))).json()["present"] is False
 
@@ -84,14 +81,14 @@ async def test_cookies_lifecycle(client: httpx.AsyncClient, container: Container
 async def test_a_jar_stored_before_files_existed_shows_as_one_file(
     client: httpx.AsyncClient, container: Container
 ) -> None:
-    jar = container.layout.cookies_path()
-    jar.parent.mkdir(parents=True, exist_ok=True)
-    jar.write_text(COOKIES + "\n", encoding="utf-8")
+    store = container.layout.store
+    jar = container.layout.cookies_key()
+    store.put_bytes(jar, COOKIES + "\n")
     body = (await client.get(api("/engine/cookies"))).json()
     assert [file["name"] for file in body["files"]] == ["cookies"]
     assert _services(body)["youtube"] is True
 
     await client.put(api("/engine/cookies"), json={"content": TWITCH, "name": "twitch"})
-    names = sorted(path.name for path in container.layout.cookie_files_dir().iterdir())
+    names = sorted(o.name for o in store.list(container.layout.cookie_files_prefix()))
     assert names == ["cookies.txt", "twitch.txt"]
-    assert "secret-value" in jar.read_text(encoding="utf-8")
+    assert "secret-value" in (store.get_text(jar) or "")

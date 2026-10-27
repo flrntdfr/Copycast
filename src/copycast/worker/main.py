@@ -1,8 +1,9 @@
 """``copycast worker``: startup sequence, WORKER_LOCK, heartbeat, health server, shutdown.
 
-Startup: layout version, schema (``COPYCAST_AUTO_MIGRATE``), the process-wide
-advisory lock (a second worker exits with a message), the default Bucket, the
-chapters files still in the Engine's shape rewritten as Podcasting 2.0, the
+Startup: the Object store and its layout version, a Scratch sweep, schema
+(``COPYCAST_AUTO_MIGRATE``), the process-wide advisory lock (a second worker exits
+with a message), the default Bucket, the chapters files still in the Engine's
+shape rewritten as Podcasting 2.0, the
 engine version, then the claim loop, the scheduler, the 30 s heartbeat and the
 health endpoints on ``COPYCAST_WORKER_PORT``. SIGTERM/SIGINT drain the runner
 and flush the debounced descriptor exports before the process exits.
@@ -11,17 +12,16 @@ and flush the debounced descriptor exports before the process exits.
 from __future__ import annotations
 
 import asyncio
-import shutil
 import signal
 import sys
 from datetime import UTC, datetime
+from typing import Any
 
 from copycast.adapters.db.locks import WORKER_LOCK, SessionLock
 from copycast.adapters.db.migrate import SchemaNotCurrent, prepare_schema
 from copycast.adapters.db.uow import uow_of
 from copycast.adapters.sources.http import close_client
 from copycast.adapters.storage.chapters import upgrade_chapter_files
-from copycast.adapters.storage.layout import Layout
 from copycast.app import Container, build_container
 from copycast.application.ports import Engine
 from copycast.application.services.about import normalize_engine_version
@@ -47,12 +47,16 @@ def run(settings: Settings) -> int:
 
 
 async def main(settings: Settings, *, engine: Engine | None = None) -> int:
+    container = build_container(settings, engine=engine)
     try:
-        Layout(settings.data_dir).ensure_version()
+        await asyncio.to_thread(container.ensure_layout)
     except SettingsError as exc:
         _fatal(str(exc))
+        await container.aclose()
         return EXIT_CONFIG
-    container = build_container(settings, engine=engine)
+    swept = await asyncio.to_thread(container.scratch.sweep)
+    if swept:
+        log.info("worker.scratch_swept", entries=swept)
     try:
         try:
             await prepare_schema(container.db_engine, auto_migrate=settings.auto_migrate)
@@ -118,7 +122,7 @@ async def _serve(container: Container, settings: Settings) -> int:
     return exit_code
 
 
-async def _upgrade_chapters(layout: Layout) -> None:
+async def _upgrade_chapters(layout: Any) -> None:
     """Rewrite chapters archived in the Engine's shape; a failure never stops the worker."""
     try:
         upgrade = await asyncio.to_thread(upgrade_chapter_files, layout)
@@ -148,10 +152,7 @@ async def _heartbeat_loop(container: Container, runner: Runner, state: WorkerSta
 
 
 async def _heartbeat(container: Container, runner: Runner, state: WorkerState) -> None:
-    try:
-        free_bytes: int | None = shutil.disk_usage(container.settings.data_dir).free
-    except OSError:
-        free_bytes = None
+    free_bytes: int | None = container.scratch.free_bytes()
     status = {
         "running_jobs": len(runner.running_jobs),
         "quarantined_feeds": sorted(runner.quarantined),

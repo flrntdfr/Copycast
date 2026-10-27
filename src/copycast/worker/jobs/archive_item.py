@@ -3,20 +3,23 @@
 RSS items are fetched through a synthesized info dict built from the item's
 ``<item>`` in ``source/feed.xml`` (falling back to the stored
 ``source_item_xml``); everything else is a yt-dlp extraction of the item URL.
-Engine outputs (Artwork, subtitles, chapters as Podcasting 2.0 JSON) become
-assets under ``assets/``; for RSS items the Source's own chapters, transcripts
-and image are mirrored when the Engine produced none. Asset failures mark the
-asset ``failed``; the job still succeeds. A stream with no recording yet
-(``NotReady``) puts the item back to ``wanted`` without counting the attempt and
-records its live status; once the job has waited ``LIVE_WAIT_MAX`` the item
-fails for good.
+The Engine downloads, transcodes and tags in a Scratch directory of the job's
+own; only the finished files leave it, uploaded to the Object store (the audio as a
+multipart upload) before the row is marked ``archived``, so nothing raw or
+partial is ever served and no row points at a missing object. The Scratch
+directory goes when the job ends, whatever happened. Engine outputs (Artwork,
+subtitles, chapters as Podcasting 2.0 JSON) become assets under ``assets/``;
+for RSS items the Source's own chapters, transcripts and image are mirrored
+when the Engine produced none. Asset failures mark the asset ``failed``; the
+job still succeeds. A stream with no recording yet (``NotReady``) puts the
+item back to ``wanted`` without counting the attempt and records its live
+status; once the job has waited ``LIVE_WAIT_MAX`` the item fails for good.
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
-import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,8 +37,8 @@ from copycast.adapters.db.models import Feed
 from copycast.adapters.db.uow import UnitOfWork
 from copycast.adapters.engine.synth import from_listing_item
 from copycast.adapters.sources import rss
-from copycast.adapters.storage.atomic import write_atomic, write_json_atomic
 from copycast.adapters.storage.layout import Layout
+from copycast.adapters.storage.scratch import JobDir, Scratch
 from copycast.application.events import FeedEvent, ItemEvent
 from copycast.application.ports import (
     Cancelled,
@@ -63,6 +66,7 @@ from copycast.domain.enums import (
 )
 from copycast.domain.listing import SourceListingItem
 from copycast.logging import get_logger
+from copycast.settings import StorageSettings
 from copycast.worker.constants import live_wait_exceeded, live_wait_exhausted_message
 from copycast.worker.jobs import JobContext, JobOutcome
 from copycast.worker.jobs.common import engine_options_for
@@ -142,10 +146,10 @@ class Produced:
 def _rss_entry(layout: Layout, target: _Target) -> tuple[SourceListingItem, str] | None:
     """The listing item and ``<item>`` XML for ``source_key`` from ``source/feed.xml``,
     else from the stored ``source_item_xml``."""
-    path = layout.source_xml_path(target.feed_id)
-    if path.is_file():
+    snapshot = layout.store.get_bytes(layout.source_xml_key(target.feed_id))
+    if snapshot is not None:
         try:
-            parsed = rss.parse_feed(path.read_bytes(), url=target.feed_source_url)
+            parsed = rss.parse_feed(snapshot, url=target.feed_source_url)
         except Exception as exc:  # a corrupt snapshot must not block the item
             log.warning("archive.source_xml_unreadable", feed_id=target.feed_id, error=str(exc))
         else:
@@ -172,9 +176,8 @@ def _rss_entry(layout: Layout, target: _Target) -> tuple[SourceListingItem, str]
     return None
 
 
-def prepare(layout: Layout, target: _Target) -> Prepared:
-    home = layout.media_dir(target.feed_id)
-    temp = layout.tmp_dir(target.feed_id)
+def prepare(layout: Layout, target: _Target, work: JobDir) -> Prepared:
+    home, temp = work.home, work.temp
     if target.source_kind is SourceKind.rss:
         found = _rss_entry(layout, target)
         if found is None:
@@ -203,30 +206,47 @@ def prepare(layout: Layout, target: _Target) -> Prepared:
 # --------------------------------------------------------------------------- outputs
 
 
-def _move(src: Path, dst: Path) -> int:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    os.replace(src, dst)
-    return dst.stat().st_size
+def _upload(layout: Layout, key: str, path: Path, mime: str | None, uploaded: list[str]) -> int:
+    """One finished Scratch file into the Object store; ``uploaded`` records the key for cleanup."""
+    size = layout.store.put_file(key, path, content_type=mime)
+    uploaded.append(key)
+    return size
+
+
+def upload_media(
+    layout: Layout, feed_id: str, item_id: str, result: FetchResult, uploaded: list[str]
+) -> str:
+    """The audio (multipart when large) and its ``.info.json``; returns the audio's key."""
+    key = layout.media_key(feed_id, item_id, result.ext)
+    _upload(layout, key, result.audio_path, result.mime, uploaded)
+    if result.info_json_path is not None and result.info_json_path.is_file():
+        info_key = layout.info_json_key(feed_id, item_id)
+        _upload(layout, info_key, result.info_json_path, "application/json", uploaded)
+    return key
+
+
+def upload_item_xml(
+    layout: Layout, feed_id: str, item_id: str, item_xml: str, uploaded: list[str]
+) -> None:
+    key = layout.item_xml_key(feed_id, item_id)
+    layout.store.put_bytes(key, item_xml, content_type="application/xml")
+    uploaded.append(key)
 
 
 def place_engine_outputs(
-    layout: Layout, feed_id: str, item_id: str, result: FetchResult
+    layout: Layout, feed_id: str, item_id: str, result: FetchResult, uploaded: list[str]
 ) -> Produced:
     """Artwork -> ``assets/{item}.artwork.{ext}``, subtitles -> transcripts, chapters ->
-    Podcasting 2.0 JSON (none when no chapter has a usable start)."""
+    Podcasting 2.0 JSON (none when no chapter has a usable start), each uploaded."""
     produced = Produced()
     if result.artwork_path is not None and result.artwork_path.is_file():
         ext = result.artwork_path.suffix.lstrip(".").lower() or "jpg"
-        target = layout.item_artwork_path(feed_id, item_id, ext)
+        key = layout.item_artwork_key(feed_id, item_id, ext)
+        mime = IMAGE_MIME.get(ext, "application/octet-stream")
         try:
-            size = _move(result.artwork_path, target)
+            size = _upload(layout, key, result.artwork_path, mime, uploaded)
             produced.assets.append(
-                PlacedAsset(
-                    AssetKind.artwork,
-                    layout.relative(feed_id, target),
-                    IMAGE_MIME.get(ext, "application/octet-stream"),
-                    size,
-                )
+                PlacedAsset(AssetKind.artwork, layout.relative(feed_id, key), mime, size)
             )
         except OSError as exc:
             produced.assets.append(PlacedAsset(AssetKind.artwork, None, None, None, error=str(exc)))
@@ -238,9 +258,10 @@ def place_engine_outputs(
         if fmt is None:
             continue
         lang = language.strip().lower()
+        mime = "text/vtt" if fmt is AssetFormat.vtt else "application/x-subrip"
         try:
-            target = layout.transcript_path(feed_id, item_id, lang, AssetProvenance.mirrored, ext)
-            size = _move(path, target)
+            key = layout.transcript_key(feed_id, item_id, lang, AssetProvenance.mirrored, ext)
+            size = _upload(layout, key, path, mime, uploaded)
         except (OSError, ValueError) as exc:
             produced.assets.append(
                 PlacedAsset(
@@ -257,8 +278,8 @@ def place_engine_outputs(
         produced.assets.append(
             PlacedAsset(
                 AssetKind.transcript,
-                layout.relative(feed_id, target),
-                "text/vtt" if fmt is AssetFormat.vtt else "application/x-subrip",
+                layout.relative(feed_id, key),
+                mime,
                 size,
                 language=lang,
                 format=fmt,
@@ -266,15 +287,16 @@ def place_engine_outputs(
         )
     chapters = podcast_chapters(result.chapters)
     if chapters is not None:
-        target = layout.chapters_path(feed_id, item_id)
+        key = layout.chapters_key(feed_id, item_id)
         try:
-            write_json_atomic(target, chapters)
+            size = layout.write_json(key, chapters)
+            uploaded.append(key)
             produced.assets.append(
                 PlacedAsset(
                     AssetKind.chapters,
-                    layout.relative(feed_id, target),
+                    layout.relative(feed_id, key),
                     CHAPTERS_MIME,
-                    target.stat().st_size,
+                    size,
                     format=AssetFormat.json,
                 )
             )
@@ -324,7 +346,7 @@ def mirror_description_attachments(
 
 def _mirror_one(layout: Layout, feed_id: str, remote: RemoteAsset) -> PlacedAsset:
     try:
-        mirrored = mirror_asset(remote, layout.assets_dir(feed_id))
+        mirrored = mirror_asset(remote, layout, feed_id)
     except AssetError as exc:
         return PlacedAsset(
             remote.kind,
@@ -403,9 +425,42 @@ async def run(ctx: JobContext) -> JobOutcome:
         )
 
     layout: Layout = ctx.container.layout
-    layout.ensure_feed_dirs(target.feed_id)
+    scratch: Scratch = ctx.container.scratch
+    with scratch.job(item_id) as work:
+        outcome = await _fetch_and_store(ctx, layout, work, target, item_id)
+    if isinstance(outcome, JobOutcome):
+        return outcome
+    result, assets = outcome
+    log.info(
+        "archive.done",
+        item_id=item_id,
+        feed_id=target.feed_id,
+        bytes=result.size_bytes,
+        assets=len([a for a in assets if a.error is None]),
+        asset_failures=len([a for a in assets if a.error is not None]),
+    )
+    return JobOutcome(
+        result={
+            "media_bytes": result.size_bytes,
+            "ext": result.ext,
+            "assets": len([a for a in assets if a.error is None]),
+            "asset_failures": [a.error for a in assets if a.error is not None],
+        },
+        engine_version=result.engine_version or None,
+    )
+
+
+async def _fetch_and_store(
+    ctx: JobContext, layout: Layout, work: JobDir, target: _Target, item_id: str
+) -> tuple[FetchResult, list[PlacedAsset]] | JobOutcome:
+    """Fetch into Scratch, upload the finished files, then mark the row archived.
+
+    Returns the fetch result and the assets placed, or the job's outcome when the row
+    changed while downloading (its objects are removed again).
+    """
     try:
-        prepared = await ctx.run_blocking(prepare, layout, target)
+        _check_scratch_room(ctx.container.scratch, ctx.container.settings.storage)
+        prepared = await ctx.run_blocking(prepare, layout, target, work)
         ctx.check_cancelled(f"fetch of {item_id}")
         result = await ctx.run_blocking(
             ctx.container.engine.fetch_item,
@@ -426,23 +481,36 @@ async def run(ctx: JobContext) -> JobOutcome:
         raise wrapped from exc
 
     ctx.progress.set_phase(ProgressPhase.assets)
-    produced = await ctx.run_blocking(place_engine_outputs, layout, target.feed_id, item_id, result)
-    assets = list(produced.assets)
-    if prepared.item_xml is not None:
-        await ctx.run_blocking(
-            write_atomic, layout.item_xml_path(target.feed_id, item_id), prepared.item_xml
+    uploaded: list[str] = []
+    try:
+        media_key = await ctx.run_blocking(
+            upload_media, layout, target.feed_id, item_id, result, uploaded
         )
-        assets.extend(
+        produced = await ctx.run_blocking(
+            place_engine_outputs, layout, target.feed_id, item_id, result, uploaded
+        )
+        assets = list(produced.assets)
+        if prepared.item_xml is not None:
             await ctx.run_blocking(
-                mirror_item_assets,
-                layout,
-                target.feed_id,
-                item_id,
-                prepared.item_xml,
-                target.feed_source_url,
-                produced,
+                upload_item_xml, layout, target.feed_id, item_id, prepared.item_xml, uploaded
             )
-        )
+            assets.extend(
+                await ctx.run_blocking(
+                    mirror_item_assets,
+                    layout,
+                    target.feed_id,
+                    item_id,
+                    prepared.item_xml,
+                    target.feed_source_url,
+                    produced,
+                )
+            )
+    except Exception as exc:
+        # The Object store refused or went away mid-upload: nothing is archived, the job retries.
+        await ctx.run_blocking(_discard_objects, layout, uploaded)
+        wrapped = TransientError(f"upload to storage failed: {type(exc).__name__}: {exc}")
+        await _record_failure(ctx, target.feed_id, item_id, wrapped)
+        raise wrapped from exc
 
     # A flat listing (a YouTube channel tab) carries neither a description nor a date; the
     # full info the fetch produced does, and fills whatever the Catalog row still lacks.
@@ -465,15 +533,22 @@ async def run(ctx: JobContext) -> JobOutcome:
             item_id,
             ArchiveState.archived,
             only_from=ArchiveState.archiving,
-            media_path=layout.relative(target.feed_id, result.audio_path),
+            media_path=layout.relative(target.feed_id, media_key),
             media_mime=result.mime,
             media_bytes=result.size_bytes,
             duration_seconds=result.duration_seconds,
             archived_at=datetime.now(UTC),
         )
         if not archived:
-            # Deleted (tombstoned) while downloading: the files must not outlive the row's intent.
-            uow.after_commit(lambda: _discard_outputs(layout, target.feed_id, item_id, result))
+            # Deleted (tombstoned) while downloading: the objects must not outlive the row's
+            # intent.
+            mirrored = [a.local_path for a in assets if a.local_path]
+            keys = [*uploaded, *(layout.resolve(target.feed_id, p) for p in mirrored)]
+
+            async def _discard() -> None:
+                await ctx.run_blocking(_discard_objects, layout, keys)
+
+            uow.after_commit(_discard)
             log.warning("archive.row_changed", item_id=item_id)
             return JobOutcome(result={"skipped": "item state changed during the fetch"})
         if prepared.item_xml is not None:
@@ -487,23 +562,7 @@ async def run(ctx: JobContext) -> JobOutcome:
             ItemEvent(feed_id=target.feed_id, item_id=item_id, state=ArchiveState.archived)
         )
         await uow.publish(FeedEvent(feed_id=target.feed_id, revision=revision, reason="archived"))
-    log.info(
-        "archive.done",
-        item_id=item_id,
-        feed_id=target.feed_id,
-        bytes=result.size_bytes,
-        assets=len([a for a in assets if a.error is None]),
-        asset_failures=len([a for a in assets if a.error is not None]),
-    )
-    return JobOutcome(
-        result={
-            "media_bytes": result.size_bytes,
-            "ext": result.ext,
-            "assets": len([a for a in assets if a.error is None]),
-            "asset_failures": [a.error for a in assets if a.error is not None],
-        },
-        engine_version=result.engine_version or None,
-    )
+    return result, assets
 
 
 def _target(
@@ -577,13 +636,19 @@ def metadata_from_info_json(path: Path | None) -> dict[str, Any]:
     return found
 
 
-def _discard_outputs(layout: Layout, feed_id: str, item_id: str, result: FetchResult) -> None:
-    for path in (result.audio_path, result.info_json_path, result.artwork_path):
-        if path is not None:
-            path.unlink(missing_ok=True)
-    for path in result.subtitle_paths.values():
-        path.unlink(missing_ok=True)
-    layout.remove_tmp_leftovers(feed_id, item_id)
+def _check_scratch_room(scratch: Scratch, storage: StorageSettings) -> None:
+    """``StorageFull`` (re-queued, archive claims paused) below ``min_free_scratch_mb``."""
+    free = scratch.free_bytes()
+    floor = storage.min_free_scratch_mb * 1024 * 1024
+    if free is not None and free < floor:
+        raise StorageFull(
+            f"Scratch has {free // (1024 * 1024)} MiB free, below {floor // (1024 * 1024)} MiB"
+        )
+
+
+def _discard_objects(layout: Layout, keys: list[str]) -> None:
+    with contextlib.suppress(Exception):
+        layout.store.delete(keys)
 
 
 async def _record_failure(
@@ -646,4 +711,6 @@ __all__ = [
     "place_engine_outputs",
     "prepare",
     "run",
+    "upload_item_xml",
+    "upload_media",
 ]

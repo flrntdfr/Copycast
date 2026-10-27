@@ -168,8 +168,8 @@ async def test_fetch_runs_a_light_refresh_inline_for_an_rss_mirror(
     assert feed["last_error"] is None and feed["health"]["status"] == "ok"
     assert feed["counts"]["available"] == 2, "both listed, neither archived (Automatic)"
     # The verbatim Source document is rewritten (the archive job re-parses it).
-    snapshot = container.layout.source_xml_path(mirror["id"]).read_bytes()
-    assert b"urn:worker:episode:2" in snapshot
+    snapshot = container.layout.store.get_bytes(container.layout.source_xml_key(mirror["id"]))
+    assert snapshot is not None and b"urn:worker:episode:2" in snapshot
 
     # Outside the cooldown again, an unchanged document is a 304: the run is `unchanged`,
     # the revision stays, and so the client's conditional GET is a 304 too.
@@ -212,7 +212,7 @@ async def test_light_refresh_applies_the_policy_and_queues_archives(
     assert len(feed_items(await client.get(FEED_URL(mirror["id"])))) == 2
 
 
-async def test_the_snapshot_is_on_disk_before_the_apply_commits_its_archive_jobs(
+async def test_the_snapshot_is_stored_before_the_apply_commits_its_archive_jobs(
     client: httpx.AsyncClient,
     source: Source,
     runner: Runner,
@@ -228,12 +228,12 @@ async def test_the_snapshot_is_on_disk_before_the_apply_commits_its_archive_jobs
     assert len(await archived_items(client, runner, mirror["id"])) == 1
     await outside_cooldown(container, mirror["id"])
     source.write_rss("snapshot", items=[2, 1], artwork=False)
-    path = container.layout.source_xml_path(mirror["id"])
-    seen_in_transaction: list[bytes] = []
+    key = container.layout.source_xml_key(mirror["id"])
+    seen_in_transaction: list[bytes | None] = []
     real_apply_policy = light.apply_policy
 
     async def spying_apply_policy(uow: Any, feed: Any, **kwargs: Any) -> Any:
-        seen_in_transaction.append(path.read_bytes())
+        seen_in_transaction.append(container.layout.store.get_bytes(key))
         return await real_apply_policy(uow, feed, **kwargs)
 
     monkeypatch.setattr(light, "apply_policy", spying_apply_policy)
@@ -493,9 +493,9 @@ async def test_fetch_of_a_channel_mirror_lists_shallowly_without_delisting(
     mirror = await create_mirror(client, url, mode="automatic", preferred_language="fr")
     await runner.run_until_idle()
     assert engine.records.listings[-1].limit is None, "the full Refresh lists everything"
-    listing_json = container.layout.source_listing_path(mirror["id"])
-    assert listing_json.is_file()
-    written = listing_json.read_bytes()
+    listing_key = container.layout.source_listing_key(mirror["id"])
+    written = container.layout.store.get_bytes(listing_key)
+    assert written is not None
     await outside_cooldown(container, mirror["id"])
 
     # The first page the light Refresh sees: the new video only; the rest is further down.
@@ -518,7 +518,8 @@ async def test_fetch_of_a_channel_mirror_lists_shallowly_without_delisting(
     assert len(runs) == 1 and runs[0].status == "succeeded"
     assert (runs[0].listed_count, runs[0].new_count, runs[0].delisted_count) == (1, 1, 0)
     assert len(await refresh_jobs(container, mirror["id"])) == 1
-    assert listing_json.read_bytes() == written, "source/listing.json keeps the full listing"
+    stored = container.layout.store.get_bytes(listing_key)
+    assert stored == written, "source/listing.json keeps the full listing"
 
 
 async def test_fetch_of_a_playlist_mirror_queues_a_full_refresh(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,13 +20,14 @@ from copycast.adapters.assets.mirror import (
     remote_attachments_from_description,
     sniff_image,
     transcript_format,
-    write_atomic,
 )
 from copycast.adapters.sources.rss import item_xml, parse_feed
+from copycast.adapters.storage.layout import Layout
 from copycast.domain.enums import AssetFormat, AssetKind, AssetProvenance
 from tests.support.origin import Origin
 
 MiB = 1024 * 1024
+FEED = "0123456789abcdef"
 
 
 def test_limits_follow_the_plan() -> None:
@@ -131,44 +133,44 @@ def test_remote_assets_resolve_relative_urls_and_skip_unknown_formats() -> None:
     )
 
 
-def test_mirror_artwork_sniffs_and_names_by_type(origin: Origin, tmp_path: Path) -> None:
+def test_mirror_artwork_sniffs_and_names_by_type(origin: Origin, layout: Layout) -> None:
     asset = RemoteAsset(AssetKind.artwork, origin.url_for("/media/tiny.jpg"), item_id="abc")
-    mirrored = mirror_asset(asset, tmp_path / "assets")
+    mirrored = mirror_asset(asset, layout, FEED)
     assert mirrored.basename == "abc.artwork.jpg"
     assert mirrored.local_path == "assets/abc.artwork.jpg"
-    assert mirrored.path == tmp_path / "assets" / "abc.artwork.jpg"
+    assert mirrored.key == layout.asset_key(FEED, "abc.artwork.jpg")
     assert mirrored.mime == "image/jpeg" and mirrored.format is None
-    assert mirrored.size_bytes == mirrored.path.stat().st_size > 0
-    assert not (tmp_path / "assets" / "abc.artwork.jpg.part").exists()
-    feed_art = mirror_asset(
-        feed_artwork_asset(origin.url_for("/media/tiny.jpg")), tmp_path / "assets"
-    )
+    stored: Any = layout.store.head(mirrored.key)
+    assert mirrored.size_bytes == stored.size > 0
+    feed_art = mirror_asset(feed_artwork_asset(origin.url_for("/media/tiny.jpg")), layout, FEED)
     assert feed_art.basename == "feed.artwork.jpg" and feed_art.item_id is None
 
 
-def test_mirror_artwork_rejects_non_images(origin: Origin, tmp_path: Path) -> None:
+def test_mirror_artwork_rejects_non_images(origin: Origin, layout: Layout) -> None:
     asset = RemoteAsset(AssetKind.artwork, origin.url_for("/rss/atom.xml"), item_id="abc")
     with pytest.raises(AssetError, match="not an image"):
-        mirror_asset(asset, tmp_path)
-    assert list(tmp_path.iterdir()) == []
+        mirror_asset(asset, layout, FEED)
+    assert layout.store.list("feeds/") == []
 
 
-def test_mirror_chapters_validates_json(origin: Origin, tmp_path: Path) -> None:
+def test_mirror_chapters_validates_json(origin: Origin, layout: Layout) -> None:
     good = {"version": "1.2.0", "chapters": [{"startTime": 0, "title": "Intro"}]}
     origin.script("/chapters.json", body=json.dumps(good), content_type="application/json+chapters")
     asset = RemoteAsset(AssetKind.chapters, origin.url_for("/chapters.json"), item_id="abc")
-    mirrored = mirror_asset(asset, tmp_path)
+    mirrored = mirror_asset(asset, layout, FEED)
     assert mirrored.basename == "abc.chapters.json" and mirrored.format is AssetFormat.json
     assert mirrored.mime == "application/json+chapters"
-    assert json.loads(mirrored.path.read_bytes()) == good
+    assert json.loads(layout.store.get_bytes(mirrored.key) or b"") == good
     origin.script("/bad.json", body="{not json", content_type="application/json")
     with pytest.raises(AssetError, match="not JSON"):
         mirror_asset(
-            RemoteAsset(AssetKind.chapters, origin.url_for("/bad.json"), item_id="abc"), tmp_path
+            RemoteAsset(AssetKind.chapters, origin.url_for("/bad.json"), item_id="abc"),
+            layout,
+            FEED,
         )
 
 
-def test_mirror_transcripts_by_declared_then_served_format(origin: Origin, tmp_path: Path) -> None:
+def test_mirror_transcripts_by_declared_then_served_format(origin: Origin, layout: Layout) -> None:
     origin.script("/t.vtt", body="WEBVTT\n\n00:00.000 --> 00:01.000\nhi", content_type="text/vtt")
     asset = RemoteAsset(
         AssetKind.transcript,
@@ -177,7 +179,7 @@ def test_mirror_transcripts_by_declared_then_served_format(origin: Origin, tmp_p
         language="en",
         format=AssetFormat.vtt,
     )
-    mirrored = mirror_asset(asset, tmp_path)
+    mirrored = mirror_asset(asset, layout, FEED)
     assert mirrored.basename == "abc.transcript.en.mirrored.vtt"
     assert mirrored.mime == "text/vtt" and mirrored.language == "en"
     origin.script(
@@ -185,43 +187,35 @@ def test_mirror_transcripts_by_declared_then_served_format(origin: Origin, tmp_p
     )
     served = mirror_asset(
         RemoteAsset(AssetKind.transcript, origin.url_for("/t2"), item_id="abc", language="de"),
-        tmp_path,
+        layout,
+        FEED,
     )
     assert served.basename == "abc.transcript.de.mirrored.srt" and served.format is AssetFormat.srt
     origin.script("/t3", body="??", content_type="application/x-unknown")
     with pytest.raises(AssetError, match="unknown transcript format"):
         mirror_asset(
-            RemoteAsset(AssetKind.transcript, origin.url_for("/t3"), item_id="abc"), tmp_path
+            RemoteAsset(AssetKind.transcript, origin.url_for("/t3"), item_id="abc"), layout, FEED
         )
 
 
-def test_mirror_reports_limits_and_network_failures(origin: Origin, tmp_path: Path) -> None:
+def test_mirror_reports_limits_and_network_failures(origin: Origin, layout: Layout) -> None:
     origin.script("/big.json", body=b"[" + b"1," * (CHAPTERS_MAX_BYTES // 2) + b"1]")
     with pytest.raises(AssetError, match="exceeds"):
         mirror_asset(
-            RemoteAsset(AssetKind.chapters, origin.url_for("/big.json"), item_id="a"), tmp_path
+            RemoteAsset(AssetKind.chapters, origin.url_for("/big.json"), item_id="a"), layout, FEED
         )
     origin.script("/missing.jpg", status=404)
     with pytest.raises(AssetError, match="404"):
         mirror_asset(
-            RemoteAsset(AssetKind.artwork, origin.url_for("/missing.jpg"), item_id="a"), tmp_path
+            RemoteAsset(AssetKind.artwork, origin.url_for("/missing.jpg"), item_id="a"),
+            layout,
+            FEED,
         )
     origin.script("/empty.jpg", body=b"", content_type="image/jpeg")
     with pytest.raises(AssetError, match="empty"):
         mirror_asset(
-            RemoteAsset(AssetKind.artwork, origin.url_for("/empty.jpg"), item_id="a"), tmp_path
+            RemoteAsset(AssetKind.artwork, origin.url_for("/empty.jpg"), item_id="a"), layout, FEED
         )
-
-
-def test_write_atomic_leaves_no_part_file(tmp_path: Path) -> None:
-    target = tmp_path / "deep" / "file.bin"
-    assert write_atomic(target, b"data") == target
-    assert target.read_bytes() == b"data"
-    assert sorted(p.name for p in target.parent.iterdir()) == ["file.bin"]
-    blocked = tmp_path / "file.bin"
-    blocked.write_bytes(b"")
-    with pytest.raises(AssetError):
-        write_atomic(blocked / "child", b"x")
 
 
 def test_remote_attachments_from_show_notes() -> None:
@@ -253,19 +247,19 @@ def test_remote_attachments_from_show_notes() -> None:
     )
 
 
-def test_mirror_attachments_by_sniff_type_or_extension(origin: Origin, tmp_path: Path) -> None:
+def test_mirror_attachments_by_sniff_type_or_extension(origin: Origin, layout: Layout) -> None:
     image = RemoteAsset(
         AssetKind.attachment, origin.url_for("/media/tiny.jpg"), item_id="abc", slot="aaaaaaaaaaaa"
     )
-    mirrored = mirror_asset(image, tmp_path / "assets")
+    mirrored = mirror_asset(image, layout, FEED)
     assert mirrored.basename == "abc.attachment.aaaaaaaaaaaa.jpg"
     assert mirrored.mime == "image/jpeg" and mirrored.slot == "aaaaaaaaaaaa"
     audio = RemoteAsset(
         AssetKind.attachment, origin.url_for("/media/tiny.mp3"), item_id="abc", slot="bbbbbbbbbbbb"
     )
-    assert mirror_asset(audio, tmp_path / "assets").basename == "abc.attachment.bbbbbbbbbbbb.mp3"
+    assert mirror_asset(audio, layout, FEED).basename == "abc.attachment.bbbbbbbbbbbb.mp3"
     page = RemoteAsset(
         AssetKind.attachment, origin.url_for("/rss/atom.xml"), item_id="abc", slot="cccccccccccc"
     )
     with pytest.raises(AssetError, match="not an image, PDF or audio"):
-        mirror_asset(page, tmp_path / "assets")
+        mirror_asset(page, layout, FEED)

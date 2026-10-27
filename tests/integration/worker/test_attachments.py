@@ -58,8 +58,9 @@ async def test_show_notes_attachments_are_mirrored_and_rewritten(
     picture = by_url[f"{source.base_url}/media/tiny.jpg"]
     assert picture.state == AssetState.archived and picture.mime == "image/jpeg"
     assert picture.local_path == f"assets/{item.id}.attachment.{picture.slot}.jpg"
-    assets_dir = container.layout.assets_dir(mirror.id)
-    assert (assets_dir / f"{item.id}.attachment.{picture.slot}.jpg").is_file()
+    layout = container.layout
+    name = f"{item.id}.attachment.{picture.slot}.jpg"
+    assert layout.store.exists(layout.asset_key(mirror.id, name))
     slides = by_url[f"{source.base_url}/assets/notes.pdf"]
     assert slides.state == AssetState.archived and slides.mime == "application/pdf"
     broken = by_url[f"{source.base_url}/assets/missing.png"]

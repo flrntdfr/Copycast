@@ -6,15 +6,13 @@ Engine it imports for itself; the worker's side comes from what it leaves behind
 its heartbeat (scheduler tick, its own yt-dlp and ffmpeg), the job queue and the
 Refresh runs. Nothing here reaches the internet, so polling it is cheap.
 
-Storage is the data directory today; the S3 bucket of docs/plans/object-storage.md
-replaces :func:`_storage` and keeps the component's id.
+Storage is the Object store (ADR 0019): reachable, at the expected layout version,
+with the worker's Scratch space as its heartbeat reports it.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
-import shutil
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -272,18 +270,23 @@ def _queue(snapshot: _Snapshot, now: datetime) -> ComponentStatus:
 
 def _storage(ctx: ServiceContext, snapshot: _Snapshot) -> ComponentStatus:
     name = "Storage"
-    data_dir = ctx.settings.data_dir
+    storage = ctx.settings.storage
     facts = [
-        StatusFact(label="Backend", value="Data directory"),
-        StatusFact(label="Path", value=str(data_dir)),
+        StatusFact(label="Backend", value="S3 Object store"),
+        StatusFact(label="Bucket", value=storage.url),
     ]
+    if storage.endpoint:
+        facts.append(StatusFact(label="Endpoint", value=storage.endpoint))
     if snapshot.totals is not None:
         facts.append(StatusFact(label="Used by Feeds", value=_bytes(snapshot.totals.storage_bytes)))
-    if not (data_dir.is_dir() and os.access(data_dir, os.W_OK)):
+    try:
+        version = ctx.layout.read_version()
+    except Exception as exc:  # unreachable endpoint, refused keys, missing bucket
+        reason = str(exc).strip().splitlines()[0][:120] if str(exc).strip() else type(exc).__name__
+        facts.append(StatusFact(label="Error", value=reason))
         return ComponentStatus(
-            id="storage", name=name, state="error", summary="Not writable", facts=facts
+            id="storage", name=name, state="error", summary="Unreachable", facts=facts
         )
-    version = ctx.layout.read_version()
     expected = ctx.expected_layout_version
     if version != expected:
         return ComponentStatus(
@@ -293,21 +296,26 @@ def _storage(ctx: ServiceContext, snapshot: _Snapshot) -> ComponentStatus:
             summary=f"Layout {version or 'missing'}, expected {expected}",
             facts=facts,
         )
-    try:
-        usage = shutil.disk_usage(data_dir)
-    except OSError:
-        return ComponentStatus(id="storage", name=name, state="ok", summary="Writable", facts=facts)
-    facts.append(StatusFact(label="Free", value=f"{_bytes(usage.free)} of {_bytes(usage.total)}"))
-    if usage.free < LOW_FREE_BYTES:
+    free = snapshot.worker.get("free_bytes")
+    if not isinstance(free, int) or isinstance(free, bool):
+        return ComponentStatus(
+            id="storage", name=name, state="ok", summary="Reachable", facts=facts
+        )
+    facts.append(StatusFact(label="Worker Scratch free", value=_bytes(free)))
+    if free < LOW_FREE_BYTES:
         return ComponentStatus(
             id="storage",
             name=name,
             state="warn",
-            summary=f"Low on space: {_bytes(usage.free)} free",
+            summary=f"Scratch low on space: {_bytes(free)} free",
             facts=facts,
         )
     return ComponentStatus(
-        id="storage", name=name, state="ok", summary=f"{_bytes(usage.free)} free", facts=facts
+        id="storage",
+        name=name,
+        state="ok",
+        summary=f"Reachable; {_bytes(free)} Scratch free",
+        facts=facts,
     )
 
 

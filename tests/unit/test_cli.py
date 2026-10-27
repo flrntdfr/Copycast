@@ -21,14 +21,17 @@ def test_version_prints_app_and_engine() -> None:
 
 def test_config_prints_redacted_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("COPYCAST__DATABASE_URL", "postgresql://copycast:hunter2@db/copycast")
-    monkeypatch.setenv("COPYCAST__DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("COPYCAST__STORAGE__SCRATCH_DIR", str(tmp_path))
+    monkeypatch.setenv("COPYCAST__STORAGE__SECRET_ACCESS_KEY", "s3kr3t-key")
     result = CliRunner().invoke(main, ["config"])
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert data["database_url"] == "postgresql+psycopg://copycast:***@db/copycast"
     assert "hunter2" not in result.output
     assert data["refresh"]["interval_hours"] == 24
-    assert data["data_dir"] == str(tmp_path.resolve())
+    assert data["storage"]["scratch_dir"] == str(tmp_path.resolve())
+    assert data["storage"]["secret_access_key"] == "***"
+    assert "s3kr3t-key" not in result.output
 
 
 def test_invalid_config_exits_2_with_one_line(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,6 +43,14 @@ def test_invalid_config_exits_2_with_one_line(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_every_plan_command_is_registered() -> None:
-    assert set(main.commands) == {"api", "worker", "migrate", "rebuild", "config", "openapi"}
+    assert set(main.commands) == {
+        "api",
+        "worker",
+        "migrate",
+        "rebuild",
+        "storage",
+        "config",
+        "openapi",
+    }
     result = CliRunner().invoke(main, ["rebuild", "--help"])
     assert result.exit_code == 0 and "--yes" in result.output

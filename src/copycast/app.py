@@ -1,7 +1,7 @@
 """Composition root.
 
 :func:`build_container` wires the engine (yt-dlp or an injected fake), the
-database engine and sessionmaker, the on-disk layout, the unit-of-work factory,
+database engine and sessionmaker, the Object store layout and Scratch, the unit-of-work factory,
 the gateways the application services talk to (Source probing and search, the
 public URLs, new ORM rows) and the services themselves, for the api process,
 the worker and the tests. Adapter collaborators are resolved lazily on first
@@ -188,13 +188,12 @@ class SourceGatewayAdapter:
 
     def save_snapshot(self, feed_id: str, snapshot: SourceSnapshot) -> None:
         """``source/feed.xml`` (RSS, verbatim) or ``source/listing.json`` (yt-dlp raw listing)."""
-        write_atomic = _load("copycast.adapters.storage.atomic", "write_atomic")
-        write_json_atomic = _load("copycast.adapters.storage.atomic", "write_json_atomic")
-        self._layout.ensure_feed_dirs(feed_id)
         if snapshot.body is not None:
-            write_atomic(self._layout.source_xml_path(feed_id), snapshot.body)
+            self._layout.store.put_bytes(
+                self._layout.source_xml_key(feed_id), snapshot.body, content_type="application/xml"
+            )
         elif snapshot.listing.raw is not None:
-            write_json_atomic(self._layout.source_listing_path(feed_id), snapshot.listing.raw)
+            self._layout.write_json(self._layout.source_listing_key(feed_id), snapshot.listing.raw)
 
     # ------------------------------------------------------------------ light Refresh
 
@@ -255,14 +254,13 @@ class SourceGatewayAdapter:
         was none): a Source that answers 200 to every conditional GET but serves the
         same bytes changed nothing.
         """
-        write_atomic = _load("copycast.adapters.storage.atomic", "write_atomic")
-        self._layout.ensure_feed_dirs(feed_id)
-        path = self._layout.source_xml_path(feed_id)
+        key = self._layout.source_xml_key(feed_id)
         try:
-            changed = not path.is_file() or path.read_bytes() != body
+            changed = self._layout.store.get_bytes(key) != body
         except OSError:
             changed = True
-        write_atomic(path, body)
+        if changed:
+            self._layout.store.put_bytes(key, body, content_type="application/xml")
         return changed
 
     @staticmethod
@@ -464,7 +462,8 @@ class Container:
         engine: the Engine port (``adapters.engine.build_engine`` or an injected fake).
         db_engine: the SQLAlchemy ``AsyncEngine`` (``adapters.db.session.create_db_engine``).
         sessionmaker: ``async_sessionmaker[AsyncSession]`` bound to ``db_engine``.
-        layout: the data directory layout (``adapters.storage.layout.Layout``).
+        layout: the Object store layout (``adapters.storage.layout.Layout`` over ``[storage] url``).
+        scratch: the local Scratch directory (``adapters.storage.scratch.Scratch``).
         uow_factory: ``adapters.db.uow.UnitOfWorkFactory(sessionmaker, layout)``;
             ``async with container.uow_factory() as uow`` opens one transaction.
         sources: the Source gateway (probe cache, iTunes search, Source snapshots).
@@ -516,7 +515,18 @@ class Container:
     def layout(self) -> Any:
         return self._cached(
             "layout",
-            lambda: _load("copycast.adapters.storage.layout", "Layout")(self.settings.data_dir),
+            lambda: _load("copycast.adapters.storage.layout", "Layout")(
+                _load("copycast.adapters.storage.objects", "open_store")(self.settings.storage)
+            ),
+        )
+
+    @property
+    def scratch(self) -> Any:
+        return self._cached(
+            "scratch",
+            lambda: _load("copycast.adapters.storage.scratch", "Scratch")(
+                self.settings.storage.scratch_dir
+            ),
         )
 
     @property
@@ -561,7 +571,10 @@ class Container:
         return version
 
     def ensure_layout(self) -> str:
-        """Write ``LAYOUT_VERSION`` on first run or refuse a mismatch (``SettingsError``)."""
+        """Reach the Object store, write ``LAYOUT_VERSION`` on first run or refuse a mismatch.
+
+        Both failures are a ``SettingsError`` (one line, exit 2).
+        """
         version: str = self.layout.ensure_version()
         return version
 

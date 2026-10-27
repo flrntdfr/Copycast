@@ -61,11 +61,13 @@ async def test_backfill_all_wants_every_archivable_item(
             assert (AssetKind.chapters, AssetState.archived) in kinds
             assert (AssetKind.transcript, AssetState.archived) in kinds
             assert item.media_path == f"media/{item.id}.m4a"
-            assert container.layout.item_xml_path(mirror.id, item.id).is_file()
+            item_xml = container.layout.item_xml_key(mirror.id, item.id)
+            assert container.layout.store.exists(item_xml)
             assert item.source_item_xml and "<item" in item.source_item_xml
     layout = container.layout
-    assert (layout.assets_dir(mirror.id) / f"{items[0].id}.chapters.json").is_file()
-    assert not list(layout.media_dir(mirror.id).glob("*.jpg")), "artwork moved out of media/"
+    assert layout.store.exists(layout.chapters_key(mirror.id, items[0].id))
+    media = [o.name for o in layout.store.list(layout.media_prefix(mirror.id))]
+    assert not [n for n in media if n.endswith(".jpg")], "artwork stored under assets/"
     archives = await jobs_of(container, mirror.id, kind=JobKind.archive_item)
     assert {job.priority for job in archives} == {200}
     assert {job.engine_version for job in archives} == {"0.0.0"}
@@ -138,7 +140,9 @@ async def test_unchanged_304_still_applies_policy_and_delists(
         assert by_number[1].listed is False
         assert by_number[1].archive_state == ArchiveState.archived
         assert by_number[2].listed is True
-    descriptor = FeedDescriptor.read(container.layout.descriptor_path(mirror.id))
+    descriptor = FeedDescriptor.read(
+        container.layout.store, container.layout.descriptor_key(mirror.id)
+    )
     assert {i.listed for i in descriptor.items} == {True, False}
 
 

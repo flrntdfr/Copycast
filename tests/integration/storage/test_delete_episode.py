@@ -21,17 +21,15 @@ async def test_delete_episode_mirror(uow_factory: UnitOfWorkFactory, layout: Lay
         episode = item_row(feed, 1, state=ArchiveState.archived, media_bytes=2000)
         other = item_row(feed, 2, state=ArchiveState.archived, media_bytes=3000)
         await seed(uow, episode, other)
-        layout.ensure_feed_dirs(feed.id)
-        media = layout.media_path(feed.id, episode.id, "m4a")
-        media.write_bytes(b"\0" * 2000)
-        info = layout.info_json_path(feed.id, episode.id)
-        info.write_text("{}")
-        item_xml = layout.item_xml_path(feed.id, episode.id)
-        item_xml.write_text("<item/>")
-        part = layout.tmp_dir(feed.id) / f"{episode.id}.m4a.part"
-        part.write_bytes(b"\0")
-        artwork = layout.item_artwork_path(feed.id, episode.id, "jpg")
-        artwork.write_bytes(b"jpg")
+        store = layout.store
+        media = layout.media_key(feed.id, episode.id, "m4a")
+        store.put_bytes(media, b"\0" * 2000)
+        info = layout.info_json_key(feed.id, episode.id)
+        store.put_bytes(info, "{}")
+        item_xml = layout.item_xml_key(feed.id, episode.id)
+        store.put_bytes(item_xml, "<item/>")
+        artwork = layout.item_artwork_key(feed.id, episode.id, "jpg")
+        store.put_bytes(artwork, b"jpg")
         await uow.assets.upsert(
             feed.id,
             episode.id,
@@ -49,10 +47,10 @@ async def test_delete_episode_mirror(uow_factory: UnitOfWorkFactory, layout: Lay
         assert result.was_archived is True and result.reason is DeleteReason.user
         assert result.bytes_freed == 2003
         assert result.revision == 2 and result.intent_version == 2
-        assert media.exists()  # files go only once the transaction committed
-    assert not media.exists() and not info.exists() and not part.exists()
-    assert not artwork.exists()
-    assert item_xml.exists()  # the Source's original <item> is kept
+        assert store.exists(media)  # objects go only once the transaction committed
+    assert not store.exists(media) and not store.exists(info)
+    assert not store.exists(artwork)
+    assert store.exists(item_xml)  # the Source's original <item> is kept
 
     async with uow_factory() as uow:
         row = await uow.catalog.require(episode.id)
@@ -62,7 +60,7 @@ async def test_delete_episode_mirror(uow_factory: UnitOfWorkFactory, layout: Lay
         refreshed = await uow.feeds.require(feed.id)
         assert refreshed.storage_bytes == 3000
         assert (refreshed.intent_version, refreshed.revision) == (2, 2)
-    descriptor = FeedDescriptor.read(layout.descriptor_path(feed.id))
+    descriptor = FeedDescriptor.read(layout.store, layout.descriptor_key(feed.id))
     states = {i.id: i.archive_state for i in descriptor.items}
     assert states[episode.id] is ArchiveState.deleted
 

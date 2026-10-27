@@ -1,15 +1,16 @@
 # Copycast
 
-A self-hosted podcast mirroring and archiving service. You point it at a Source of audio content (a podcast feed, a page advertising feeds, a YouTube channel or playlist, anything the Engine supports); it keeps a durable local copy and publishes its own podcast feed that keeps working even if the original disappears. Agents get the same capabilities as the web UI through an MCP server: find a podcast by name and mirror it, archive an exact selection of episodes, or push arbitrary URLs into a Bucket feed.
+A self-hosted podcast mirroring and archiving service. You point it at a Source of audio content (a podcast feed, a page advertising feeds, a YouTube channel or playlist, anything the Engine supports); it keeps a durable copy in its Object store and publishes its own podcast feed that keeps working even if the original disappears. Agents get the same capabilities as the web UI through an MCP server: find a podcast by name and mirror it, archive an exact selection of episodes, or push arbitrary URLs into a Bucket feed.
 
-Copycast v1 is a Python (FastAPI, SQLAlchemy, Postgres) modular monolith with yt-dlp imported as a library in a worker process, a React frontend, and an MCP server sharing the API's service layer. It ships as one container image run as two processes.
+Copycast v1 is a Python (FastAPI, SQLAlchemy, Postgres) modular monolith with yt-dlp imported as a library in a worker process, a React frontend, and an MCP server sharing the API's service layer. It ships as one container image run as two processes, next to Postgres, an S3 Object store
+(SeaweedFS in compose) and an optional Valkey Feed cache.
 
 ## Language
 
 Use these terms, in code and in conversation. The _Avoid_ lists name the words that mean something else here or that blur a distinction.
 
 **Feed**:
-The umbrella for the two kinds of thing Copycast publishes a podcast feed for: a Mirror or a Bucket. Every Feed has an id, a title, a Catalog, a data directory and a published RSS document.
+The umbrella for the two kinds of thing Copycast publishes a podcast feed for: a Mirror or a Bucket. Every Feed has an id, a title, a Catalog, a prefix in the Object store (`feeds/{id}/`) and a published RSS document.
 _Avoid_: Channel, show, podcast (for the thing Copycast serves)
 
 **Mirror**:
@@ -77,7 +78,7 @@ The episode number a Source publishes itself (`itunes:episode`, a playlist index
 _Avoid_: Episode id, track number
 
 **Mirror ID**:
-A Feed's permanent, opaque identity. For a Mirror it is derived from the Source's dedup key at creation; for a Bucket from its name plus a random suffix. It names the feed URL and the data directory and never changes — podcast clients depend on it.
+A Feed's permanent, opaque identity. For a Mirror it is derived from the Source's dedup key at creation; for a Bucket from its name plus a random suffix. It names the feed URL and the Feed's prefix in the Object store and never changes — podcast clients depend on it.
 _Avoid_: Slug, name, feed name
 
 **Backfill**:
@@ -148,6 +149,18 @@ A Mirror's own title, kept over the Source's across Refreshes and shown in the U
 _Avoid_: Rename (that is a Bucket), alias, custom name
 _Avoid_: Blacklist, ignore list, ban
 
+**Object store**:
+The S3 bucket (`[storage] url`, SeaweedFS in compose) that holds every byte Copycast keeps under the old data directory's names: `LAYOUT_VERSION`, `engine/`, `feeds/{id}/feed.json`, `source/`, `media/`, `assets/`, plus staged Uploads under `uploads/`. Postgres can be rebuilt from it alone (ADR 0001, ADR 0019). Copycast proxies every object it serves; podcast apps never talk to it. `memory://` is the same code in-process, for tests only.
+_Avoid_: Bucket (a Feed with no Source; its share of the Object store is its Storage), data directory (layout 1, before 2.0), disk, S3 (the protocol), MinIO
+
+**Scratch**:
+The worker's local directory (`[storage] scratch_dir`) where an archive job downloads, transcodes and tags in a directory of its own; only finished files leave it, uploaded to the Object store before the item is marked archived. Removed when the job ends, swept when a worker starts; never served, never backed up.
+_Avoid_: tmp, temp dir, cache, staging
+
+**Feed cache**:
+Rendered Feed documents keyed by `(feed_id, revision)`: this api process's LRU in front of a Valkey every replica shares (`[cache] url`), with one render per revision across replicas. An accelerator only: losing it costs renders, never data.
+_Avoid_: memcached (it is Valkey), CDN, feed store
+
 **Engine**:
 yt-dlp as used by Copycast: imported as a library, lockfile-pinned to one version (nightly channel by default), bumped by automation. Every download goes through it, RSS enclosures included; its version is recorded on every archived item and shown on the About page.
 _Avoid_: Downloader, backend, scraper, yt-dlp binary
@@ -165,7 +178,7 @@ A bearer secret minted from the UI for one MCP client, shown once, stored as a d
 _Avoid_: Token, PAT, MCP password, service account
 
 **Default**:
-An operator setting in the Mirrors half of the Settings page (Refresh interval, metadata language, minimum length, the policy new Mirrors start from) that every Mirror inherits unless its own value is set; saved as it changes, stored in `data/engine/defaults.json`. A Mirror overrides it by setting a value and resets by clearing it.
+An operator setting in the Mirrors half of the Settings page (Refresh interval, metadata language, minimum length, the policy new Mirrors start from) that every Mirror inherits unless its own value is set; saved as it changes, stored in the Object store at `engine/defaults.json`. A Mirror overrides it by setting a value and resets by clearing it.
 _Avoid_: Global setting, preference, config (that is the environment)
 
 **Minimum length**:
@@ -173,12 +186,12 @@ A Mirror's rule, or the Default, that keeps items shorter than N seconds Availab
 _Avoid_: Filter, Shorts rule, duration threshold
 
 **Cookie file**:
-A Netscape `cookies.txt` added under *Authentications* on the Settings page so sites that demand a login (YouTube from a server's IP, Twitch, Vimeo, Mixcloud) accept downloads; stored as `data/engine/cookies/{name}.txt`, one row each. The Engine carries one jar merged from all of them, `data/engine/cookies.txt`, on every listing and fetch, and cookies the sites rotate there go back to their file. A service shows unlocked while a file holds its cookies. Never shown back, never exposed to agents.
+A Netscape `cookies.txt` added under *Authentications* on the Settings page so sites that demand a login (YouTube from a server's IP, Twitch, Vimeo, Mixcloud) accept downloads; stored in the Object store as `engine/cookies/{name}.txt`, one row each. The Engine carries one jar merged from all of them, `engine/cookies.txt` (yt-dlp gets a private Scratch copy), on every listing and fetch, and cookies the sites rotate there go back to their file. A service shows unlocked while a file holds its cookies. Never shown back, never exposed to agents.
 _Avoid_: Cookies setting, session file, YouTube login, credentials
 
 **Storage**:
-A Feed's storage: its data directory of media, Artwork and assets, listed with its size in the Buckets half of the Settings page (the Mirrors in the Feeds page's order, then the Buckets and captured playlists). Clearing a bucket deletes every Episode not kept for good and keeps the Feed; deleting it deletes the Feed.
-_Avoid_: folder, volume
+A Feed's storage: its prefix of the Object store (`feeds/{id}/`: media, Artwork and assets), listed with its size in the Buckets half of the Settings page (the Mirrors in the Feeds page's order, then the Buckets and captured playlists). Clearing a bucket deletes every Episode not kept for good and keeps the Feed; deleting it deletes the Feed.
+_Avoid_: folder, volume, data directory
 
 **Scope**:
 What an API key may do over MCP: `read` (read-only tools), `write` (everything but deletions) or `full` (everything). Every tool checks it before running.
@@ -188,20 +201,22 @@ _Avoid_: Role, permission, level, grant
 
 ### Stack
 
-Python 3.13, uv lockfile, FastAPI, Pydantic v2, pydantic-settings (`config/copycast.toml` plus `COPYCAST__SECTION__KEY` environment variables; `COPYCAST__AUTH__PASSWORD` switches authentication on), SQLAlchemy 2 async with psycopg 3, Alembic, structlog, httpx, lxml, sse-starlette, fastmcp, click; `yt-dlp[default]` from the lockfile; ffmpeg from the OS image; Postgres 17. Frontend: React 19, TypeScript, Vite 7, Tailwind v4, shadcn/ui, TanStack Router/Query/Table, openapi-typescript + openapi-fetch, vitest + MSW, Playwright; package manager pnpm 11 via corepack (never npm or yarn). Delivery: one image, Docker Compose (Tailscale sidecar or direct port), Kubernetes kustomize base, GitHub Actions.
+Python 3.13, uv lockfile, FastAPI, Pydantic v2, pydantic-settings (`config/copycast.toml` plus `COPYCAST__SECTION__KEY` environment variables; `COPYCAST__AUTH__PASSWORD` switches authentication on), SQLAlchemy 2 async with psycopg 3, Alembic, structlog, httpx, lxml, sse-starlette, fastmcp, click, obstore (the Object store client), redis (the Feed cache client, against Valkey); `yt-dlp[default]` from the lockfile; ffmpeg from the OS image; Postgres 17, SeaweedFS (S3), Valkey 9. Frontend: React 19, TypeScript, Vite 7, Tailwind v4, shadcn/ui, TanStack Router/Query/Table, openapi-typescript + openapi-fetch, vitest + MSW, Playwright; package manager pnpm 11 via corepack (never npm or yarn). Delivery: one image, Docker Compose (Tailscale sidecar or direct port), Kubernetes kustomize base, GitHub Actions.
 
 ### Repository map
 
 ```
 src/copycast/domain/         pure rules: enums, ids, urls, listing, ordinals, selection, engine_options
 src/copycast/application/    models (the API/MCP contract), capabilities registry, ports (Engine), events, services/
-src/copycast/adapters/       api (FastAPI), mcp (fastmcp), db (SQLAlchemy, migrations), storage (layout, descriptor,
-                             rebuild), engine (the only importer of yt_dlp), sources (RSS, discovery, probe, iTunes),
-                             feeds (RSS rendering), assets (Artwork, chapters, transcripts)
+src/copycast/adapters/       api (FastAPI; objects.py proxies Object store objects, cache.py the Feed cache), mcp
+                             (fastmcp), db (SQLAlchemy, migrations), storage (objects: the Object store over obstore;
+                             layout: its keys; scratch; descriptor; rebuild; push), engine (the only importer of
+                             yt_dlp), sources (RSS, discovery, probe, iTunes), feeds (RSS rendering), assets
 src/copycast/worker/         runner, scheduler, progress, joblog, jobs/{refresh,archive_item,expand_request,prune,rebuild}
 src/copycast/{app,cli,settings,logging,version}.py   composition root, click CLI, configuration
 web/                         Vite app; web/openapi.json is committed and generated into src/api/schema.d.ts
-deploy/                      compose/docker-compose.dev.yml (Postgres for development), kubernetes/{base,overlays/example}
+deploy/                      compose/docker-compose.dev.yml (Postgres, SeaweedFS, Valkey for development),
+                             compose/seaweedfs/entrypoint.sh, kubernetes/{base,overlays/example}
 tests/                       unit, integration/{storage,worker,api,mcp,engine}, e2e, support (FakeEngine, Origin), fixtures
 scripts/                     smoke.sh, engine_version.py, engine_newest.py
 docs/                        adr/ (decisions), operations.md (running it)
@@ -244,6 +259,7 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 
 - The Engine is never real in unit or integration tests: use `tests/support/fake_engine.py` (`script_listing`, `fail_next`, `block_fetches`). Real yt-dlp runs only in `tests/integration/engine` (`ffmpeg` marker, `network` marker gated by `COPYCAST_TEST_NETWORK=1`).
 - Postgres tests are marked `integration` and get a per-test database cloned from a migrated template (`db` fixture); never share state between tests. Set `COPYCAST_TEST_DATABASE_URL` to skip testcontainers.
+- Every test gets an Object store of its own (`store`, `layout` fixtures): a `memory://` store by default. `COPYCAST_TEST_S3_URL` (with `_ENDPOINT`, `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY`) runs the whole suite against a real S3 bucket, a prefix per test; the `s3` marker runs SeaweedFS in a testcontainer. Assert against the Object store, never a local path; only Scratch is a directory.
 - HTTP Sources come from `tests/support/origin.py` serving `tests/fixtures` (Range, ETag, scripted 304/5xx); never reach the internet in tests.
 - Rendered feeds are compared canonically (`tests/support/xml.py`) against golden files; regenerate with `make golden-regen` and review the diff.
 - Keep coverage above the gates (85 % overall, 95 % for `copycast.domain`).
@@ -269,3 +285,4 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0015](docs/adr/0015-serial-buckets-from-uploads.md) | Serial Buckets: an agent uploads files over HTTP and gives their listening order |
 | [0016](docs/adr/0016-ephemeral-or-archive-and-the-archive-flag.md) | Two policies, Ephemeral and Archive (with or without Backfill); the Archive flag keeps an Episode for good |
 | [0018](docs/adr/0018-inboxes-become-buckets-with-uploads.md) | Inboxes are renamed Buckets; uploads join any Bucket in natural file-name order, dated by arrival |
+| [0019](docs/adr/0019-object-store-scratch-and-a-shared-feed-cache.md) | Every byte lives in an S3 Object store; the worker transcodes in Scratch; first plays hold the line on a reserved slot; feeds are cached in a shared Valkey |

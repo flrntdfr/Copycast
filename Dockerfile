@@ -62,8 +62,8 @@ RUN apt-get update \
 COPY --from=deno /usr/local/bin/deno /usr/local/bin/deno
 
 RUN useradd --uid 1000 --user-group --create-home --shell /usr/sbin/nologin copycast \
-    && mkdir -p /app /data /config \
-    && chown copycast:copycast /data
+    && mkdir -p /app /scratch /config \
+    && chown copycast:copycast /scratch && chmod 1777 /scratch
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.21@sha256:ff07b86af50d4d9391d9daf4ff89ce427bc544f9aae87057e69a1cc0aa369946 /uv /usr/local/bin/uv
 
@@ -100,7 +100,7 @@ COPY --from=web /web/dist /app/web
 ENV COPYCAST_CONFIG=/config/copycast.toml \
     COPYCAST_WEB_DIR=/app/web \
     COPYCAST_LOG_FORMAT=json \
-    COPYCAST__DATA_DIR=/data
+    COPYCAST__STORAGE__SCRATCH_DIR=/scratch
 
 LABEL org.opencontainers.image.title="Copycast" \
       org.opencontainers.image.description="Self-hosted podcast mirroring and archiving service" \

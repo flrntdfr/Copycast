@@ -33,8 +33,8 @@ async def test_create_reuses_the_probe_cache(container: Container, source: Sourc
     assert mirror.counts.available == 3 and mirror.episode_count == 0
     assert mirror.follow is True and mirror.backfill.mode is BackfillMode.all
     layout = container.layout
-    assert layout.source_xml_path(mirror.id).is_file(), "source/feed.xml written after commit"
-    assert read_intent_version(layout.descriptor_path(mirror.id)) is not None
+    assert layout.store.exists(layout.source_xml_key(mirror.id)), "source/feed.xml stored"
+    assert read_intent_version(layout.store, layout.descriptor_key(mirror.id)) is not None
     refreshes = await jobs_of(container, mirror.id, kind=JobKind.refresh)
     assert [job.status for job in refreshes] == [JobStatus.queued.value]
     async with uow(container) as unit:
@@ -127,8 +127,8 @@ async def test_ytdlp_source_writes_listing_json(
     )
     mirror = await create_mirror(container, url, mode=BackfillMode.latest, latest_n=1)
     assert mirror.source_kind.value == "ytdlp" and mirror.service == "YouTube"
-    listing_path = container.layout.source_listing_path(mirror.id)
-    assert json.loads(listing_path.read_text())["_type"] == "playlist"
+    listing_key = container.layout.source_listing_key(mirror.id)
+    assert json.loads(container.layout.store.get_bytes(listing_key) or b"")["_type"] == "playlist"
     await runner.run_until_idle()
     async with uow(container) as unit:
         counts = await unit.catalog.count_by_state(mirror.id)
@@ -142,10 +142,11 @@ async def test_get_and_list_and_delete_feed(container: Container, source: Source
     assert read.id == mirror.id
     feeds = await container.services.list_feeds()
     assert [feed.id for feed in feeds.feeds] == [mirror.id]
-    feed_dir = container.layout.feed_dir(mirror.id)
-    assert feed_dir.is_dir()
+    layout = container.layout
+    assert layout.has_feed(mirror.id)
     await container.services.delete_feed(mirror.id)
-    assert not feed_dir.exists()
+    assert not layout.has_feed(mirror.id)
+    assert layout.store.list(layout.feed_prefix(mirror.id)) == []
     with pytest.raises(NotFound):
         await container.services.get_feed(mirror.id)
     assert (await jobs_of(container, mirror.id)) == []

@@ -11,6 +11,7 @@ import importlib
 import importlib.metadata
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 import click
@@ -79,7 +80,7 @@ def api(reload: bool) -> None:
     settings = _load_settings()
     configure_logging(settings, process="api")
     try:
-        settings.check_data_dir()
+        settings.check_scratch_dir()
         _api_preflight(settings)
     except SettingsError as exc:
         click.echo(f"copycast: {exc}", err=True)
@@ -119,7 +120,7 @@ def worker() -> None:
     settings = _load_settings()
     configure_logging(settings, process="worker")
     try:
-        settings.check_data_dir()
+        settings.check_scratch_dir()
     except SettingsError as exc:
         click.echo(f"copycast: {exc}", err=True)
         sys.exit(EXIT_CONFIG)
@@ -148,24 +149,63 @@ def migrate() -> None:
 
 
 @main.command()
-@click.option("--yes", is_flag=True, help="Also delete database rows absent from disk.")
+@click.option("--yes", is_flag=True, help="Also delete database rows absent from the Object store.")
 def rebuild(yes: bool) -> None:
-    """Reconstruct the database from the data directory."""
+    """Reconstruct the database from the Object store."""
     settings = _load_settings()
     configure_logging(settings, process="cli")
     try:
-        settings.check_data_dir()
+        settings.check_scratch_dir()
     except SettingsError as exc:
         click.echo(f"copycast: {exc}", err=True)
         sys.exit(EXIT_CONFIG)
     run_rebuild = _lazy("copycast.adapters.storage.rebuild", "rebuild")
-    result = run_rebuild(settings, yes=yes)
-    if asyncio.iscoroutine(result):
-        result = asyncio.run(result)
+    try:
+        result = run_rebuild(settings, yes=yes)
+        if asyncio.iscoroutine(result):
+            result = asyncio.run(result)
+    except SettingsError as exc:
+        click.echo(f"copycast: {exc}", err=True)
+        sys.exit(EXIT_CONFIG)
     if result is not None:
         dump = getattr(result, "model_dump", None)
         payload = dump(mode="json") if callable(dump) else result
         click.echo(json.dumps(payload, indent=2, default=str))
+
+
+@main.group()
+def storage() -> None:
+    """The Object store: copy a pre-2.0 data directory into it."""
+
+
+@storage.command("push")
+@click.option(
+    "--from",
+    "source",
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="The layout-1 data directory to copy (left untouched).",
+)
+@click.option("--dry-run", is_flag=True, help="Count what would be uploaded; write nothing.")
+def storage_push(source: Path, dry_run: bool) -> None:
+    """Copy a data directory into the Object store, then mark the Object store as layout 2.
+
+    Resumable: objects already present with the same size are skipped. Exits 1
+    when any file failed (LAYOUT_VERSION is then not written; run it again).
+    """
+    settings = _load_settings()
+    configure_logging(settings, process="cli")
+    layout_cls = _lazy("copycast.adapters.storage.layout", "Layout")
+    open_store = _lazy("copycast.adapters.storage.objects", "open_store")
+    run_push = _lazy("copycast.adapters.storage.push", "push")
+    try:
+        report = run_push(layout_cls(open_store(settings.storage)), source, dry_run=dry_run)
+    except SettingsError as exc:
+        click.echo(f"copycast: {exc}", err=True)
+        sys.exit(EXIT_CONFIG)
+    click.echo(json.dumps(report.model_dump(mode="json"), indent=2))
+    if report.failures:
+        sys.exit(1)
 
 
 @main.command()

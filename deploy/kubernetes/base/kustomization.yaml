@@ -1,17 +1,20 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Copycast on Kubernetes: one api Deployment, one worker Deployment (Recreate, pinned to the
-# api's node so a ReadWriteOnce data volume works), a CloudNativePG cluster and a Tailscale
-# Ingress. Requires the CloudNativePG operator and the Tailscale Kubernetes operator.
-# HA is active-passive by definition: exactly one worker, one data volume.
+# Copycast on Kubernetes: an api Deployment (stateless, scales out), one worker Deployment
+# (Recreate; exactly one runs), Valkey for the shared Feed cache, a CloudNativePG cluster and
+# a Tailscale Ingress. Requires the CloudNativePG operator, the Tailscale Kubernetes operator
+# and an S3 bucket (SeaweedFS, AWS, ...): set [storage] in copycast.toml and create the
+# Secret "copycast-storage" with the keys access_key_id and secret_access_key:
+#   kubectl -n copycast create secret generic copycast-storage \
+#     --from-literal=access_key_id=... --from-literal=secret_access_key=...
 
 namespace: copycast
 
 resources:
   - namespace.yaml
   - postgres-cluster.yaml
-  - data-pvc.yaml
+  - valkey.yaml
   - api-deployment.yaml
   - worker-deployment.yaml
   - service.yaml

@@ -1,20 +1,24 @@
 # Operating Copycast
 
-This is the runbook: first run, configuration, Kubernetes, backup and restore, rebuilding the
-database from disk, and engine bumps and rollbacks. The product language (Mirror, Bucket,
+This is the runbook: first run, configuration, the Object store, Kubernetes, backup and
+restore, rebuilding the database from the Object store, and engine bumps and rollbacks. The
+product language (Mirror, Bucket,
 Refresh, ...) is defined in [AGENTS.md](../AGENTS.md).
 
 ## Shape of a deployment
 
-One image, `ghcr.io/flrntdfr/copycast`, run as two processes plus Postgres 17:
+One image, `ghcr.io/flrntdfr/copycast`, run as two processes plus Postgres 17, an S3 bucket
+(the Object store; SeaweedFS in the compose stack) and, optionally, Valkey (the shared Feed cache):
 
 | Process | Command | Port | Role |
 |---|---|---|---|
 | api | `copycast api` | 8080 | web UI, HTTP API, MCP at `/mcp`, published feeds and media, SSE events |
 | worker | `copycast worker` | 8081 (health only) | Refreshes, downloads through the engine, Request expansion, pruning, rebuilds |
 
-Both share the same Postgres database and the same data directory (`/data` in the image).
-There is exactly one worker: it holds a session-level advisory lock and a second worker exits
+Both share the same Postgres database and the same Object store (ADR 0019). The worker downloads,
+transcodes and tags in its local Scratch directory (`/scratch` in the image) and uploads only
+finished files; the api proxies objects to podcast apps and holds no state of its own, so it
+can run several replicas (its own Scratch only holds an Upload while its tags are read). There is exactly one worker: it holds a session-level advisory lock and a second worker exits
 with a message. By default Copycast has no authentication: put it behind Tailscale (the
 compose `tailscale` profile, the Kubernetes Tailscale Ingress) or on a trusted network, or
 switch authentication on (below) behind TLS.
@@ -22,24 +26,26 @@ switch authentication on (below) behind TLS.
 ## First run with Docker Compose
 
 ```bash
-cp .env.example .env
-mkdir -p data config && chown -R 1000:1000 data
+cp .env.example .env            # set POSTGRES_PASSWORD, COPYCAST_S3_SECRET_KEY, COPYCAST_BASE_URL
+mkdir -p config
 docker compose up -d
 docker compose logs -f api worker
 ```
 
-`.env` chooses the profile (`tailscale` or `direct`), the Postgres password and the public
-base URL. The base URL is embedded in every feed and media link, so it must be the address
+`.env` chooses the profile (`tailscale` or `direct`), the Postgres password, the Object store's
+secret key (shared by SeaweedFS and Copycast; `COPYCAST_S3_DATA` binds the archive to a
+directory instead of the `seaweedfs` volume) and the public base URL. The base URL is embedded in every feed and media link, so it must be the address
 podcast clients will use: `https://copycast.<tailnet>.ts.net` for the Tailscale profile,
 `http://<host>:8080` for the direct profile.
 
 Both processes exit with code 2 and a single actionable line when the configuration is
-unusable: an unwritable data directory (the line contains the `chown` command to run), a
-`LAYOUT_VERSION` mismatch, a rejected engine option, or a malformed base URL.
+unusable: an Object store that cannot be reached or refuses the keys, a `LAYOUT_VERSION` mismatch
+(a 1.x data directory not yet pushed, below), an unwritable Scratch directory (the line
+contains the `chown` command to run), a rejected engine option, or a malformed base URL.
 
 Readiness: `GET /healthz/ready` on the api (8080) and on the worker (8081) answers 200 with
-`{status, checks{db, schema, data_dir, layout, worker_seen_at}}` (the worker adds
-`scheduler` and `ffmpeg`), 503 when anything is degraded. `GET /healthz/live` is a plain
+`{status, checks{db, schema, storage, layout, worker_seen_at}}` (the worker adds
+`scratch`, `scheduler` and `ffmpeg`), 503 when anything is degraded. `GET /healthz/live` is a plain
 liveness check. `/api/about` shows the app version, the engine version and channel, ffmpeg,
 the layout version and storage totals.
 
@@ -60,7 +66,6 @@ by `COPYCAST_CONFIG`, and environment variables. A missing TOML file is tolerate
 
 ```toml
 base_url     = "http://localhost:8080"
-data_dir     = "./data"
 database_url = "postgresql+psycopg://copycast:copycast@localhost:5432/copycast"   # postgresql:// is rewritten
 
 [refresh]
@@ -72,6 +77,19 @@ concurrency            = 2      # parallel engine jobs in the worker
 channel = "nightly"             # informational: nightly | stable
 
 [engine.options]                # raw yt-dlp defaults applied to every job
+
+[storage]                       # the Object store (ADR 0019); prefer the environment for the keys
+url               = "s3://copycast"   # s3://<bucket>[/<prefix>]; memory://<name> for tests only
+endpoint          = ""                # empty for AWS S3; http://seaweedfs:8333 in compose
+region            = "us-east-1"
+access_key_id     = "..."             # or the usual AWS_* environment
+secret_access_key = "..."
+scratch_dir       = "./scratch"       # local: downloads and transcodes, never served
+min_free_scratch_mb = 512
+
+[cache]                         # the shared Feed cache; unset, each api process caches alone
+url = "redis://valkey:6379/0"   # redis://, rediss://, valkey:// or valkeys://
+ttl_seconds = 86400
 
 [auth]                          # prefer the environment for the password (below)
 username = "copycast"           # the operator's username
@@ -98,13 +116,15 @@ hooks, ...) are rejected at startup with exit code 2; `cookiefile`, `proxy` and
 | `COPYCAST_LOG_FORMAT` | `console` (`json` in the image) | `console` or `json` |
 | `COPYCAST_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 | `COPYCAST_AUTO_MIGRATE` | `true` | apply migrations at startup; when `false` the process waits up to 5 minutes for the schema head, then exits 2 |
-| `COPYCAST__DATA_DIR` | `./data` (`/data` in the image) | data directory (also settable in the TOML) |
+| `COPYCAST__STORAGE__SCRATCH_DIR` | `./scratch` (`/scratch` in the image) | Scratch directory (also settable in the TOML) |
 | `COPYCAST_TEST_DATABASE_URL` | unset | tests: use this Postgres instead of testcontainers |
+| `COPYCAST_TEST_S3_URL` (+ `_ENDPOINT`, `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY`) | unset | tests: run every test against this bucket (a prefix each) instead of `memory://` |
 | `COPYCAST_TEST_NETWORK` | unset | tests: `1` enables the network-marked tests |
 
 Compose-only (interpolated by `docker compose`, see `.env.example`): `COMPOSE_PROFILES`,
 `TS_AUTHKEY`, `POSTGRES_PASSWORD`, `COPYCAST_BASE_URL`, `COPYCAST_AUTH_PASSWORD`,
-`COPYCAST_AUTH_USERNAME`, `COPYCAST_IMAGE`, `COPYCAST_PORT`, `COPYCAST_UID`, `COPYCAST_GID`.
+`COPYCAST_AUTH_USERNAME`, `COPYCAST_IMAGE`, `COPYCAST_PORT`, `COPYCAST_UID`, `COPYCAST_GID`,
+`COPYCAST_S3_SECRET_KEY`, `COPYCAST_S3_ACCESS_KEY`, `COPYCAST_S3_BUCKET`, `COPYCAST_S3_DATA`.
 
 ## Authentication
 
@@ -164,21 +184,53 @@ and keys are kept for the next time.
 Kubernetes: the example overlay's `api-auth.yaml` reads the password from a Secret named
 `copycast-auth` (key `password`) and stays valid while the Secret is absent.
 
-### The data directory
+### The Object store
 
 ```
-data/LAYOUT_VERSION                     "1"; written on first start, a mismatch refuses to start
-data/engine/cookies.txt                 the engine's cookie jar, merged from the files below (0600)
-data/engine/cookies/<name>.txt          the stored cookie files, one per upload (optional, 0600)
-data/feeds/<feed_id>/feed.json          descriptor of the feed, its policy, items, assets and requests
-data/feeds/<feed_id>/source/            verbatim Source XML or the last engine listing
-data/feeds/<feed_id>/media/             audio, <item_id>.info.json, <item_id>.item.xml (original RSS item)
-data/feeds/<feed_id>/tmp/               partial downloads; safe to delete while the worker is stopped
-data/feeds/<feed_id>/assets/            Artwork, chapters, transcripts
+LAYOUT_VERSION                     "2"; written on first start into an empty bucket, a mismatch refuses to start
+engine/cookies.txt                 the engine's cookie jar, merged from the files below
+engine/cookies/<name>.txt          the stored cookie files, one per upload (optional)
+engine/defaults.json               the Settings-page defaults
+feeds/<feed_id>/feed.json          descriptor of the feed, its policy, items, assets and requests
+feeds/<feed_id>/source/            verbatim Source XML or the last engine listing
+feeds/<feed_id>/media/             audio, <item_id>.info.json, <item_id>.item.xml (original RSS item)
+feeds/<feed_id>/assets/            Artwork, chapters, transcripts, Attachments
+uploads/<upload_id>/               a staged Upload (upload.json, file.<ext>), swept after 24 h
 ```
 
 The descriptor is rewritten after every change of intent and is what `copycast rebuild`
-reads. Nothing outside the worker writes into `media/` or `tmp/`.
+reads. Only the worker writes into `media/`, and only finished files: partial downloads and
+transcodes live in Scratch (`<scratch_dir>/jobs/<item>.<random>/`), which a job removes when
+it ends and a starting worker sweeps. Keep the bucket private: Copycast proxies every byte it
+serves (feed credentials and download counting stay in front), so no podcast app ever talks
+to S3. Configure the server to abort incomplete multipart uploads after a day.
+
+How a first play is served (Ephemeral Mirrors): the request queues the archive on the
+worker's reserved on-demand slot (never behind a Backfill), holds the line without sending a
+byte, is woken by the item's `archived` event, and then serves the finished object, with every
+tag and the artwork in place. A request still waiting after 50 s answers `503 Retry-After:
+30` before iOS gives up on its side (it drops a silent request after 60 s); the archive keeps
+running and the next tap is served at once.
+
+### Moving to the Object store (from 1.x)
+
+A 1.x data directory is copied once into the Object store. The directory itself is left untouched
+and stays the rollback until you delete it:
+
+```bash
+docker compose stop api worker
+docker compose up -d seaweedfs                     # the new stack's Object store
+docker compose run --rm -v "$PWD/data:/legacy:ro" worker storage push --from /legacy --dry-run
+docker compose run --rm -v "$PWD/data:/legacy:ro" worker storage push --from /legacy
+docker compose up -d
+```
+
+`storage push` uploads every file under `engine/` and `feeds/` to the key of the same name
+(partials and `tmp/` stay behind). It skips objects already present with the same size, so
+an interrupted push resumes, and it checks every upload. It writes `LAYOUT_VERSION` 2 last,
+and only when every file has landed; until then both processes refuse to start on the Object store.
+It exits 1 when a file failed: run it again. To roll back, start the previous image on the
+untouched `./data` directory.
 
 ## Mirror modes
 
@@ -367,7 +419,7 @@ holding Episodes flagged Archive warns first and offers *Delete the rest* (`POST
 Episode not kept for good and keeps the feed) next to *Delete everything*. Every Episode of a
 Mirror on the Archive policy counts as kept. The default Bucket can only be emptied.
 
-The *Mirrors* half holds defaults that live in the data directory (`data/engine/defaults.json`,
+The *Mirrors* half holds defaults that live in the Object store (`engine/defaults.json`,
 `PUT /api/settings/defaults`) rather than in the environment, because they are policy the
 operator changes from the UI:
 
@@ -405,18 +457,19 @@ recommends is the cookies of a logged-in browser session:
 
 The image also ships `deno`, the JavaScript runtime yt-dlp needs for YouTube's signature
 and "n" challenges; without it YouTube extraction degrades to a warning-laden fallback that
-is refused far more often. Each file is stored at `data/engine/cookies/<name>.txt` with mode
-0600 and never shown again; a file with the same name replaces it, another name adds a row.
-The files are merged into `data/engine/cookies.txt`, handed to yt-dlp as `cookiefile` on every
-listing and fetch, in both processes. Each call works on a private copy and the jar is replaced
-atomically when the site rotated a cookie, so two jobs never tear it; every later change to
-the files first carries the jar's rotated cookies back into the file they came from. A jar
-stored before cookie files existed shows as the file `cookies`. An explicit `cookiefile` under
-`[engine.options]` still wins. Remove a file from the same page (`DELETE
-/api/engine/cookies?name=`) to drop its sites back to anonymous fetches. An agent cannot
+is refused far more often. Each file is stored in the Object store at
+`engine/cookies/<name>.txt` and never shown again; a file with the same name replaces it,
+another name adds a row. The files are merged into `engine/cookies.txt`, handed to yt-dlp as
+`cookiefile` on every listing and fetch, in both processes. Each call works on a private
+Scratch copy (mode 0600) and the jar is replaced when the site rotated a cookie, so two jobs
+never tear it; every later change to the files first carries the jar's rotated cookies back
+into the file they came from. A jar stored before cookie files existed shows as the file
+`cookies`. An explicit `cookiefile` under `[engine.options]` still wins. Remove a file from
+the same page (`DELETE /api/engine/cookies?name=`) to drop its sites back to anonymous
+fetches. An agent cannot
 read or replace it: the three capabilities have routes but no MCP tools.
 
-What lands in `media/`: mp3 and m4a enclosures and streams are copied byte for byte; AAC in
+What lands in `media/` (after the Scratch work is done): mp3 and m4a enclosures and streams are copied byte for byte; AAC in
 a video container is remuxed to m4a; Opus, Vorbis, FLAC, WAV and the like are transcoded
 once to mp3 at 192 kbit/s, so every Episode plays in every podcast app and carries its
 chapters. Cover art already embedded in a file is kept; the feed's episode image is then
@@ -429,12 +482,15 @@ costs the embedded artwork, with a warning in the job log.
 ## Kubernetes
 
 `deploy/kubernetes/base` is a kustomize base; `deploy/kubernetes/overlays/example` shows what
-to change. Prerequisites: the [CloudNativePG](https://cloudnative-pg.io) operator and the
-[Tailscale Kubernetes operator](https://tailscale.com/kb/1236/kubernetes-operator).
+to change. Prerequisites: the [CloudNativePG](https://cloudnative-pg.io) operator, the
+[Tailscale Kubernetes operator](https://tailscale.com/kb/1236/kubernetes-operator) and an S3
+bucket (SeaweedFS's Helm chart, a cloud bucket, ...).
 
 ```bash
 cp -r deploy/kubernetes/overlays/example deploy/kubernetes/overlays/mine
-$EDITOR deploy/kubernetes/overlays/mine/copycast.toml      # base_url = https://copycast.<tailnet>.ts.net
+$EDITOR deploy/kubernetes/overlays/mine/copycast.toml      # base_url, [storage] url and endpoint
+kubectl -n copycast create secret generic copycast-storage \
+  --from-literal=access_key_id=... --from-literal=secret_access_key=...
 kubectl apply -k deploy/kubernetes/overlays/mine
 kubectl -n copycast get pods,ingress
 ```
@@ -443,45 +499,47 @@ What the base creates in namespace `copycast`:
 
 - `Cluster copycast-db` (CNPG, one instance, 10Gi). The operator writes the connection URI
   into secret `copycast-db-app` (key `uri`), which both Deployments read.
-- `PersistentVolumeClaim copycast-data` (ReadWriteOnce, 200Gi). ReadWriteOnce is enough as
-  long as `copycast-api` has one replica: the worker carries a required pod affinity to the
-  api pod so both land on the node that has the volume. Raise `api.replicas` only with a
-  ReadWriteMany storage class.
-- `Deployment copycast-api` (1 replica, RollingUpdate, migrates at startup) and
-  `Deployment copycast-worker` (1 replica, Recreate, `COPYCAST_AUTO_MIGRATE=false`: it waits up
-  to 5 minutes for the api to migrate, then exits and is restarted). Probes on
-  `/healthz/ready` and `/healthz/live`.
+- `Deployment copycast-valkey` and `Service copycast-valkey`: the shared Feed cache (no
+  persistence, LRU at 256 MiB).
+- `Deployment copycast-api` (1 replica, RollingUpdate, migrates at startup; stateless, so
+  raise `replicas` freely) and `Deployment copycast-worker` (1 replica, Recreate,
+  `COPYCAST_AUTO_MIGRATE=false`: it waits up to 5 minutes for the api to migrate, then exits
+  and is restarted; Scratch is a 20Gi `emptyDir`). Both read the Object store's keys from the
+  Secret `copycast-storage`. Probes on `/healthz/ready` and `/healthz/live`.
 - `Service copycast` (ClusterIP 8080) and `Ingress copycast` with `ingressClassName: tailscale`
   and host `copycast`, so the app is `https://copycast.<tailnet>.ts.net` inside your tailnet.
 
-High availability is active-passive by construction: one worker, one data volume. A node
-failure is recovered by rescheduling both pods together.
+The worker is active-passive by construction (one runs at a time); the api scales out.
+Nothing is pinned to a node: the archive lives in the Object store.
 
 ## Backup and restore
 
-Back up the data directory. It is sufficient: media, sidecars, original Source XML, assets
-and the `feed.json` descriptors reconstruct the database. Optionally add a `pg_dump` to keep
+Back up the Object store (for SeaweedFS in compose, the `seaweedfs` volume or the
+`COPYCAST_S3_DATA` directory while it is stopped, or any S3 sync tool against the bucket). It
+is sufficient: media, sidecars, original Source XML, assets and the `feed.json` descriptors
+reconstruct the database. Optionally add a `pg_dump` to keep
 telemetry (job history, refresh runs, download counters, engine versions):
 
 ```bash
 docker compose exec postgres pg_dump -U copycast -Fc copycast > copycast-$(date +%F).dump
 ```
 
-Restore: put the data directory back, start Postgres, then either restore the dump
+Restore: put the Object store back, start Postgres, then either restore the dump
 (`pg_restore -U copycast -d copycast copycast.dump`) or run a rebuild (below). Stop the
-worker before touching files under `data/feeds/*/media`.
+worker before touching objects under `feeds/*/media/`.
 
-## Rebuilding the database from disk
+## Rebuilding the database from the Object store
 
-`copycast rebuild` reconstructs feeds, items, assets and requests from `feed.json` and the
-sidecars, reconciles `media/` with the item rows (audio present ⇒ archived; file without a
-row ⇒ a row from its `.info.json` / `.item.xml`), stats the assets, recounts storage and
-recreates the default Bucket. It is idempotent and refuses to run while the worker holds its
+`copycast rebuild` lists each feed's prefix once and reconstructs feeds, items, assets and
+requests from `feed.json` and the sidecars, reconciles `media/` with the item rows (audio
+present ⇒ archived; object without a row ⇒ a row from its `.info.json` / `.item.xml`), checks
+the assets, recounts storage and recreates the default Bucket. It is idempotent and refuses
+to run while the worker holds its
 lock, so stop the worker first.
 
 ```bash
 docker compose stop worker
-docker compose run --rm worker rebuild          # add --yes to also delete rows absent from disk
+docker compose run --rm worker rebuild          # add --yes to also delete rows absent from the Object store
 docker compose start worker
 ```
 

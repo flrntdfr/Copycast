@@ -28,15 +28,6 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
-      # The data volume is ReadWriteOnce: the worker must land on the api's node.
-      affinity:
-        podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - topologyKey: kubernetes.io/hostname
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: copycast
-                  app.kubernetes.io/component: api
       containers:
         - name: worker
           image: ghcr.io/flrntdfr/copycast
@@ -53,9 +44,21 @@ spec:
                 secretKeyRef:
                   name: copycast-db-app
                   key: uri
+            - name: COPYCAST__STORAGE__ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: copycast-storage
+                  key: access_key_id
+            - name: COPYCAST__STORAGE__SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: copycast-storage
+                  key: secret_access_key
+            - name: COPYCAST__STORAGE__SCRATCH_DIR
+              value: /scratch
           volumeMounts:
-            - name: data
-              mountPath: /data
+            - name: scratch
+              mountPath: /scratch
             - name: config
               mountPath: /config
               readOnly: true
@@ -89,9 +92,11 @@ spec:
             capabilities:
               drop: ["ALL"]
       volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: copycast-data
+        # Scratch: downloads, transcodes and tagging; only finished files go to the Object store.
+        # Size it for the longest Episodes times (concurrency + 1) with room to spare.
+        - name: scratch
+          emptyDir:
+            sizeLimit: 20Gi
         - name: config
           configMap:
             name: copycast-config

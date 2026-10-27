@@ -9,7 +9,6 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -56,11 +55,6 @@ async def db_engine(settings: Settings, db: str) -> AsyncIterator[AsyncEngine]:
 @pytest.fixture
 def sessionmaker(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return create_sessionmaker(db_engine)
-
-
-@pytest.fixture
-def layout(data_dir: Path) -> Layout:
-    return Layout(data_dir)
 
 
 @pytest.fixture

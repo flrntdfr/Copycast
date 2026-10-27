@@ -234,7 +234,7 @@ async def test_jobs_and_about(mcp_client: Client[Any], source: Source) -> None:
     )
     assert deleted["deleted"] is True
     about = structured(await mcp_client.call_tool("get_about", {}))
-    assert about["engine"]["name"] == "fake-engine" and about["layout_version"] == "1"
+    assert about["engine"]["name"] == "fake-engine" and about["layout_version"] == "2"
     status = structured(await mcp_client.call_tool("get_status", {}))
     assert status["components"][0] == {
         "id": "database",

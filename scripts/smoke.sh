@@ -4,21 +4,19 @@
 #
 #   scripts/smoke.sh copycast:ci
 #
-# Starts postgres + api + worker on a private network with a data directory handed to uid
-# 1000, then checks:
+# Starts postgres + SeaweedFS (the Object store) + api + worker on a private network, then checks:
 #   - /healthz/ready answers 200 on the api (8080) and the worker (8081)
 #   - /api/about reports the engine version pinned in uv.lock and a working ffmpeg
 #   - /api/buckets contains the default Bucket "Copycast"
 #   - `copycast --version` prints the application version
-#   - negative: a root-owned, empty bind mount makes `copycast api` exit 2 with the chown hint
+#   - negative: a wrong Object store secret makes `copycast api` exit 2 with one storage line
 #
 # Environment:
 #   SMOKE_ENGINE_VERSION   expected engine version (default: scripts/engine_version.py)
 #   SMOKE_APP_VERSION      expected application version (default: not checked)
 #   SMOKE_API_PORT / SMOKE_WORKER_PORT   host ports (defaults 18080 / 18081)
 #   SMOKE_TIMEOUT          seconds to wait for readiness (default 180)
-#   SMOKE_SKIP_NEGATIVE=1  skip the root-owned data directory check (it is skipped on its own
-#                          when the engine maps bind-mount ownership, e.g. Docker Desktop)
+#   SMOKE_SKIP_NEGATIVE=1  skip the wrong-secret check
 #   SMOKE_KEEP=1           leave the containers running on failure for inspection
 #
 # Requires docker, curl, jq and python3 (3.11+ for tomllib).
@@ -33,14 +31,19 @@ TIMEOUT=${SMOKE_TIMEOUT:-180}
 EXPECTED_ENGINE=${SMOKE_ENGINE_VERSION:-$(python3 "$ROOT/scripts/engine_version.py")}
 EXPECTED_APP=${SMOKE_APP_VERSION:-}
 POSTGRES_IMAGE=${SMOKE_POSTGRES_IMAGE:-postgres:17}
+SEAWEEDFS_IMAGE=${SMOKE_SEAWEEDFS_IMAGE:-$(sed -nE 's/^ *image: (chrislusf\/seaweedfs:.*)$/\1/p' "$ROOT/docker-compose.yml" | head -n 1)}
+S3_SECRET="smoke-$RANDOM-$RANDOM"
 
 RUN_ID="copycast-smoke-$$-$RANDOM"
 NET="$RUN_ID"
 PG="$RUN_ID-pg"
+S3="$RUN_ID-s3"
 API="$RUN_ID-api"
 WORKER="$RUN_ID-worker"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/copycast-smoke.XXXXXX")
 DB_URL="postgresql://copycast:copycast@$PG:5432/copycast"
+STORAGE_ENV=(-e "COPYCAST__STORAGE__URL=s3://copycast" -e "COPYCAST__STORAGE__ENDPOINT=http://$S3:8333"
+  -e "COPYCAST__STORAGE__ACCESS_KEY_ID=copycast" -e "COPYCAST__STORAGE__SECRET_ACCESS_KEY=$S3_SECRET")
 FAILED=1
 
 for tool in docker curl jq python3; do
@@ -57,22 +60,18 @@ normalize_version() {
     | sed -E 's/(^|[^0-9])0+([0-9])/\1\2/g; s/\.dev[0-9]+$//'
 }
 
-# Run something as root inside the image, e.g. to fix ownership of bind-mounted directories.
-as_root() { docker run --rm --user 0 --entrypoint sh -v "$WORK:/work" "$IMAGE" -c "$1"; }
-
 cleanup() {
   local status=$?
   if [ "$FAILED" -ne 0 ] && [ "${SMOKE_KEEP:-0}" = "1" ]; then
-    echo "[smoke] SMOKE_KEEP=1: leaving $API, $WORKER and $PG running" >&2
+    echo "[smoke] SMOKE_KEEP=1: leaving $API, $WORKER, $S3 and $PG running" >&2
     return
   fi
   if [ "$FAILED" -ne 0 ]; then
     echo "[smoke] ---- api logs ----" >&2;    docker logs "$API"    2>&1 | tail -n 100 >&2 || true
     echo "[smoke] ---- worker logs ----" >&2; docker logs "$WORKER" 2>&1 | tail -n 100 >&2 || true
   fi
-  docker rm -f "$API" "$WORKER" "$PG" >/dev/null 2>&1 || true
+  docker rm -f "$API" "$WORKER" "$S3" "$PG" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
-  as_root 'rm -rf /work/data /work/rootdata' >/dev/null 2>&1 || true
   rm -rf "$WORK"
   exit "$status"
 }
@@ -91,8 +90,7 @@ wait_for_http() {
 }
 
 log "image $IMAGE, expected engine $EXPECTED_ENGINE, work dir $WORK"
-mkdir -p "$WORK/data" "$WORK/config" "$WORK/rootdata"
-as_root 'chown -R 1000:1000 /work/data && chown 0:0 /work/rootdata && chmod 755 /work/rootdata'
+mkdir -p "$WORK/config"
 
 log "starting postgres"
 docker network create "$NET" >/dev/null
@@ -105,13 +103,24 @@ until docker exec "$PG" pg_isready -U copycast -d copycast >/dev/null 2>&1; do
   sleep 1
 done
 
+log "starting seaweedfs ($SEAWEEDFS_IMAGE)"
+docker run -d --name "$S3" --network "$NET" --entrypoint /bin/sh \
+  -v "$ROOT/deploy/compose/seaweedfs/entrypoint.sh:/copycast/entrypoint.sh:ro" \
+  -e COPYCAST_S3_ACCESS_KEY=copycast -e "COPYCAST_S3_SECRET_KEY=$S3_SECRET" \
+  "$SEAWEEDFS_IMAGE" /copycast/entrypoint.sh >/dev/null
+deadline=$((SECONDS + TIMEOUT))
+until docker exec "$S3" test -f /tmp/ready >/dev/null 2>&1; do
+  [ "$SECONDS" -lt "$deadline" ] || fail "seaweedfs did not become ready"
+  sleep 1
+done
+
 log "starting api and worker"
 docker run -d --name "$API" --network "$NET" -p "127.0.0.1:$API_PORT:8080" \
-  -v "$WORK/data:/data" -v "$WORK/config:/config:ro" \
+  -v "$WORK/config:/config:ro" "${STORAGE_ENV[@]}" \
   -e "COPYCAST__BASE_URL=http://localhost:$API_PORT" -e "COPYCAST__DATABASE_URL=$DB_URL" \
   "$IMAGE" api >/dev/null
 docker run -d --name "$WORKER" --network "$NET" -p "127.0.0.1:$WORKER_PORT:8081" \
-  -v "$WORK/data:/data" -v "$WORK/config:/config:ro" \
+  -v "$WORK/config:/config:ro" "${STORAGE_ENV[@]}" \
   -e "COPYCAST__BASE_URL=http://localhost:$API_PORT" -e "COPYCAST__DATABASE_URL=$DB_URL" \
   "$IMAGE" worker >/dev/null
 
@@ -144,25 +153,16 @@ fi
 grep -qi 'yt-dlp' <<<"$version_out" || fail "copycast --version does not mention the engine: $version_out"
 log "copycast --version: $(head -n 1 <<<"$version_out")"
 
-# Docker Desktop (and other VM-backed engines) map bind-mount ownership to the container user,
-# so a root-owned directory looks writable from inside: probe as uid 1000 and skip the negative
-# check when the mount cannot reproduce the condition instead of failing on a false positive.
-skip_negative=${SMOKE_SKIP_NEGATIVE:-0}
-if [ "$skip_negative" != "1" ] \
-  && docker run --rm --user 1000 --entrypoint sh -v "$WORK/rootdata:/data" "$IMAGE" \
-       -c 'touch /data/.probe 2>/dev/null && rm -f /data/.probe' >/dev/null 2>&1; then
-  log "root-owned bind mount is writable by uid 1000 (ownership mapped by the engine): skipping the negative check"
-  skip_negative=1
-fi
-
-if [ "$skip_negative" != "1" ]; then
+if [ "${SMOKE_SKIP_NEGATIVE:-0}" != "1" ]; then
   set +e
-  negative_out=$(docker run --rm -v "$WORK/rootdata:/data" -e "COPYCAST__DATABASE_URL=$DB_URL" "$IMAGE" api 2>&1)
+  negative_out=$(docker run --rm --network "$NET" "${STORAGE_ENV[@]}" \
+    -e "COPYCAST__STORAGE__SECRET_ACCESS_KEY=wrong-$S3_SECRET" \
+    -e "COPYCAST__DATABASE_URL=$DB_URL" "$IMAGE" api 2>&1)
   negative_status=$?
   set -e
-  [ "$negative_status" -eq 2 ] || fail "root-owned data dir: expected exit 2, got $negative_status: $negative_out"
-  grep -q 'chown' <<<"$negative_out" || fail "root-owned data dir: no chown hint in: $negative_out"
-  log "root-owned data dir refused with exit 2 and a chown hint"
+  [ "$negative_status" -eq 2 ] || fail "wrong Object store secret: expected exit 2, got $negative_status: $negative_out"
+  grep -q 'refused the keys' <<<"$negative_out" || fail "wrong Object store secret: no storage hint in: $negative_out"
+  log "wrong Object store secret refused with exit 2 and a storage hint"
 fi
 
 FAILED=0

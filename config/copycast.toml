@@ -4,7 +4,6 @@
 # tolerated: the defaults below are also the built-in defaults.
 
 base_url     = "http://localhost:8080"
-data_dir     = "./data"
 database_url = "postgresql+psycopg://copycast:copycast@localhost:5432/copycast"   # postgresql:// is rewritten
 
 [refresh]
@@ -16,6 +15,16 @@ concurrency            = 2
 channel = "nightly"          # informational: nightly | stable
 
 [engine.options]             # raw yt-dlp defaults; ENGINE_OWNED_OPTIONS rejected at startup
+
+[storage]                    # the Object store: every byte Copycast keeps (docs/adr/0016)
+url               = "s3://copycast"          # s3://<bucket>[/<prefix>]
+endpoint          = "http://localhost:8333"  # empty for AWS S3; the SeaweedFS of `make db-up`
+access_key_id     = "copycast"               # prefer COPYCAST__STORAGE__* in the environment
+secret_access_key = "copycast"
+scratch_dir       = "./scratch"              # local: downloads and transcodes, never served
+
+[cache]                      # the shared Feed cache; unset, each api process caches alone
+url = "redis://localhost:6379/0"
 
 # [auth]                     # prefer COPYCAST__AUTH__PASSWORD in the environment (docs/adr/0011)
 # username = "copycast"

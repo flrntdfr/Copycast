@@ -12,7 +12,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -62,6 +62,21 @@ class NotReady(EngineError):
 
 
 # --------------------------------------------------------------------------- values
+
+
+@dataclass(frozen=True, slots=True)
+class StoredObject:
+    """One object of the Object store: its key, size, modification time and ETag."""
+
+    key: str
+    size: int
+    last_modified: datetime
+    etag: str | None = None
+
+    @property
+    def name(self) -> str:
+        """The last segment of the key (what a file name was in the data directory)."""
+        return self.key.rsplit("/", 1)[-1]
 
 
 @dataclass(frozen=True, slots=True)

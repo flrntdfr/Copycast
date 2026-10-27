@@ -11,12 +11,10 @@ imports the Postgres or storage adapters.
 
 from __future__ import annotations
 
-import contextlib
-import os
-from collections.abc import Callable, Sequence
+import asyncio
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Protocol
 
 from copycast.domain.enums import ArchiveState, DeleteReason, FeedKind
@@ -70,10 +68,15 @@ class AssetPort(Protocol):
     async def delete_for_item(self, item_id: str) -> Sequence[AssetRow]: ...
 
 
+class StorePort(Protocol):
+    def delete(self, keys: str | Iterable[str]) -> None: ...
+
+
 class LayoutPort(Protocol):
-    def resolve(self, feed_id: str, relative: str) -> Path: ...
-    def info_json_path(self, feed_id: str, item_id: str) -> Path: ...
-    def remove_tmp_leftovers(self, feed_id: str, item_id: str) -> int: ...
+    @property
+    def store(self) -> StorePort: ...
+    def resolve(self, feed_id: str, relative: str) -> str: ...
+    def info_json_key(self, feed_id: str, item_id: str) -> str: ...
 
 
 class EpisodeUnitOfWork(Protocol):
@@ -101,7 +104,7 @@ class DeletedEpisode:
     reason: DeleteReason
     bytes_freed: int
     was_archived: bool
-    files: list[Path] = field(default_factory=list[Path])
+    files: list[str] = field(default_factory=list[str])
     revision: int = 0
     intent_version: int = 0
 
@@ -128,12 +131,12 @@ async def delete_episode(
     feed_id = feed.id
     was_archived = item.archive_state == ArchiveState.archived
 
-    files: list[Path] = []
+    files: list[str] = []
     bytes_freed = 0
     if item.media_path:
         files.append(uow.layout.resolve(feed_id, item.media_path))
         bytes_freed += item.media_bytes or 0
-    files.append(uow.layout.info_json_path(feed_id, item_id))
+    files.append(uow.layout.info_json_key(feed_id, item_id))
 
     for asset in await uow.assets.delete_for_item(item_id):
         if asset.local_path:
@@ -148,13 +151,10 @@ async def delete_episode(
 
     layout = uow.layout
 
-    def _unlink_files() -> None:
-        for path in files:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(path)
-        layout.remove_tmp_leftovers(feed_id, item_id)
+    async def _delete_objects() -> None:
+        await asyncio.to_thread(layout.store.delete, files)
 
-    uow.after_commit(_unlink_files)
+    uow.after_commit(_delete_objects)
     return DeletedEpisode(
         item_id=item_id,
         feed_id=feed_id,

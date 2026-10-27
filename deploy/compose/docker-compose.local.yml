@@ -1,5 +1,6 @@
-# Local stack for following work in progress: Postgres, migrate, api and worker in containers,
-# state in named Docker volumes, the source tree bind-mounted so both processes restart on edits.
+# Local stack for following work in progress: Postgres, SeaweedFS (the Object store), Valkey
+# (the Feed cache), migrate, api and worker in containers, state in named Docker volumes, the
+# source tree bind-mounted so both processes restart on edits.
 # The Vite dev server runs on the host (scripts/local.sh) and proxies to the api on :8080.
 #
 #   scripts/local.sh                                       start everything (Ctrl-C stops)
@@ -8,6 +9,12 @@
 #
 # The image carries the dependencies: rebuild (`up --build`, which local.sh does) after a
 # change to pyproject.toml or uv.lock.
+#
+# A stack started before the Object store kept its files in the volume "data"; it is mounted
+# read-only at /legacy. Copy it once into the Object store (the api and worker refuse a bucket
+# holding feeds without LAYOUT_VERSION until then):
+#   docker compose -f deploy/compose/docker-compose.local.yml run --rm --no-deps worker \
+#     copycast storage push --from /legacy
 name: copycast-local
 
 x-app: &app
@@ -18,8 +25,13 @@ x-app: &app
     COPYCAST_LOG_FORMAT: console
     COPYCAST_AUTO_MIGRATE: "false"
     COPYCAST__DATABASE_URL: postgresql+psycopg://copycast:copycast@postgres:5432/copycast
-    COPYCAST__DATA_DIR: /data
     COPYCAST__BASE_URL: http://localhost:8080
+    COPYCAST__STORAGE__URL: s3://copycast
+    COPYCAST__STORAGE__ENDPOINT: http://seaweedfs:8333
+    COPYCAST__STORAGE__ACCESS_KEY_ID: copycast
+    COPYCAST__STORAGE__SECRET_ACCESS_KEY: copycast
+    COPYCAST__STORAGE__SCRATCH_DIR: /scratch
+    COPYCAST__CACHE__URL: redis://valkey:6379/0
     # The mounted source wins over the copy installed in the image.
     PYTHONPATH: /app/src
     # Bind mounts from macOS do not always deliver inotify events.
@@ -27,12 +39,17 @@ x-app: &app
   volumes:
     - ../../src:/app/src:ro
     - ../../config/copycast.toml:/config/copycast.toml:ro
-    - data:/data
+    - scratch:/scratch
+    - data:/legacy:ro
   working_dir: /app/src
   entrypoint: ["tini", "--"]
   depends_on:
     migrate:
       condition: service_completed_successfully
+    seaweedfs:
+      condition: service_healthy
+    valkey:
+      condition: service_healthy
 
 services:
   postgres:
@@ -61,6 +78,30 @@ services:
         condition: service_healthy
     restart: "no"
 
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    entrypoint: ["/bin/sh", "/copycast/entrypoint.sh"]
+    environment:
+      COPYCAST_S3_ACCESS_KEY: copycast
+      COPYCAST_S3_SECRET_KEY: copycast
+    volumes:
+      - ./seaweedfs/entrypoint.sh:/copycast/entrypoint.sh:ro
+      - objects:/data
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+
+  valkey:
+    image: valkey/valkey:9.0.7-alpine@sha256:2d04268dfa26ab31cfa3fdc538866e76438b2d00e41db41b8cb86d780ac5a416
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
   api:
     <<: *app
     command: ["copycast", "api", "--reload"]
@@ -76,3 +117,5 @@ services:
 volumes:
   pgdata:
   data:
+  objects:
+  scratch:

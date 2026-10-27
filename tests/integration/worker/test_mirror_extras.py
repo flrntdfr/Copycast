@@ -93,7 +93,7 @@ async def test_archive_available_retry_failed_and_purge(
     assert purged.deleted_count == 3 and purged.bytes_freed == preview.bytes_freed
     read = await container.services.get_feed(mirror.id)
     assert read.episode_count == 0 and read.storage_bytes == 0
-    assert not list(container.layout.media_dir(mirror.id).glob("*.m4a"))
+    assert not container.layout.media_objects(mirror.id)
     # Tombstones count as Available for an explicit request.
     back = await container.services.archive_available(mirror.id)
     assert len(back.resolved) == 3

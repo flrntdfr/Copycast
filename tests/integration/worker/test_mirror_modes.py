@@ -51,7 +51,7 @@ async def test_rolling_keeps_the_newest_n_and_tombstones_the_rest(
         rolled = rows[2]
         assert rolled.media_path is None and rolled.deleted_at is not None
         assert rows[4].wanted_reason == WantedReason.follow
-    assert not list(container.layout.media_dir(mirror.id).glob(f"{rolled.id}.m4a"))
+    assert container.layout.find_media(mirror.id, rolled.id) is None
     # On purpose it comes back (and would roll out again at the next Refresh).
     await container.services.archive_item(mirror.id, rolled.id)
     await runner.run_until_idle()

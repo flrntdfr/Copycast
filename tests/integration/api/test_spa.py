@@ -27,7 +27,9 @@ def web_dir(tmp_path: Path) -> Path:
 def spa_settings(settings: Settings, web_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
     monkeypatch.setenv("COPYCAST_WEB_DIR", str(web_dir))
     return get_settings(
-        base_url=settings.base_url, data_dir=settings.data_dir, database_url=settings.database_url
+        base_url=settings.base_url,
+        storage=settings.storage.model_dump(),
+        database_url=settings.database_url,
     )
 
 
