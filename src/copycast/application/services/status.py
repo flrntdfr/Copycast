@@ -141,9 +141,7 @@ def _database(snapshot: _Snapshot) -> ComponentStatus:
             summary="The schema is not at the latest migration",
             facts=facts,
         )
-    return ComponentStatus(
-        id="database", name=name, state="ok", summary="Up", facts=facts
-    )
+    return ComponentStatus(id="database", name=name, state="ok", summary="Up", facts=facts)
 
 
 def _worker(snapshot: _Snapshot, now: datetime) -> ComponentStatus:
