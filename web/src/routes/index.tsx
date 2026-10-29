@@ -3,8 +3,8 @@ import { useEffect, useRef } from "react";
 import { z } from "zod";
 
 import { $api } from "@/api/client";
-import { SectionHeader } from "@/components/common/PageHeader";
 import { BucketsSection } from "@/features/buckets/BucketsSection";
+import { CapturePlaylistMenu } from "@/features/buckets/CapturePlaylistMenu";
 import { AddSourceBar } from "@/features/mirrors/AddSourceBar";
 import { MirrorsTable } from "@/features/mirrors/MirrorsTable";
 
@@ -13,7 +13,7 @@ const defaults = { sort: "title", order: "asc", url: "" } as const;
 const searchSchema = z.object({
   sort: z.enum(["title", "created_at", "updated_at"]).default(defaults.sort),
   order: z.enum(["asc", "desc"]).default(defaults.order),
-  // A URL to send to a Bucket (the command palette's "Send to Bucket…"): pick one below.
+  // A URL to send to a Local feed (the command palette's "Send to Local feed…"): pick one below.
   url: z.string().default(defaults.url),
 });
 
@@ -23,7 +23,10 @@ export const Route = createFileRoute("/")({
   component: FeedsPage,
 });
 
-/** Every Feed on one page: the table of Mirrors and Bucket Feeds, their buckets in a box below. */
+/**
+ * Every Feed on one page: the bar to mirror a Source or capture a YouTube playlist, the table of
+ * every Feed (Mirrors, captured playlists, Local feeds), and their buckets in a box below.
+ */
 function FeedsPage() {
   const { sort, order, url } = Route.useSearch();
   const hash = useLocation({ select: (location) => location.hash });
@@ -43,11 +46,14 @@ function FeedsPage() {
 
   return (
     <>
-      <h1 className="sr-only">Feeds</h1>
       <section aria-labelledby="feeds-heading" className="mb-10">
-        <SectionHeader id="feeds-heading" title="Feeds" />
+        <h1 id="feeds-heading" className="sr-only">
+          Feeds
+        </h1>
         <div className="mb-4">
-          <AddSourceBar />
+          <AddSourceBar>
+            <CapturePlaylistMenu />
+          </AddSourceBar>
         </div>
         <MirrorsTable
           sort={sort}

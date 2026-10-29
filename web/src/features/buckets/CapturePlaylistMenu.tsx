@@ -27,9 +27,10 @@ const WATCH_LATER: YouTubePlaylist = {
 };
 
 /**
- * Capture from the YouTube app: a dropdown of the account's playlists (through the engine,
- * with the cookies, listed when it opens), each captured with a click as a synced, Automatic
- * feed. The menu stays open so several can be captured in a row.
+ * The "Playlists" button of the Feeds page's bar: a dropdown of the YouTube account's playlists
+ * (through the engine, with the cookies, listed when it opens), each captured with a click as a
+ * synced Mirror that then shows up in the Feeds table. The menu stays open so several can be
+ * captured in a row. The trigger is `type="button"`: it sits inside the bar's form.
  */
 export function CapturePlaylistMenu() {
   const queryClient = useQueryClient();
@@ -55,6 +56,9 @@ export function CapturePlaylistMenu() {
         description: "Its videos download when your podcast app asks for them.",
       });
       void queryClient.invalidateQueries({ queryKey: [OPS.list_feeds[0], OPS.list_feeds[1]] });
+      void queryClient.invalidateQueries({
+        queryKey: [OPS.storage_summary[0], OPS.storage_summary[1]],
+      });
       void queryClient.invalidateQueries({
         queryKey: [OPS.list_youtube_playlists[0], OPS.list_youtube_playlists[1]],
       });
@@ -85,8 +89,8 @@ export function CapturePlaylistMenu() {
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline">
-          <ListVideo /> Capture a YouTube playlist <ChevronDown />
+        <Button type="button" variant="outline" aria-label="YouTube Playlists">
+          <ListVideo aria-hidden /> Playlists <ChevronDown aria-hidden />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -131,7 +135,7 @@ export function CapturePlaylistMenu() {
             if (feedId) {
               return (
                 <DropdownMenuItem key={playlist.id} asChild>
-                  <Link to="/mirrors/$mirrorId" params={{ mirrorId: feedId }}>
+                  <Link to="/feed/$feedId" params={{ feedId }}>
                     <Check className="text-success" aria-label="Captured" />
                     {details}
                   </Link>

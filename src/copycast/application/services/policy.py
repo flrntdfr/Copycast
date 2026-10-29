@@ -2,13 +2,15 @@
 
 Shared by the worker's Refresh (after every listing) and by ``update_mirror``
 (a mode change applies at once). Rolling is the one policy that deletes on
-its own; ADR 0012 narrows ADR 0009 for it.
+its own; ADR 0012 narrows ADR 0009 for it. The Archive policy locks what it
+archives: a locked Episode (``archive_flag``) is never deleted.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from typing import Final
 
 from copycast.application.capabilities import capability
 from copycast.application.events import FeedEvent, ItemEvent
@@ -23,10 +25,37 @@ from copycast.application.services.context import FeedRow, ItemRow, ServiceConte
 from copycast.application.services.defaults import effective, load_defaults
 from copycast.application.services.episodes import delete_episode
 from copycast.application.services.feeds import require_mirror
-from copycast.domain.enums import ArchiveState, BackfillMode, DeleteReason, WantedReason
+from copycast.domain.enums import (
+    ArchiveState,
+    BackfillMode,
+    DeleteReason,
+    FeedKind,
+    WantedReason,
+)
 from copycast.logging import get_logger
 
 log = get_logger(__name__)
+
+ARCHIVE_POLICY_MODES: Final = frozenset(
+    {BackfillMode.all, BackfillMode.new, BackfillMode.latest, BackfillMode.selection}
+)
+"""The modes of the Archive policy: what they archive is locked, kept for good."""
+
+
+def locks_on_archive(feed: FeedRow) -> bool:
+    """Whether an Episode of ``feed`` is locked once archived: a Mirror on the Archive policy
+    that does not stay in sync with its Source.
+
+    The archive job locks each Episode it archives for such a Mirror, and switching a Mirror
+    to the Archive policy locks what it has archived so far; switching away unlocks nothing.
+    A Mirror with Sync (``sync_deletions``, every captured playlist) is never locked
+    automatically: Sync skips locked Episodes, so the lock would silently switch Sync off.
+    """
+    return (
+        feed.kind == FeedKind.mirror
+        and feed.backfill_mode in ARCHIVE_POLICY_MODES
+        and not feed.sync_deletions
+    )
 
 
 def _now() -> datetime:
@@ -58,7 +87,7 @@ async def delete_rows(
 
 
 async def rolled_out(uow: UnitOfWorkPort, feed: FeedRow, *, size: int) -> list[ItemRow]:
-    """Archived items outside the window of the newest ``size``, flagged Archive ones spared."""
+    """Archived items outside the window of the newest ``size``, locked ones spared."""
     window = set(await uow.catalog.window_ids(feed.id, size))
     archived = await uow.catalog.ids_in_state(feed.id, ArchiveState.archived)
     outside = [item_id for item_id in archived if item_id not in window]
@@ -186,10 +215,12 @@ def defaults_for(ctx: ServiceContext) -> MirrorDefaults:
 
 
 __all__ = [
+    "ARCHIVE_POLICY_MODES",
     "apply_policy",
     "defaults_for",
     "delete_rows",
     "expire_automatic",
+    "locks_on_archive",
     "preview_change",
     "preview_mirror_update",
     "rolled_out",

@@ -79,12 +79,12 @@ export function CommandPalette({
                   <Radio /> Mirror this URL
                 </CommandItem>
                 <CommandItem
-                  value={`bucket ${query}`}
+                  value={`local feed ${query}`}
                   onSelect={() =>
                     go(() => void navigate({ to: "/", search: { url: query.trim() } }))
                   }
                 >
-                  <Send /> Send to Bucket…
+                  <Send /> Send to Local feed…
                 </CommandItem>
               </>
             ) : (
@@ -132,12 +132,7 @@ export function CommandPalette({
                   key={feed.id}
                   value={`${feed.title} ${feed.id}`}
                   onSelect={() =>
-                    go(
-                      () =>
-                        void (isMirror(feed)
-                          ? navigate({ to: "/mirrors/$mirrorId", params: { mirrorId: feed.id } })
-                          : navigate({ to: "/buckets/$bucketId", params: { bucketId: feed.id } })),
-                    )
+                    go(() => void navigate({ to: "/feed/$feedId", params: { feedId: feed.id } }))
                   }
                 >
                   {isMirror(feed) ? <Radio /> : <PaintBucket />} {feed.title}

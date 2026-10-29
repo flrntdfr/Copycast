@@ -42,7 +42,7 @@ export const MODE_HINTS: Record<PolicyTab | LegacyMode, string> = {
   automatic:
     "Nothing is downloaded ahead of time. The feed lists every item; an Episode is downloaded when your podcast app first asks for it (the app waits up to two minutes) and is deleted after the retention.",
   archive:
-    "Every new episode is downloaded as it arrives and kept. Nothing is ever deleted on its own.",
+    "Every new episode is downloaded as it arrives and locked, so nothing deletes it. With Sync on, nothing is locked: an Episode the Source removes is deleted here too.",
   rolling:
     "Only the newest N stay archived. Older Episodes are deleted as newer ones arrive. No longer offered: switch to Ephemeral or Archive to leave it.",
   selection:

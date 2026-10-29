@@ -229,10 +229,14 @@ async def test_refresh_fills_dates_and_descriptions_and_keeps_the_first_date(
 async def test_synced_mirror_deletes_what_the_source_drops(
     container: Container, source: Source, runner: Runner
 ) -> None:
-    """A playlist kept in sync: an item that leaves the listing is tombstoned, not Delisted."""
+    """A playlist kept in sync: an item that leaves the listing is tombstoned, not Delisted.
+
+    Ephemeral and archived by hand, so nothing is locked (Sync spares a locked Episode)."""
     url = source.write_rss("synced", items=[2, 1], artwork=False)
-    mirror = await create_mirror(container, url, mode=BackfillMode.all, sync_deletions=True)
+    mirror = await create_mirror(container, url, mode=BackfillMode.automatic, sync_deletions=True)
     assert mirror.sync_deletions is True
+    await runner.run_until_idle()
+    await container.services.archive_available(mirror.id)
     await runner.run_until_idle()
     assert (await container.services.get_feed(mirror.id)).episode_count == 2
 

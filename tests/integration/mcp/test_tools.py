@@ -348,5 +348,41 @@ async def test_list_feed_objects_tool(
     media = next(obj for obj in listing["objects"] if obj["kind"] == "media")
     assert media["item_title"] == "Episode 1" and media["url"].endswith(f"/objects/{media['path']}")
     assert listing["total_bytes"] == sum(obj["size_bytes"] for obj in listing["objects"])
+    assert media["locked"] is True  # the Archive policy locks what it archives
+    descriptor = next(obj for obj in listing["objects"] if obj["kind"] == "descriptor")
+    assert descriptor["locked"] is None
     with pytest.raises((ToolError, MCPError)):
         await mcp_client.call_tool("list_feed_objects", {"feed_id": "nope"})
+
+    # A locked Episode is refused; unlocked, it goes.
+    ids = {"feed_id": mirror["id"], "item_id": media["item_id"]}
+    with pytest.raises(ToolError) as refused:
+        await mcp_client.call_tool("delete_item", ids)
+    assert "[conflict]" in str(refused.value) and "locked" in str(refused.value)
+    unlocked = structured(
+        await mcp_client.call_tool("set_archive_flag", {**ids, "flag": {"archive_flag": False}})
+    )
+    assert unlocked["archive_flag"] is False
+    assert structured(await mcp_client.call_tool("delete_item", ids))["deleted"] is True
+
+
+async def test_storage_summary_tool(
+    mcp_client: Client[Any], source: Source, runner: Runner
+) -> None:
+    tools = {tool.name: tool for tool in await mcp_client.list_tools()}
+    annotations = tools["storage_summary"].annotations
+    assert annotations is not None and annotations.read_only_hint is True
+    assert (tools["storage_summary"].meta or {})["capability"] == "storage_summary"
+    url = source.write_rss("mcp-summary", items=[1], artwork=False)
+    mirror = structured(
+        await mcp_client.call_tool(
+            "create_mirror", {"mirror": {"source_url": url, "backfill": {"mode": "all"}}}
+        )
+    )
+    await runner.run_until_idle()
+    summary = structured(await mcp_client.call_tool("storage_summary", {}))
+    listing = structured(await mcp_client.call_tool("list_feed_objects", {"feed_id": mirror["id"]}))
+    per_feed = {feed["feed_id"]: feed for feed in summary["feeds"]}
+    assert per_feed[mirror["id"]]["file_count"] == listing["count"] > 0
+    assert per_feed[mirror["id"]]["total_bytes"] == listing["total_bytes"]
+    assert summary["file_count"] == sum(feed["file_count"] for feed in summary["feeds"])

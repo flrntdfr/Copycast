@@ -42,7 +42,7 @@ export function goBack(state: WizardState, target: WizardStep): WizardState {
 
 /**
  * The one candidate to create without asking: a single Source that is not a lone video
- * (a lone video is better sent to a Bucket, so the person is asked).
+ * (a lone video is better sent to a Local feed, so the person is asked).
  */
 export function autoCandidate(probe: ProbeResult): ProbeCandidate | null {
   const [only] = probe.candidates;

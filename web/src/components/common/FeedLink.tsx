@@ -20,7 +20,7 @@ export function useFeedIndex(): Map<string, FeedSummary> {
   return index;
 }
 
-/** Link to a Mirror or a Bucket page; falls back to the raw id until the index has it. */
+/** Link to a Feed's page; falls back to the raw id until the index has it. */
 export function FeedLink({
   feedId,
   feed,
@@ -36,12 +36,8 @@ export function FeedLink({
       <span className={cn("font-mono text-xs text-muted-foreground", className)}>{feedId}</span>
     );
   }
-  return feed.kind === "mirror" ? (
-    <Link to="/mirrors/$mirrorId" params={{ mirrorId: feed.id }} className={classes}>
-      {feed.title}
-    </Link>
-  ) : (
-    <Link to="/buckets/$bucketId" params={{ bucketId: feed.id }} className={classes}>
+  return (
+    <Link to="/feed/$feedId" params={{ feedId: feed.id }} className={classes}>
       {feed.title}
     </Link>
   );

@@ -30,7 +30,7 @@ export function DeleteFeedDialog({
   const { deleteFeed, isPending } = useDeleteFeed();
   const [error, setError] = useState<string | null>(null);
   if (!feed) return null;
-  const noun = feed.kind === "mirror" ? "Mirror" : "Bucket";
+  const noun = feed.kind === "mirror" ? "Mirror" : "Local feed";
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>

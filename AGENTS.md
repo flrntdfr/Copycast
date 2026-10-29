@@ -1,6 +1,6 @@
 # Copycast
 
-A self-hosted podcast mirroring and archiving service. You point it at a Source of audio content (a podcast feed, a page advertising feeds, a YouTube channel or playlist, anything the Engine supports); it keeps a durable copy in its Object store and publishes its own podcast feed that keeps working even if the original disappears. Agents get the same capabilities as the web UI through an MCP server: find a podcast by name and mirror it, archive an exact selection of episodes, or push arbitrary URLs into a Bucket feed.
+A self-hosted podcast mirroring and archiving service. You point it at a Source of audio content (a podcast feed, a page advertising feeds, a YouTube channel or playlist, anything the Engine supports); it keeps a durable copy in its Object store and publishes its own podcast feed that keeps working even if the original disappears. Agents get the same capabilities as the web UI through an MCP server: find a podcast by name and mirror it, archive an exact selection of episodes, or push arbitrary URLs into a Local feed.
 
 Copycast v1 is a Python (FastAPI, SQLAlchemy, Postgres) modular monolith with yt-dlp imported as a library in a worker process, a React frontend, and an MCP server sharing the API's service layer. It ships as one container image run as two processes, next to Postgres, an S3 Object store
 (SeaweedFS in compose) and an optional Valkey Feed cache.
@@ -10,11 +10,11 @@ Copycast v1 is a Python (FastAPI, SQLAlchemy, Postgres) modular monolith with yt
 Use these terms, in code and in conversation. The _Avoid_ lists name the words that mean something else here or that blur a distinction.
 
 **Feed**:
-The umbrella for the two kinds of thing Copycast publishes a podcast feed for: a Mirror or a Bucket. Every Feed has an id, a title, a Catalog, a prefix in the Object store (`feeds/{id}/`) and a published RSS document.
+Everything Copycast publishes is a Feed: a Mirror or a Local feed. Every Feed has an id, a title, a Catalog, a published RSS document and exactly one bucket (its files under `feeds/{id}/` in the Object store). The Feeds page lists every Feed, Mirrors, captured playlists and Local feeds alike, in one table.
 _Avoid_: Channel, show, podcast (for the thing Copycast serves)
 
 **Mirror**:
-A Feed that tracks one Source. Created once, then kept up to date automatically; it continues serving its archived content even when the Source becomes unreachable. Copycast never deletes anything from a Mirror on its own.
+A Feed that tracks one Source. Created once, then kept up to date automatically; it continues serving its archived content even when the Source becomes unreachable. A captured YouTube playlist is a Mirror too.
 _Avoid_: Archive, snapshot, copy, subscription
 
 **Source**:
@@ -25,24 +25,24 @@ _Avoid_: Original, upstream, target
 The RSS feed Copycast publishes for a Mirror — the thing you subscribe to in a podcast client. It preserves the Source's original metadata but points at archived audio and assets.
 _Avoid_: Output feed, generated feed, proxy feed
 
-**Bucket**:
-A Feed with no Source. It is filled by Requests — arbitrary URLs pushed by a person or an agent — and by Uploads, files a person or an agent puts in it, and is the only kind of Feed with Retention. Captured YouTube playlists are Mirrors underneath but are listed with the Buckets. One default Bucket named "Copycast" always exists: it can be renamed but never deleted. Called an Inbox before ADR 0018; `feed.json` files that still say `inbox` read as `bucket`.
-_Avoid_: Inbox (the old name), queue, dropbox, watch later
+**Local feed**:
+A Feed with no Source (`kind: "bucket"` in the API and MCP, which keep the older name). It is filled by Requests — arbitrary URLs pushed by a person or an agent — and by Uploads, and its page holds the *Add URL* form, *Upload files…* and its Settings (name, autoprune). One default Local feed named "Copycast" always exists: it can be renamed but never deleted, and the UI creates no other (agents can, with `create_bucket`). Called an Inbox before ADR 0018 and a Bucket before ADR 0021; `feed.json` files that still say `inbox` read as `bucket`.
+_Avoid_: Bucket (that is a Feed's files now), Inbox, queue, dropbox, watch later
 
-**Bucket Feed**:
-The RSS feed Copycast publishes for a Bucket: the same shape as a Mirror Feed, with every item synthesized from Engine metadata and ordered by the time it was added.
-_Avoid_: Bucket RSS, request feed
+**Local feed's RSS**:
+The RSS document Copycast publishes for a Local feed: the same shape as a Mirror Feed, with every item synthesized from Engine metadata and ordered by the time it was added.
+_Avoid_: Bucket Feed (the old name), request feed
 
 **Serial Bucket**:
-A Bucket an agent builds from Uploads in an order it decides (an audiobook's parts and chapters): Episodes archived at creation, numbered by position, dated one per day at a playful posting time so podcast apps play them first to last, and published as `itunes:type serial` (ADR 0015).
+A Local feed an agent builds from Uploads in an order it decides (an audiobook's parts and chapters): Episodes archived at creation, numbered by position, dated one per day at a playful posting time so podcast apps play them first to last, and published as `itunes:type serial` (ADR 0015). The tool keeps its name, `create_serial_bucket`.
 _Avoid_: playlist, audiobook feed, ordered Bucket
 
 **Upload**:
-One audio file staged for a Bucket: created with a one-time upload URL, received by an HTTP PUT of its bytes, read for its tags, and consumed (or swept after 24 h) once a Serial Bucket or `add_uploads` takes it. `add_uploads` orders a batch by natural file name and dates it by arrival (ADR 0018).
+One audio file staged for a Local feed: created with a one-time upload URL, received by an HTTP PUT of its bytes, read for its tags, and consumed (or swept after 24 h) once a Serial Bucket or `add_uploads` takes it. `add_uploads` orders a batch by natural file name and dates it by arrival (ADR 0018).
 _Avoid_: Import, attachment (that is a show-notes file), file request
 
 **Request**:
-One URL pushed into a Bucket, recorded with who pushed it (UI or MCP) and what it expanded into. A Request for a page or playlist expands to many Catalog items; a Request for a podcast feed is refused ("use create_mirror").
+One URL pushed into a Local feed, recorded with who pushed it (UI or MCP) and what it expanded into. A Request for a page or playlist expands to many Catalog items; a Request for a podcast feed is refused ("use create_mirror").
 _Avoid_: Submission, task, job (that is the worker's word)
 
 **Episode**:
@@ -78,7 +78,7 @@ The episode number a Source publishes itself (`itunes:episode`, a playlist index
 _Avoid_: Episode id, track number
 
 **Mirror ID**:
-A Feed's permanent, opaque identity. For a Mirror it is derived from the Source's dedup key at creation; for a Bucket from its name plus a random suffix. It names the feed URL and the Feed's prefix in the Object store and never changes — podcast clients depend on it.
+A Feed's permanent, opaque identity. For a Mirror it is derived from the Source's dedup key at creation; for a Local feed from its name plus a random suffix. It names the feed URL and the Feed's prefix in the Object store and never changes — podcast clients depend on it.
 _Avoid_: Slug, name, feed name
 
 **Backfill**:
@@ -86,20 +86,20 @@ The part of a Mirror's policy that says which items get archived (`backfill.mode
 _Avoid_: Initial sync, history, catch-up, mode (in prose; the UI shows the policies as tabs)
 
 **Archive**:
-The policy that keeps whatever it archives for good: with Backfill on (`all`) every item listed, then every new one; with it off (`new`) only what the Source lists from the moment it is chosen. Nothing is deleted on its own, and every Episode of an Archive Mirror counts as kept when its bucket is cleared (ADR 0016).
+The policy that keeps whatever it archives for good: with Backfill on (`all`) every item listed, then every new one; with it off (`new`) only what the Source lists from the moment it is chosen. Every Episode it archives is Locked automatically, and switching a Mirror to Archive Locks the Episodes it already holds, except on a Mirror with Sync, which is never Locked automatically (Sync would skip Locked Episodes); nothing else protects them (ADR 0021).
 _Avoid_: Everything (the old tab name), permanent, keep
 
 **Rolling**:
-The Backfill mode that keeps exactly the newest N items by publication archived: applied at every Refresh and at once when chosen; archived items that fall outside the window are tombstoned, Episodes flagged Archive excepted (ADR 0012). No longer offered as a tab: a Mirror on it keeps the tab until switched; agents may still choose it.
+The Backfill mode that keeps exactly the newest N items by publication archived: applied at every Refresh and at once when chosen; archived items that fall outside the window are tombstoned, Locked Episodes excepted (ADR 0012). No longer offered as a tab: a Mirror on it keeps the tab until switched; agents may still choose it.
 _Avoid_: Sliding window, keep-last, FIFO
 
 **Ephemeral**:
 The policy that archives nothing ahead of time (`automatic` in the API): the Mirror Feed lists every item the Source lists, an Episode is archived when a podcast app first asks for its media (the request waits up to two minutes, then says retry), and it expires after the Mirror's Retention. An item's media URL is fixed when it is first listed (`public_ext`) and never changes once archived, whatever container the archive got, so no app downloads an Episode twice.
 _Avoid_: Automatic (the old name, still the API value), lazy, on-demand mode (say "archived on demand" for the act), streaming
 
-**Archive flag**:
-An Episode's mark that it is kept for good, set from its Catalog row or `set_archive_flag`: Retention, a Rolling window, Sync and clearing a bucket skip it; deleting the Episode or its Feed, and the admin purge, do not. Kept in `feed.json` like the rest of the item.
-_Avoid_: Pin, star, favourite, protected, keep
+**Lock**:
+An Episode's mark that it is never deleted (`archive_flag` in the API, the database and `feed.json`; `set_archive_flag`), toggled with the padlock of its Catalog row or of any of its files on the bucket page. Retention, a Rolling window, Sync, purging the bucket, the admin purge and `delete_item` all spare a Locked Episode (the UI disables its Delete button); only deleting the whole Feed removes it. The Archive policy Locks what it archives unless the Mirror has Sync (ADR 0021).
+_Avoid_: Archive flag (the old name), pin, star, favourite, protected, keep
 
 **Follow**:
 The part of a Mirror's policy that says whether items the Source lists after creation are archived automatically. Off by default when the Backfill is a selection.
@@ -118,7 +118,7 @@ The state of a Mirror that no longer Refreshes but keeps serving its Mirror Feed
 _Avoid_: Disabled, stopped, archived
 
 **Retention**:
-A Bucket's rule for deleting Episodes it no longer needs: automatically N days after their first download, or on demand by criterion; for an Ephemeral Mirror, the days after an Episode's last download before it is tombstoned (7 by default, none keeps forever). Other Mirrors have no Retention. Bucket Episodes never downloaded, and Episodes flagged Archive, are never pruned.
+A rule for deleting Episodes no longer needed: for a Local feed, N days after their first download (*autoprune*); for an Ephemeral Mirror, the days after an Episode's last download before it is tombstoned (7 by default, none keeps forever). Other Mirrors have no Retention. Local-feed Episodes never downloaded, and Locked Episodes, are never pruned.
 _Avoid_: Expiry, TTL, cleanup, garbage collection
 
 **Download count**:
@@ -129,15 +129,15 @@ _Avoid_: Plays, listens, hits
 The trace left by an Episode you deleted (or that rolled out, expired, or was purged): the Catalog item stays, marked deleted, so the Mirror will not archive it again on its own; it shows as Available and can be re-archived on demand, and an Ephemeral Mirror downloads it again when a podcast app asks.
 
 **Capture**:
-A YouTube playlist of the signed-in account mirrored from the Buckets section of the Feeds page (the *Capture a YouTube playlist* dropdown): a synced, Ephemeral Mirror flagged `playlist_capture`, shown among the Buckets because it is filled from the YouTube app the way a Bucket is filled by Requests.
+A YouTube playlist of the signed-in account mirrored from the *Playlists* dropdown next to the *Mirror* button on the Feeds page: a synced, Ephemeral Mirror flagged `playlist_capture`, listed in the Feeds table like any other Feed.
 _Avoid_: Playlist Bucket (it is a Mirror underneath), import
 
 **Sync**:
 A Mirror option (*Stay in sync with the Source*): an Episode is deleted, leaving a Tombstone, when its item leaves the Source, instead of staying Delisted. Meant for a curated YouTube playlist.
-_Avoid_: Mirror deletions, prune (that is a Bucket's Retention)
+_Avoid_: Mirror deletions, prune (that is a Local feed's Retention), purge (that empties a bucket)
 
 **Live stream**:
-A Catalog item the Engine reports as a stream (`live_status`: upcoming, live, recording being processed, recorded). While upcoming or live it is listed in the Catalog with a badge but is not archivable: no policy or selection wants it and an Ephemeral feed does not list it; any Refresh, full or light, that sees it recorded makes it archivable. A Request is the exception: a Bucket never Refreshes, so a pushed stream is wanted at once and its archive job waits instead. An archive that meets a stream with no recording yet waits 30 minutes between tries, without counting attempts, for up to 48 h after the job was created, then fails; the archive job alone measures that ceiling (ADR 0014).
+A Catalog item the Engine reports as a stream (`live_status`: upcoming, live, recording being processed, recorded). While upcoming or live it is listed in the Catalog with a badge but is not archivable: no policy or selection wants it and an Ephemeral feed does not list it; any Refresh, full or light, that sees it recorded makes it archivable. A Request is the exception: a Local feed never Refreshes, so a pushed stream is wanted at once and its archive job waits instead. An archive that meets a stream with no recording yet waits 30 minutes between tries, without counting attempts, for up to 48 h after the job was created, then fails; the archive job alone measures that ceiling (ADR 0014).
 _Avoid_: Broadcast, premiere (a scheduled upload is an upcoming stream to Copycast), recording (that is what it becomes)
 
 **Attachment**:
@@ -151,7 +151,7 @@ _Avoid_: Blacklist, ignore list, ban
 
 **Object store**:
 The S3 bucket (`[storage] url`, SeaweedFS in compose) that holds every byte Copycast keeps under the old data directory's names: `LAYOUT_VERSION`, `engine/`, `feeds/{id}/feed.json`, `source/`, `media/`, `assets/`, plus staged Uploads under `uploads/`. Postgres can be rebuilt from it alone (ADR 0001, ADR 0019). Copycast proxies every object it serves; podcast apps never talk to it. `memory://` is the same code in-process, for tests only.
-_Avoid_: Bucket (a Feed with no Source; its share of the Object store is its Storage), data directory (layout 1, before 2.0), disk, S3 (the protocol), MinIO
+_Avoid_: Bucket (one Feed's share of the Object store), data directory (layout 1, before 2.0), disk, S3 (the protocol), MinIO
 
 **Scratch**:
 The worker's local directory (`[storage] scratch_dir`) where an archive job downloads, transcodes and tags in a directory of its own; only finished files leave it, uploaded to the Object store before the item is marked archived. Removed when the job ends, swept when a worker starts; never served, never backed up.
@@ -193,9 +193,9 @@ _Avoid_: Filter, Shorts rule, duration threshold
 A Netscape `cookies.txt` added under *Authentications* on the Settings page so sites that demand a login (YouTube from a server's IP, Twitch, Vimeo, Mixcloud) accept downloads; stored in the Object store as `engine/cookies/{name}.txt`, one row each. The Engine carries one jar merged from all of them, `engine/cookies.txt` (yt-dlp gets a private Scratch copy), on every listing and fetch, and cookies the sites rotate there go back to their file. A service shows unlocked while a file holds its cookies. Never shown back, never exposed to agents.
 _Avoid_: Cookies setting, session file, YouTube login, credentials
 
-**Storage**:
-A Feed's storage: its prefix of the Object store (`feeds/{id}/`: media, Artwork and assets). The UI calls it the Feed's bucket: one card per Feed in the collapsed Buckets box of the Feeds page (the Mirrors in the table's order, then the Buckets and captured playlists), opening on the list of every object it keeps with a download link each (`list_feed_objects`); and one row with its size in the Buckets half of the Settings page. Clearing a bucket deletes every Episode not kept for good and keeps the Feed; deleting it deletes the Feed.
-_Avoid_: folder, volume, data directory
+**Bucket**:
+A Feed's files: its prefix of the Object store (`feeds/{id}/`: media, Artwork, assets, `feed.json`, the Source copy and the worker's sidecars). Every Feed has exactly one. The Feeds page shows one card per bucket (files and size from `storage_summary`) in a collapsed *Buckets* box; a bucket's page lists every file with its kind, size, a padlock for the Episode it belongs to and a download link (`list_feed_objects`). *Purge* empties a bucket of every Episode that is not Locked and keeps the Feed (`clear_feed`); the Feed's own files are never purged. Deleting the Feed deletes its bucket.
+_Avoid_: Storage, folder, volume, data directory; Bucket for a Feed with no Source (that is a Local feed); S3 bucket (say Object store)
 
 **Scope**:
 What an API key may do over MCP: `read` (read-only tools), `write` (everything but deletions) or `full` (everything). Every tool checks it before running.
@@ -278,7 +278,7 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0004](docs/adr/0004-network-is-the-security-boundary.md) | No authentication: the network (Tailscale) is the boundary |
 | [0005](docs/adr/0005-modular-monolith-two-processes-one-image.md) | Modular monolith, two processes, one image |
 | [0006](docs/adr/0006-image-tags-and-engine-bump-automation.md) | Image tags and automated engine bumps |
-| [0007](docs/adr/0007-bucket-and-requests.md) | Bucket feeds fed by Requests |
+| [0007](docs/adr/0007-inbox-and-requests.md) | Bucket feeds fed by Requests |
 | [0008](docs/adr/0008-ordinals-source-numbering-selections.md) | Ordinals, Source numbering and selections |
 | [0009](docs/adr/0009-never-delete-tombstones.md) | Copycast never deletes from a Mirror; user deletions leave Tombstones |
 | [0010](docs/adr/0010-download-counting-rule.md) | What counts as a download |
@@ -286,8 +286,9 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0012](docs/adr/0012-mirror-modes-rolling-and-automatic.md) | Mirror modes: Rolling windows and Automatic archives narrow ADR 0009 |
 | [0013](docs/adr/0013-light-refresh-on-fetch-and-stable-media-urls.md) | A feed fetch runs a Light Refresh inline; media URLs are fixed at listing time; the api logs its own requests |
 | [0014](docs/adr/0014-live-streams-archived-once-recorded.md) | Live streams are archived once their recording is published; an archive that meets one waits, then fails |
-| [0015](docs/adr/0015-serial-buckets-from-uploads.md) | Serial Buckets: an agent uploads files over HTTP and gives their listening order |
+| [0015](docs/adr/0015-serial-inboxes-from-uploads.md) | Serial Buckets: an agent uploads files over HTTP and gives their listening order |
 | [0016](docs/adr/0016-ephemeral-or-archive-and-the-archive-flag.md) | Two policies, Ephemeral and Archive (with or without Backfill); the Archive flag keeps an Episode for good |
 | [0018](docs/adr/0018-inboxes-become-buckets-with-uploads.md) | Inboxes are renamed Buckets; uploads join any Bucket in natural file-name order, dated by arrival |
 | [0019](docs/adr/0019-object-store-scratch-and-a-shared-feed-cache.md) | Every byte lives in an S3 Object store; the worker transcodes in Scratch; first plays hold the line on a reserved slot; feeds are cached in a shared Valkey |
 | [0020](docs/adr/0020-media-keys-in-enclosure-urls.md) | While auth is on, enclosures and non-artwork assets are published under a media key derived from the feed's password |
+| [0021](docs/adr/0021-every-feed-has-a-bucket-and-locks.md) | Every Feed has a bucket; the Feed with no Source is a Local feed; the Lock (ex Archive flag) alone protects an Episode, and the Archive policy Locks what it archives |

@@ -257,7 +257,7 @@ export function buildColumns(ctx: CatalogColumnContext): ColumnDef<ItemRead>[] {
       enableHiding: false,
       header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) => <RowActions item={row.original} feedTitle={ctx.feedTitle} />,
-      // Room for an Episode's four buttons (Play, Download, Archive flag, Delete).
+      // Room for an Episode's four buttons (Play, Download, Lock, Delete).
       size: 152,
     },
   );

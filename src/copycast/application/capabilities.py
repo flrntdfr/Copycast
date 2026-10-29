@@ -28,6 +28,7 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "export_opml",
         # storage
         "list_feed_objects",
+        "storage_summary",
         # items
         "list_items",
         "get_item",

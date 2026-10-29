@@ -26,7 +26,11 @@ async def test_preview_counts_without_changing_anything(
     client: httpx.AsyncClient, source: Source, runner: Runner
 ) -> None:
     url = source.write_rss("preview", items=[3, 2, 1], artwork=False)
-    mirror = await create_mirror(client, url)
+    # Ephemeral, archived by hand: unlocked, so a Rolling window may delete them.
+    mirror = await create_mirror(client, url, mode="automatic")
+    await runner.run_until_idle()
+    archive = await client.post(api(f"/feeds/{mirror['id']}/archive-available"))
+    assert archive.status_code == 202
     await runner.run_until_idle()
     response = await client.post(
         api(f"/mirrors/{mirror['id']}/preview"),

@@ -108,7 +108,7 @@ describe("Mirror page", () => {
     const calls: { method: string; path: string }[] = [];
     server.use(...handlers(calls));
     const user = userEvent.setup();
-    renderApp("/mirrors/mirror-1");
+    renderApp("/feed/mirror-1");
 
     expect(await screen.findByRole("heading", { name: "Example Podcast" })).toBeInTheDocument();
     expect(screen.getByText("Podcast RSS")).toBeInTheDocument();
@@ -139,6 +139,10 @@ describe("Mirror page", () => {
         expect.objectContaining({ path: "/api/mirrors/mirror-1/pause" }),
       ),
     );
+    expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
+      "href",
+      "/buckets/mirror-1",
+    );
   });
 
   it("archives everything Available from the menu, optionally switching to Archive", async () => {
@@ -155,7 +159,7 @@ describe("Mirror page", () => {
       ...handlers(calls),
     );
     const user = userEvent.setup();
-    renderApp("/mirrors/mirror-1");
+    renderApp("/feed/mirror-1");
     await screen.findByRole("heading", { name: "Example Podcast" });
 
     await user.click(screen.getByRole("button", { name: "More actions" }));
@@ -189,7 +193,7 @@ describe("Mirror page", () => {
     const calls: { method: string; path: string; body?: unknown }[] = [];
     server.use(...handlers(calls));
     const user = userEvent.setup();
-    renderApp("/mirrors/mirror-1");
+    renderApp("/feed/mirror-1");
     await screen.findByRole("heading", { name: "Example Podcast" });
     await user.click(screen.getByRole("button", { name: "Edit title" }));
     const field = screen.getByRole("textbox", { name: "Title" });
@@ -211,7 +215,7 @@ describe("Mirror page", () => {
   it("shows the feed URL as a QR code only when asked", async () => {
     server.use(...handlers());
     const user = userEvent.setup();
-    renderApp("/mirrors/mirror-1");
+    renderApp("/feed/mirror-1");
     await screen.findByRole("heading", { name: "Example Podcast" });
     expect(screen.queryByTestId("qr-code")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Show mirror feed url as a QR code" }));
@@ -224,7 +228,7 @@ describe("Mirror page", () => {
   it("opens the Settings dialog from the header button and from the menu", async () => {
     server.use(...handlers());
     const user = userEvent.setup();
-    renderApp("/mirrors/mirror-1");
+    renderApp("/feed/mirror-1");
     await screen.findByRole("heading", { name: "Example Podcast" });
     expect(screen.queryByRole("dialog", { name: "Mirror settings" })).not.toBeInTheDocument();
 
@@ -252,18 +256,43 @@ describe("Mirror page", () => {
 
   it("opens the Settings dialog once from ?settings=true and cleans the URL", async () => {
     server.use(...handlers());
-    const { history } = renderApp("/mirrors/mirror-1?settings=true");
+    const { history } = renderApp("/feed/mirror-1?settings=true");
     const dialog = await screen.findByRole("dialog", { name: "Mirror settings" });
     expect(within(dialog).getByRole("form", { name: "Mirror settings" })).toBeInTheDocument();
     await waitFor(() => expect(history.location.search).toBe(""));
-    expect(history.location.pathname).toBe("/mirrors/mirror-1");
+    expect(history.location.pathname).toBe("/feed/mirror-1");
+  });
+
+  it("redirects an old Mirror link to the feed page, keeping its search", async () => {
+    server.use(...handlers());
+    const user = userEvent.setup();
+    const { history } = renderApp("/mirrors/mirror-1?q=First&settings=true");
+    expect(await screen.findByRole("dialog", { name: "Mirror settings" })).toBeInTheDocument();
+    await waitFor(() => expect(history.location.pathname).toBe("/feed/mirror-1"));
+    await waitFor(() => expect(history.location.search).toBe("?q=First"));
+    await user.keyboard("{Escape}");
+    expect(await screen.findByRole("textbox", { name: "Filter by title" })).toHaveValue("First");
+  });
+
+  it("says Paused once, in the health line, for a paused Mirror", async () => {
+    server.use(
+      // Before the shared handlers: the first matching handler wins.
+      http.get("/api/feeds/:feedId", () =>
+        HttpResponse.json({ ...feed, paused: true, health: { status: "paused", reason: null } }),
+      ),
+      ...handlers(),
+    );
+    renderApp("/feed/mirror-1");
+    await screen.findByRole("heading", { name: "Example Podcast" });
+    expect(screen.getAllByText("Paused")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
   });
 
   it("saves only the changed settings and shows rejected engine options per key", async () => {
     const calls: { method: string; path: string; body?: unknown }[] = [];
     server.use(...handlers(calls));
     const user = userEvent.setup();
-    renderApp("/mirrors/mirror-1");
+    renderApp("/feed/mirror-1");
 
     const form = await openSettings(user);
     expect(within(form).getByLabelText("Source URL")).toHaveValue(feed.source_url);
@@ -317,7 +346,7 @@ describe("Mirror page", () => {
     const calls: { method: string; path: string; body?: unknown }[] = [];
     server.use(...handlers(calls));
     const user = userEvent.setup();
-    renderApp("/mirrors/mirror-1");
+    renderApp("/feed/mirror-1");
     const form = await openSettings(user);
     expect(within(form).getByRole("tab", { name: "Archive" })).toHaveAttribute(
       "aria-selected",
@@ -370,7 +399,7 @@ describe("Mirror page", () => {
       ...handlers(calls),
     );
     const user = userEvent.setup();
-    renderApp("/mirrors/mirror-1");
+    renderApp("/feed/mirror-1");
     const form = await openSettings(user);
     expect(within(form).getByRole("tab", { name: "Rolling N" })).toHaveAttribute(
       "aria-selected",
@@ -407,7 +436,7 @@ describe("Mirror page", () => {
     const calls: { method: string; path: string }[] = [];
     server.use(...handlers(calls));
     const user = userEvent.setup();
-    const { history } = renderApp("/mirrors/mirror-1");
+    const { history } = renderApp("/feed/mirror-1");
     await openSettings(user);
     await user.click(await screen.findByRole("button", { name: "Delete Mirror…" }));
     const dialog = await screen.findByRole("alertdialog");

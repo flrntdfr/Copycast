@@ -13,6 +13,7 @@ from sqlalchemy import update
 
 from copycast.adapters.db.models import Job
 from copycast.app import Container
+from copycast.application.models import ArchiveFlagUpdate
 from copycast.application.ports import NotReady, PermanentError, StorageFull, TransientError
 from copycast.domain.enums import (
     ArchiveState,
@@ -252,6 +253,10 @@ async def test_a_stream_without_a_recording_waits_without_counting_then_gives_up
         assert item.live_status == LiveStatus.is_upcoming, "a listing, not an archive, updates it"
 
     # Past the ceiling the job and the item fail for good; the status still says why.
+    # (Archived under the Archive policy it is locked: unlocked first, it can be deleted.)
+    await container.services.set_archive_flag(
+        mirror.id, item_id, ArchiveFlagUpdate(archive_flag=False)
+    )
     await container.services.delete_item(mirror.id, item_id)
     again = await container.services.archive_item(mirror.id, item_id)
     assert again.id != job.id

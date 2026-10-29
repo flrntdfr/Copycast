@@ -395,7 +395,8 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
             </Label>
             <p className="text-xs text-muted-foreground">
               Delete an Episode when its item leaves the Source, instead of keeping it Delisted.
-              Meant for a YouTube playlist you curate: remove a video there, it goes here.
+              Meant for a YouTube playlist you curate: remove a video there, it goes here. On the
+              Archive policy, turning Sync off locks every archived Episode.
             </p>
           </div>
           <Controller

@@ -15,6 +15,14 @@ const feed = mirror({
   episode_count: 3,
   counts: { listed: 3, available: 2, delisted: 1, wanted: 0, archived: 3, failed: 0 },
 });
+const watchLater = mirror({
+  id: "mirror-wl",
+  title: "Watch Later",
+  service: "YouTube",
+  source_kind: "ytdlp",
+  playlist_capture: true,
+  sync_deletions: true,
+});
 const copycast = bucket({
   id: "bucket-1",
   name: "Copycast",
@@ -38,56 +46,85 @@ describe("Feeds table", () => {
     // user-event installs a clipboard stub for the test; read it back after the click.
     const user = userEvent.setup();
     renderApp("/");
-    expect(await screen.findByRole("heading", { name: "Feeds", level: 2 })).toBeInTheDocument();
-    const row = await screen.findByTestId("mirror-row");
+    const row = (await screen.findAllByTestId("mirror-row"))[0]!;
+    // No Episodes column any more.
+    expect(screen.queryByRole("columnheader", { name: "Episodes" })).not.toBeInTheDocument();
     expect(within(row).getByRole("link", { name: "Example Podcast" })).toHaveAttribute(
       "href",
-      "/mirrors/mirror-1",
+      "/feed/mirror-1",
     );
     expect(within(row).getAllByText("Podcast RSS")[0]).toBeInTheDocument();
     expect(within(row).getByText("Refreshed", { exact: false })).toBeInTheDocument();
-    await user.click(within(row).getAllByRole("button", { name: "Copy feed URL" })[0]!);
+    await user.click(within(row).getByRole("button", { name: "Copy feed URL" }));
     expect(await screen.findByText("Feed URL copied")).toBeInTheDocument();
     await expect(navigator.clipboard.readText()).resolves.toBe(feed.feed_url);
   });
 
-  it("lists a Bucket Feed as a Local row that opens its bucket page", async () => {
+  it("lists a captured YouTube playlist as a Mirror row", async () => {
+    server.use(...handlers([feed, watchLater]));
+    renderApp("/");
+    const rows = await screen.findAllByTestId("mirror-row");
+    expect(rows).toHaveLength(2);
+    const row = rows[1]!;
+    expect(within(row).getByRole("link", { name: "Watch Later" })).toHaveAttribute(
+      "href",
+      "/feed/mirror-wl",
+    );
+    expect(within(row).getAllByText("YouTube")[0]).toBeInTheDocument();
+  });
+
+  it("puts a Delete button on each row and no menu", async () => {
+    server.use(...handlers([feed, copycast]));
+    const user = userEvent.setup();
+    renderApp("/");
+    const row = (await screen.findAllByTestId("mirror-row"))[0]!;
+    expect(within(row).queryByRole("button", { name: /More actions/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /More actions/ })).not.toBeInTheDocument();
+    for (const name of ["Copy feed URL", "Refresh now", "Pause"]) {
+      expect(within(row).getByRole("button", { name })).toBeInTheDocument();
+    }
+    await user.click(within(row).getByRole("button", { name: "Delete Example Podcast" }));
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Delete Mirror “Example Podcast”?",
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Keep it" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("lists a Local feed as a Local row that opens its feed page", async () => {
     server.use(...handlers([feed, copycast, later]));
     const user = userEvent.setup();
     renderApp("/");
-    const rows = await screen.findAllByTestId("bucket-row");
+    const rows = await screen.findAllByTestId("local-feed-row");
     expect(rows).toHaveLength(2);
     const row = rows[0]!;
     expect(within(row).getByRole("link", { name: "Copycast" })).toHaveAttribute(
       "href",
-      "/buckets/bucket-1",
+      "/feed/bucket-1",
     );
     expect(within(row).getByText("Local", { selector: "[data-slot=badge]" })).toBeInTheDocument();
     expect(within(row).getByText("Local", { selector: ".sr-only" })).toBeInTheDocument();
-    expect(row).toHaveTextContent("2");
     expect(within(row).getAllByText("—")).toHaveLength(2);
+    expect(within(row).getByRole("button", { name: "Copy feed URL" })).toBeInTheDocument();
 
-    // The default Bucket only opens; another one can be deleted from its menu.
-    await user.click(within(row).getByRole("button", { name: "More actions for Copycast" }));
-    const menu = await screen.findByRole("menu");
-    expect(within(menu).getByRole("menuitem", { name: "Open" })).toHaveAttribute(
-      "href",
-      "/buckets/bucket-1",
-    );
-    expect(within(menu).queryByRole("menuitem", { name: "Delete…" })).not.toBeInTheDocument();
-    await user.keyboard("{Escape}");
-
-    await user.click(within(rows[1]!).getByRole("button", { name: "More actions for Later" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Delete…" }));
+    // The default Local feed cannot be deleted; another one can.
+    const locked = within(row).getByRole("button", { name: "Delete Copycast" });
+    expect(locked).toHaveAttribute("aria-disabled", "true");
+    await user.hover(locked);
     expect(
-      await screen.findByRole("alertdialog", { name: "Delete Bucket “Later”?" }),
+      (await screen.findAllByText("The default Local feed cannot be deleted"))[0],
+    ).toBeInTheDocument();
+    await user.click(locked);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+
+    await user.click(within(rows[1]!).getByRole("button", { name: "Delete Later" }));
+    expect(
+      await screen.findByRole("alertdialog", { name: "Delete Local feed “Later”?" }),
     ).toBeInTheDocument();
   });
 
-  it("shows the empty state only when there is neither a Mirror nor a Bucket", async () => {
-    server.use(
-      ...handlers([mirror({ id: "mirror-wl", title: "Watch Later", playlist_capture: true })]),
-    );
+  it("shows the empty state only when there is no Feed at all", async () => {
+    server.use(...handlers([]));
     renderApp("/");
     expect(await screen.findByText("No Feeds yet")).toBeInTheDocument();
     expect(screen.queryByTestId("mirror-row")).not.toBeInTheDocument();

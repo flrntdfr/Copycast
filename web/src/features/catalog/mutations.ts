@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { $api } from "@/api/client";
+import { $api, ApiProblem, describeProblem } from "@/api/client";
 import { OPS } from "@/api/ops";
 import type { ItemRead } from "@/api/types";
 
@@ -45,35 +45,49 @@ export function useFetchMetadata(feedId: string) {
   });
 }
 
-/** `delete_item` for one row; leaves a tombstone. */
+/** `delete_item` for one row; leaves a tombstone. A locked Episode is refused (409). */
 export function useDeleteItem(feedId: string) {
   const invalidate = useInvalidateCatalog(feedId);
   return $api.useMutation("delete", "/api/feeds/{feed_id}/items/{item_id}", {
+    meta: { silent: true },
     onSuccess: () => {
       invalidate();
       toast.success("Episode deleted", {
         description: "It stays Available and will not re-archive on its own.",
       });
     },
+    onError: (error) => {
+      if (ApiProblem.is(error) && error.status === 409) {
+        // Locked meanwhile (by the Archive policy, another tab or an agent): show the lock.
+        invalidate();
+        toast.error("Locked: unlock it to delete");
+        return;
+      }
+      const { title, description } = describeProblem(error);
+      toast.error(title, { description });
+    },
   });
 }
 
-/** `set_archive_flag` for one row: kept for good, or back to the Feed's policy. */
-export function useSetArchiveFlag(feedId: string) {
+/**
+ * The Lock of one Episode (`set_archive_flag`): locked, nothing ever deletes it (Retention,
+ * Rolling, Sync, purging the bucket, Delete); unlocked, it follows the Feed's policy again.
+ */
+export function useSetLock(feedId: string) {
   const invalidate = useInvalidateCatalog(feedId);
   return $api.useMutation("put", "/api/feeds/{feed_id}/items/{item_id}/archive-flag", {
     onSuccess: (item) => {
       invalidate();
-      toast.success(item.archive_flag ? "Flagged Archive" : "Archive flag cleared", {
+      toast.success(item.archive_flag ? "Locked" : "Unlocked", {
         description: item.archive_flag
-          ? "Kept for good: nothing deletes it on its own."
-          : "It follows the Feed's policy again.",
+          ? "Never deleted: not by the policy, Sync, a purge or Delete."
+          : "The Feed's policy and the bucket's Purge can delete it again.",
       });
     },
   });
 }
 
-/** Bulk helpers for the SelectionBar; per-item calls so Buckets work too. */
+/** Bulk helpers for the SelectionBar; per-item calls so Local feeds work too. */
 export function useBulkActions(feedId: string, feedKind: "mirror" | "bucket") {
   const invalidate = useInvalidateCatalog(feedId);
   const select = $api.useMutation("post", "/api/mirrors/{feed_id}/selections", {

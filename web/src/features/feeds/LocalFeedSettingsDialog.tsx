@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2, Scissors, Trash2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
@@ -8,15 +8,21 @@ import { z } from "zod";
 import { $api, ApiProblem } from "@/api/client";
 import type { BucketRead, BucketUpdate } from "@/api/types";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { optionalCount } from "@/features/add-source/policy-form";
-import { DeleteFeedDialog } from "@/features/feeds/DeleteFeedDialog";
-import { useInvalidateFeed } from "@/features/feeds/mutations";
-import { PruneDialog } from "./PruneDialog";
+import { DeleteFeedDialog } from "./DeleteFeedDialog";
+import { useInvalidateFeed } from "./mutations";
 
-export const bucketSettingsSchema = z
+const localFeedSettingsSchema = z
   .object({
     name: z.string().trim().min(1, "A name is required").max(80, "At most 80 characters"),
     autoprune: z.boolean(),
@@ -32,47 +38,46 @@ export const bucketSettingsSchema = z
     }
   });
 
-export type BucketSettingsInput = z.input<typeof bucketSettingsSchema>;
-export type BucketSettingsValues = z.output<typeof bucketSettingsSchema>;
+type LocalFeedSettingsInput = z.input<typeof localFeedSettingsSchema>;
+type LocalFeedSettingsValues = z.output<typeof localFeedSettingsSchema>;
 
-export function bucketDefaults(bucket: BucketRead): BucketSettingsInput {
+function localFeedDefaults(feed: BucketRead): LocalFeedSettingsInput {
   return {
-    name: bucket.name,
-    autoprune: bucket.autoprune_days != null,
-    autoprune_days: bucket.autoprune_days ?? 30,
+    name: feed.name,
+    autoprune: feed.autoprune_days != null,
+    autoprune_days: feed.autoprune_days ?? 30,
   };
 }
 
 /** Only changed fields; `autoprune_days: null` switches autoprune off. */
-export function toBucketUpdate(bucket: BucketRead, values: BucketSettingsValues): BucketUpdate {
+function toBucketUpdate(feed: BucketRead, values: LocalFeedSettingsValues): BucketUpdate {
   const update: BucketUpdate = {};
-  if (values.name.trim() !== bucket.name) update.name = values.name.trim();
+  if (values.name.trim() !== feed.name) update.name = values.name.trim();
   const days = values.autoprune ? (values.autoprune_days ?? null) : null;
-  if (days !== (bucket.autoprune_days ?? null)) update.autoprune_days = days;
+  if (days !== (feed.autoprune_days ?? null)) update.autoprune_days = days;
   return update;
 }
 
-/** Name, autoprune, Prune now… and the Danger zone (shown in `BucketSettingsDialog`). */
-export function BucketSettings({ bucket }: { bucket: BucketRead }) {
+/** Name, autoprune and the Danger zone of a Local feed. */
+function LocalFeedSettings({ feed }: { feed: BucketRead }) {
   const invalidate = useInvalidateFeed();
   const [deleting, setDeleting] = useState(false);
-  const [pruning, setPruning] = useState(false);
-  const form = useForm<BucketSettingsInput, unknown, BucketSettingsValues>({
-    resolver: zodResolver(bucketSettingsSchema),
-    defaultValues: bucketDefaults(bucket),
+  const form = useForm<LocalFeedSettingsInput, unknown, LocalFeedSettingsValues>({
+    resolver: zodResolver(localFeedSettingsSchema),
+    defaultValues: localFeedDefaults(feed),
   });
   const autoprune = useWatch({ control: form.control, name: "autoprune" });
 
   useEffect(() => {
-    if (!form.formState.isDirty) form.reset(bucketDefaults(bucket));
+    if (!form.formState.isDirty) form.reset(localFeedDefaults(feed));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bucket]);
+  }, [feed]);
 
   const update = $api.useMutation("patch", "/api/buckets/{bucket_id}", {
     onSuccess: (updated) => {
       invalidate(updated.id);
-      form.reset(bucketDefaults(updated));
-      toast.success("Bucket settings saved");
+      form.reset(localFeedDefaults(updated));
+      toast.success("Local feed settings saved");
     },
     onError: (error) => {
       if (ApiProblem.is(error) && error.slug === "conflict")
@@ -81,32 +86,32 @@ export function BucketSettings({ bucket }: { bucket: BucketRead }) {
   });
 
   const submit = form.handleSubmit((values) => {
-    const body = toBucketUpdate(bucket, values);
+    const body = toBucketUpdate(feed, values);
     if (Object.keys(body).length === 0) {
       toast.info("Nothing changed");
       return;
     }
-    update.mutate({ params: { path: { bucket_id: bucket.id } }, body });
+    update.mutate({ params: { path: { bucket_id: feed.id } }, body });
   });
   const errors = form.formState.errors;
 
   return (
     <div className="space-y-8">
-      <form onSubmit={submit} className="max-w-2xl space-y-6" aria-label="Bucket settings">
+      <form onSubmit={submit} className="space-y-6" aria-label="Local feed settings">
         <div className="space-y-1.5">
-          <Label htmlFor="bucket-name">Name</Label>
-          <Input id="bucket-name" {...form.register("name")} aria-invalid={!!errors.name} />
+          <Label htmlFor="local-feed-name">Name</Label>
+          <Input id="local-feed-name" {...form.register("name")} aria-invalid={!!errors.name} />
           {errors.name ? <p className="text-xs text-destructive">{errors.name.message}</p> : null}
         </div>
         <div className="space-y-3 rounded-lg border p-3">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <Label htmlFor="bucket-autoprune" className="font-medium">
+              <Label htmlFor="local-feed-autoprune" className="font-medium">
                 Autoprune
               </Label>
               <p className="text-xs text-muted-foreground">
-                Delete Episodes N days after their first download; never-downloaded Episodes are
-                kept.
+                Delete Episodes N days after their first download; never-downloaded and locked
+                Episodes are kept.
               </p>
             </div>
             <Controller
@@ -114,7 +119,7 @@ export function BucketSettings({ bucket }: { bucket: BucketRead }) {
               name="autoprune"
               render={({ field }) => (
                 <Switch
-                  id="bucket-autoprune"
+                  id="local-feed-autoprune"
                   checked={field.value}
                   onCheckedChange={field.onChange}
                 />
@@ -123,11 +128,11 @@ export function BucketSettings({ bucket }: { bucket: BucketRead }) {
           </div>
           {autoprune ? (
             <div className="flex items-center gap-2">
-              <Label htmlFor="bucket-autoprune-days" className="sr-only">
+              <Label htmlFor="local-feed-autoprune-days" className="sr-only">
                 Days after first download
               </Label>
               <Input
-                id="bucket-autoprune-days"
+                id="local-feed-autoprune-days"
                 type="number"
                 min={1}
                 className="w-24"
@@ -146,34 +151,58 @@ export function BucketSettings({ bucket }: { bucket: BucketRead }) {
           Save changes
         </Button>
       </form>
-      <section aria-labelledby="bucket-prune" className="max-w-2xl rounded-lg border p-4">
-        <h2 id="bucket-prune" className="text-sm font-medium">
-          Prune
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Delete downloaded or old Episodes now, with a preview first; their Requests stay.
-        </p>
-        <Button variant="outline" size="sm" className="mt-3" onClick={() => setPruning(true)}>
-          <Scissors /> Prune now…
-        </Button>
-      </section>
       <section
-        aria-labelledby="bucket-danger-zone"
-        className="max-w-2xl rounded-lg border border-destructive/40 p-4"
+        aria-labelledby="local-feed-danger-zone"
+        className="rounded-lg border border-destructive/40 p-4"
       >
-        <h2 id="bucket-danger-zone" className="text-sm font-medium text-destructive">
+        <h2 id="local-feed-danger-zone" className="text-sm font-medium text-destructive">
           Danger zone
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Deleting the Bucket removes every archived Episode, its Requests and its feed. The default
-          Bucket cannot be deleted.
-        </p>
-        <Button variant="destructive" size="sm" className="mt-3" onClick={() => setDeleting(true)}>
-          <Trash2 /> Delete Bucket…
-        </Button>
+        {feed.is_default ? (
+          <p className="mt-1 text-sm text-muted-foreground">
+            This is the default Local feed: it can be renamed but never deleted.
+          </p>
+        ) : (
+          <>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Deleting the Local feed removes every Episode in it, locked ones too, its Requests and
+              its published feed.
+            </p>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="mt-3"
+              onClick={() => setDeleting(true)}
+            >
+              <Trash2 /> Delete Local feed…
+            </Button>
+            <DeleteFeedDialog feed={feed} open={deleting} onOpenChange={setDeleting} />
+          </>
+        )}
       </section>
-      <PruneDialog bucketId={bucket.id} open={pruning} onOpenChange={setPruning} />
-      <DeleteFeedDialog feed={bucket} open={deleting} onOpenChange={setDeleting} />
     </div>
+  );
+}
+
+/** A Local feed's settings (name, autoprune, Danger zone) in a dialog. */
+export function LocalFeedSettingsDialog({
+  feed,
+  open,
+  onOpenChange,
+}: {
+  feed: BucketRead;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Local feed settings</DialogTitle>
+          <DialogDescription>{feed.name}</DialogDescription>
+        </DialogHeader>
+        <LocalFeedSettings feed={feed} />
+      </DialogContent>
+    </Dialog>
   );
 }

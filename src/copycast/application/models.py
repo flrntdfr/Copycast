@@ -193,8 +193,18 @@ class FeedObjectRead(ReadModel):
     last_modified: datetime
     etag: str | None = None
     url: str = Field(description="Downloads the object as an attachment (download_feed_object)")
-    item_id: str | None = Field(default=None, description="The Catalog item the name identifies")
+    item_id: str | None = Field(
+        default=None,
+        description="The Catalog item the name identifies (its media, assets and sidecars)",
+    )
     item_title: str | None = None
+    locked: bool | None = Field(
+        default=None,
+        description="The Lock (archive_flag) of the archived Episode the file belongs to: a "
+        "locked Episode is never deleted, purging the bucket included. Null for a file a purge "
+        "never deletes: the feed's own files (feed.json, source/, the feed artwork), an "
+        "Episode's `.item.xml` record, leftovers of an item that is not archived, stray files",
+    )
 
 
 class FeedObjectList(ReadModel):
@@ -209,6 +219,26 @@ class FeedObjectList(ReadModel):
     objects: list[FeedObjectRead] = Field(default_factory=list[FeedObjectRead])
     total_bytes: int = 0
     count: int = 0
+
+
+class FeedStorage(ReadModel):
+    """What one Feed keeps under ``feeds/{feed_id}/`` in the Object store (its bucket)."""
+
+    feed_id: str
+    file_count: int = 0
+    total_bytes: int = 0
+
+
+class StorageSummary(ReadModel):
+    """Every Feed's bucket counted from one listing of the Object store.
+
+    Each Feed appears, with zeros when it keeps nothing; objects under the prefix of no
+    known Feed are left out. ``file_count`` and ``total_bytes`` sum the Feeds'.
+    """
+
+    feeds: list[FeedStorage] = Field(default_factory=list[FeedStorage])
+    file_count: int = 0
+    total_bytes: int = 0
 
 
 # --------------------------------------------------------------------------- items and assets
@@ -257,8 +287,9 @@ class ItemRead(ReadModel):
     listed: bool = True
     archive_flag: bool = Field(
         default=False,
-        description="Kept for good: Retention, a Rolling window, Sync and clearing the Feed "
-        "never delete it",
+        description="The Lock: a locked Episode is never deleted. Retention, a Rolling "
+        "window, Sync, purging the bucket (clear_feed, purge_episodes) spare it and "
+        "delete_item refuses it; an Archive-policy Mirror without Sync locks what it archives",
     )
     live_status: LiveStatus | None = Field(
         default=None,
@@ -766,30 +797,30 @@ class PruneResult(ReadModel):
 
 
 class PurgeRequest(RequestModel):
-    """Delete every archived Episode of every feed; feeds, Catalogs and artwork stay."""
+    """Delete every archived Episode of every feed except the locked ones; feeds, Catalogs
+    and artwork stay."""
 
     dry_run: bool = True
 
 
 class ClearFeedRequest(RequestModel):
-    """Delete every Episode of one Feed that is not kept for good; the Feed stays."""
+    """Purge a Feed's bucket: delete every archived Episode that is not locked; the Feed,
+    its Catalog and its own files stay."""
 
     dry_run: bool = Field(default=True, description="Only count what would go and what stays")
 
 
 class ClearFeedResult(PruneResult):
     kept_count: int = Field(
-        default=0,
-        description="Episodes spared: flagged Archive, or every Episode of a Mirror whose "
-        "policy is Archive",
+        default=0, description="Episodes spared because they are locked (archive_flag)"
     )
-    kept_bytes: int = 0
+    kept_bytes: int = Field(default=0, description="The media bytes of the locked Episodes")
 
 
 class ArchiveFlagUpdate(RequestModel):
     archive_flag: bool = Field(
-        description="True keeps the Episode for good: Retention, a Rolling window, Sync and "
-        "clearing the Feed spare it"
+        description="Lock: true means never deleted — Retention, Rolling, Sync, purging the "
+        "bucket and delete_item all spare it; false unlocks it"
     )
 
 
@@ -1056,6 +1087,7 @@ __all__ = [
     "FeedObjectList",
     "FeedObjectRead",
     "FeedRead",
+    "FeedStorage",
     "ItemMedia",
     "ItemPage",
     "ItemRead",
@@ -1092,6 +1124,7 @@ __all__ = [
     "StatusFact",
     "StatusRead",
     "StatusState",
+    "StorageSummary",
     "Totals",
     "UploadCreate",
     "UploadRead",

@@ -159,8 +159,7 @@ export interface CatalogTableProps {
 export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps) {
   const feedKind = feed.kind === "mirror" ? "mirror" : "bucket";
   const filters = useMemo(() => toCatalogFilters(search), [search]);
-  // Tombstones that are no longer listed show only under the Deleted facet.
-  const pages = useCatalogPages(feed.id, filters, { showHidden: search.state === "deleted" });
+  const pages = useCatalogPages(feed.id, filters);
   const { rows, reach } = pages;
   const bulk = useBulkActions(feed.id, feedKind);
 
@@ -290,7 +289,7 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
   const columnCount = table
     .getVisibleLeafColumns()
     .filter((column) => mdUp || !HIDE_SMALL.has(column.id)).length;
-  const filtered = !!(search.q || search.state);
+  const filtered = !!search.q;
 
   const setSort = (sort: ItemSort) => {
     const order =
@@ -307,7 +306,7 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
   useEffect(() => {
     setRowSelection({});
     lastToggled.current = null;
-  }, [search.state, search.listed, search.q, search.sort, search.order]);
+  }, [search.q, search.sort, search.order]);
 
   const empty =
     !pages.isPending &&
@@ -319,13 +318,9 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
   return (
     <div className="space-y-3">
       <CatalogToolbar
-        feedId={feed.id}
         feedKind={feedKind}
         q={search.q}
-        facet={search.state}
-        counts={feed.kind === "mirror" ? feed.counts : null}
         onQChange={(q) => onSearchChange({ q })}
-        onFacetChange={(facet) => onSearchChange({ state: facet })}
         columnVisibility={columnVisibility}
         onColumnVisibilityChange={(id, visible) =>
           setColumnVisibility((v) => ({ ...v, [id]: visible }))
@@ -337,10 +332,10 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
           title={filtered ? "Nothing matches" : "The Catalog is empty"}
           description={
             filtered
-              ? "Try another filter or clear the state facet."
+              ? "No title contains that text. Try another filter."
               : feed.kind === "mirror"
                 ? "Items appear after the first Refresh lists the Source."
-                : "Items appear once a Request expands or a file is uploaded."
+                : "Episodes appear once a URL you added expands or a file is uploaded."
           }
         />
       ) : (

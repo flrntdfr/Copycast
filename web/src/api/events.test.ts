@@ -30,12 +30,13 @@ describe("parseEventPayload", () => {
 });
 
 describe("keysForEvent", () => {
-  it("maps feed events to list_feeds and get_feed", () => {
+  it("maps feed events to list_feeds, get_feed, its files and the storage summary", () => {
     const keys = keysForEvent({ event: "feed", data: { feed_id: "m1", revision: 1, reason: "x" } });
     expect(keys).toEqual([
       [OPS.list_feeds[0], OPS.list_feeds[1]],
       [OPS.get_feed[0], OPS.get_feed[1], { params: { path: { feed_id: "m1" } } }],
       [OPS.list_feed_objects[0], OPS.list_feed_objects[1], { params: { path: { feed_id: "m1" } } }],
+      [OPS.storage_summary[0], OPS.storage_summary[1]],
     ]);
   });
 

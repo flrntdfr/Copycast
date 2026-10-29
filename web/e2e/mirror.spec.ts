@@ -16,8 +16,8 @@ test.describe("Mirror", () => {
 
   test("adds a Mirror from the fixture feed and watches it archive", async ({ page }) => {
     const mirrorId = await createFixtureMirror(page);
-    await page.getByRole("link", { name: "Open Mirror" }).click();
-    await expect(page).toHaveURL(new RegExp(`/mirrors/${mirrorId}`));
+    await page.getByRole("link", { name: "Open feed" }).click();
+    await expect(page).toHaveURL(new RegExp(`/feed/${mirrorId}$`));
     await expect(page.getByRole("heading", { name: FIXTURE_TITLE })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Mirror Feed URL" })).toHaveValue(
       new RegExp(`/feeds/${mirrorId}\\.xml$`),
@@ -40,6 +40,12 @@ test.describe("Mirror", () => {
     await expect(settings.getByRole("textbox", { name: "Source URL" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(settings).toBeHidden();
+
+    // Old Mirror links land on the feed page, and the server serves that page on a reload.
+    await page.goto(`/mirrors/${mirrorId}`);
+    await expect(page).toHaveURL(new RegExp(`/feed/${mirrorId}$`));
+    await page.reload();
+    await expect(page.getByRole("heading", { name: FIXTURE_TITLE })).toBeVisible();
 
     // The Mirror shows up in the list with its feed URL copyable.
     await page.goto("/");

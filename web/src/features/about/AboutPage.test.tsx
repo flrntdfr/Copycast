@@ -50,7 +50,16 @@ describe("AboutPage", () => {
     renderApp("/about");
 
     expect(await screen.findByRole("heading", { name: "About" })).toBeInTheDocument();
-    expect(screen.getByText("Copycast 1.0.0")).toBeInTheDocument();
+    // "Copycast (GitHub) 1.0.0", with GitHub a link to the repository.
+    const header = screen.getByText((_, element) =>
+      element?.tagName === "P"
+        ? /^Copycast \(GitHub\) 1\.0\.0$/.test(element.textContent ?? "")
+        : false,
+    );
+    expect(within(header).getByRole("link", { name: "GitHub" })).toHaveAttribute(
+      "href",
+      "https://github.com/flrntdfr/Copycast",
+    );
     const engine = screen.getByTestId("about-engine");
     expect(engine).toHaveTextContent("yt-dlp 2026.8.19 (nightly)");
     expect(engine).toHaveTextContent("released");
@@ -63,14 +72,9 @@ describe("AboutPage", () => {
     expect(within(worker).getByRole("time")).toHaveAttribute("datetime", "2024-01-15T09:00:00Z");
     expect(screen.queryByText("The worker has not reported recently")).not.toBeInTheDocument();
 
-    expect(screen.getByRole("link", { name: "Export OPML" })).toHaveAttribute(
-      "href",
-      "/api/feeds.opml",
-    );
-    expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute(
-      "href",
-      "https://github.com/flrntdfr/Copycast",
-    );
+    // No header buttons: the OPML export moved to Settings, GitHub is a link in the line above.
+    expect(screen.queryByRole("link", { name: "Export OPML" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "GitHub" })).toHaveLength(1);
 
     // The storage table and the purge button are gone: buckets live on the Feeds page.
     expect(screen.queryByRole("heading", { name: "Storage per feed" })).not.toBeInTheDocument();

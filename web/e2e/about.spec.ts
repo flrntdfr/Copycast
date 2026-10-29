@@ -14,7 +14,15 @@ test("About shows the app and engine versions and the worker heartbeat", async (
 
   await page.goto("/about");
   await expect(page.getByRole("heading", { name: "About" })).toBeVisible();
-  await expect(page.getByText(`Copycast ${info.version}`)).toBeVisible();
+  // "Copycast (GitHub) 2.1.x", where GitHub links to the repository.
+  const description = page.getByText(
+    new RegExp(`^Copycast \\(GitHub\\) ${escapeRegExp(info.version)}$`),
+  );
+  await expect(description).toBeVisible();
+  await expect(description.getByRole("link", { name: "GitHub" })).toHaveAttribute(
+    "href",
+    "https://github.com/flrntdfr/Copycast",
+  );
   const engine = page.getByTestId("about-engine");
   await expect(engine).toContainText(`${info.engine.name} ${info.engine.version}`);
   await expect(engine).toContainText(`(${info.engine.channel})`);
@@ -24,3 +32,7 @@ test("About shows the app and engine versions and the worker heartbeat", async (
   await expect(worker).not.toHaveText("…", { timeout: 30_000 });
   await expect(worker).toContainText(/ago|just now|never|unknown/);
 });
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

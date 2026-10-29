@@ -1,8 +1,10 @@
+import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
   Check,
   DownloadCloud,
   ExternalLink,
+  HardDrive,
   Link2,
   Loader2,
   MoreHorizontal,
@@ -25,7 +27,6 @@ import { HealthDot } from "@/components/common/HealthDot";
 import { RelativeTime } from "@/components/common/RelativeTime";
 import { ServiceBadge } from "@/components/common/ServiceBadge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -180,7 +181,6 @@ export function MirrorHeader({
           <div className="flex flex-wrap items-center gap-2">
             <EditableTitle mirror={mirror} />
             <ServiceBadge service={mirror.service} sourceKind={mirror.source_kind} />
-            {mirror.paused ? <Badge variant="outline">Paused</Badge> : null}
           </div>
           <a
             href={mirror.source_url}
@@ -217,6 +217,11 @@ export function MirrorHeader({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <Button asChild variant="outline" size="sm">
+            <Link to="/buckets/$bucketId" params={{ bucketId: mirror.id }}>
+              <HardDrive /> Files
+            </Link>
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>
             <Settings2 /> Settings
           </Button>

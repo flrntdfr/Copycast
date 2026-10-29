@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, ArrowUpDown, PaintBucket, Radio } from "lucide-react";
 
 import { $api } from "@/api/client";
-import { isMirror, type BucketRead, type FeedRead, type MirrorRead } from "@/api/types";
+import { isMirror, type BucketRead, type MirrorRead } from "@/api/types";
 import { Artwork } from "@/components/common/Artwork";
 import { EmptyState } from "@/components/common/EmptyState";
 import { HealthDot } from "@/components/common/HealthDot";
@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { BucketRowActions, MirrorRowActions } from "./MirrorRowActions";
+import { LocalFeedRowActions, MirrorRowActions } from "./MirrorRowActions";
 import { useRunningRefreshFeedIds } from "@/features/jobs/useRunningJobs";
 import { formatNumber } from "@/lib/format";
 import { HEALTH_DOT_CLASS } from "@/lib/health";
@@ -64,11 +64,6 @@ function SortHeader({
   );
 }
 
-/** The playlist captures are listed with the Buckets, below the table. */
-function inTable(feed: FeedRead): boolean {
-  return !(isMirror(feed) && feed.playlist_capture);
-}
-
 function MirrorRow({ mirror, refreshing }: { mirror: MirrorRead; refreshing: boolean }) {
   return (
     <TableRow data-testid="mirror-row">
@@ -80,27 +75,21 @@ function MirrorRow({ mirror, refreshing }: { mirror: MirrorRead; refreshing: boo
       </TableCell>
       <TableCell className="max-w-[18rem] md:max-w-sm">
         <Link
-          to="/mirrors/$mirrorId"
-          params={{ mirrorId: mirror.id }}
+          to="/feed/$feedId"
+          params={{ feedId: mirror.id }}
           className="block truncate font-medium hover:underline"
         >
           {mirror.title}
         </Link>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground md:hidden">
-          <span>{formatNumber(mirror.episode_count)} Episodes</span>
-          {mirror.paused ? <Badge variant="outline">Paused</Badge> : null}
-        </div>
+        {/* From `lg` up the Last Refresh column says so. */}
         {mirror.paused ? (
-          <Badge variant="outline" className="mt-1 hidden md:inline-flex">
+          <Badge variant="outline" className="mt-1 lg:hidden">
             Paused
           </Badge>
         ) : null}
       </TableCell>
       <TableCell className="hidden md:table-cell">
         <ServiceBadge service={mirror.service} sourceKind={mirror.source_kind} />
-      </TableCell>
-      <TableCell className="hidden text-right tabular-nums md:table-cell">
-        {formatNumber(mirror.episode_count)}
       </TableCell>
       <TableCell className="hidden text-right tabular-nums lg:table-cell">
         {formatNumber(mirror.counts?.available ?? 0)}
@@ -116,30 +105,25 @@ function MirrorRow({ mirror, refreshing }: { mirror: MirrorRead; refreshing: boo
         )}
       </TableCell>
       <TableCell>
-        <div className="hidden md:block">
-          <MirrorRowActions mirror={mirror} />
-        </div>
-        <div className="md:hidden">
-          <MirrorRowActions mirror={mirror} compact />
-        </div>
+        <MirrorRowActions mirror={mirror} />
       </TableCell>
     </TableRow>
   );
 }
 
 /**
- * A Bucket Feed has no Source: service "Local", no Available count, no Refresh. Its dot is
- * green once it holds Episodes, grey while empty.
+ * A Local feed has no Source: service "Local", no Available count, no Refresh. Its dot is green
+ * once it holds Episodes, grey while empty.
  */
-function BucketRow({ bucket }: { bucket: BucketRead }) {
+function LocalFeedRow({ feed }: { feed: BucketRead }) {
   return (
-    <TableRow data-testid="bucket-row">
+    <TableRow data-testid="local-feed-row">
       <TableCell>
         <span className="inline-flex items-center" data-health="local">
           <span
             className={cn(
               "inline-block size-2.5 shrink-0 rounded-full",
-              HEALTH_DOT_CLASS[bucket.episode_count > 0 ? "success" : "muted"],
+              HEALTH_DOT_CLASS[feed.episode_count > 0 ? "success" : "muted"],
             )}
             aria-hidden
           />
@@ -147,48 +131,49 @@ function BucketRow({ bucket }: { bucket: BucketRead }) {
         </span>
       </TableCell>
       <TableCell>
-        <div
-          className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
-          aria-hidden
-        >
-          <PaintBucket className="size-4" />
-        </div>
+        {feed.artwork_url ? (
+          <Artwork src={feed.artwork_url} size={36} />
+        ) : (
+          <div
+            className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
+            aria-hidden
+          >
+            <PaintBucket className="size-4" />
+          </div>
+        )}
       </TableCell>
       <TableCell className="max-w-[18rem] md:max-w-sm">
         <Link
-          to="/buckets/$bucketId"
-          params={{ bucketId: bucket.id }}
+          to="/feed/$feedId"
+          params={{ feedId: feed.id }}
           className="block truncate font-medium hover:underline"
         >
-          {bucket.name}
+          {feed.name}
         </Link>
-        <div className="text-xs text-muted-foreground md:hidden">
-          {formatNumber(bucket.episode_count)} Episodes
-        </div>
       </TableCell>
       <TableCell className="hidden md:table-cell">
         <Badge variant="secondary" className="font-normal">
           Local
         </Badge>
       </TableCell>
-      <TableCell className="hidden text-right tabular-nums md:table-cell">
-        {formatNumber(bucket.episode_count)}
-      </TableCell>
       <TableCell className="hidden text-right text-muted-foreground lg:table-cell">—</TableCell>
       <TableCell className="hidden text-muted-foreground lg:table-cell">—</TableCell>
       <TableCell>
-        <BucketRowActions bucket={bucket} />
+        <LocalFeedRowActions feed={feed} />
       </TableCell>
     </TableRow>
   );
 }
 
-/** Every Feed but the playlist captures: the Mirrors and, as "Local" rows, the Bucket Feeds. */
+/**
+ * Every Feed: the Mirrors (the captured YouTube playlists among them) and, as "Local" rows, the
+ * Local feeds. Each title opens the feed's page.
+ */
 export function MirrorsTable(props: MirrorsTableProps) {
   const { sort, order } = props;
   const query = $api.useQuery("get", "/api/feeds", { params: { query: { sort, order } } });
   const refreshing = useRunningRefreshFeedIds();
-  const feeds = (query.data?.feeds ?? []).filter(inTable);
+  const feeds = query.data?.feeds ?? [];
 
   if (query.isSuccess && feeds.length === 0) {
     return (
@@ -213,7 +198,6 @@ export function MirrorsTable(props: MirrorsTableProps) {
             </TableHead>
             <SortHeader label="Title" column="title" {...props} />
             <TableHead className="hidden md:table-cell">Service</TableHead>
-            <TableHead className="hidden text-right md:table-cell">Episodes</TableHead>
             <TableHead className="hidden text-right lg:table-cell">Available</TableHead>
             <SortHeader
               label="Last Refresh"
@@ -227,12 +211,12 @@ export function MirrorsTable(props: MirrorsTableProps) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {query.isPending ? <SkeletonRows columns={8} /> : null}
+          {query.isPending ? <SkeletonRows columns={7} /> : null}
           {feeds.map((feed) =>
             isMirror(feed) ? (
               <MirrorRow key={feed.id} mirror={feed} refreshing={refreshing.has(feed.id)} />
             ) : (
-              <BucketRow key={feed.id} bucket={feed} />
+              <LocalFeedRow key={feed.id} feed={feed} />
             ),
           )}
         </TableBody>

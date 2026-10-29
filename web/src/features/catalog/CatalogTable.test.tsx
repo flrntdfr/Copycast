@@ -4,15 +4,9 @@ import { delay, http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CatalogTable } from "./CatalogTable";
-import {
-  catalogSearchDefaults,
-  facetParams,
-  pageQuery,
-  toCatalogFilters,
-  type CatalogSearch,
-} from "./search";
+import { catalogSearchDefaults, pageQuery, toCatalogFilters, type CatalogSearch } from "./search";
 import type { ItemRead, SelectionRequest } from "@/api/types";
-import { item, mirror, selectionResult } from "@/test/factories";
+import { item, mirror, problem, selectionResult } from "@/test/factories";
 import { renderWithProviders } from "@/test/render";
 import { server } from "@/test/server";
 
@@ -121,12 +115,10 @@ afterEach(() => {
 });
 
 describe("search helpers", () => {
-  it("maps facets to list_items parameters", () => {
-    expect(facetParams("delisted")).toEqual({ state: ["archived"], listed: false });
-    expect(facetParams("available")).toEqual({ state: ["available", "deleted"], listed: true });
-    expect(facetParams(undefined)).toEqual({});
-    const filters = toCatalogFilters(search({ q: " hello ", state: "failed" }));
-    expect(filters).toEqual({ sort: "ordinal", order: "desc", q: "hello", state: ["failed"] });
+  it("maps the title filter and the sort to list_items parameters", () => {
+    expect(toCatalogFilters(search({ q: "  " }))).toEqual({ sort: "ordinal", order: "desc" });
+    const filters = toCatalogFilters(search({ q: " hello " }));
+    expect(filters).toEqual({ sort: "ordinal", order: "desc", q: "hello" });
     expect(pageQuery(filters, 2)).toEqual({ ...filters, limit: 100, offset: 200 });
   });
 });
@@ -363,7 +355,7 @@ describe("CatalogTable", () => {
     );
   });
 
-  it("changes the facet and the sort through onSearchChange, with no page buttons", async () => {
+  it("filters by title and sorts through onSearchChange, with no state facets or page buttons", async () => {
     server.use(
       http.get("/api/feeds/:feedId/items", () =>
         HttpResponse.json({ items: rows, total: rows.length, limit: 100, offset: 0 }),
@@ -375,11 +367,126 @@ describe("CatalogTable", () => {
       <CatalogTable feed={feed} search={search()} onSearchChange={onSearchChange} />,
     );
     await screen.findAllByTestId("catalog-row");
-    await user.click(screen.getByRole("radio", { name: "Delisted" }));
-    expect(onSearchChange).toHaveBeenCalledWith({ state: "delisted" });
+    expect(screen.queryByRole("group", { name: "Filter by state" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "Filter by title" }), "Sec");
+    await waitFor(() => expect(onSearchChange).toHaveBeenCalledWith({ q: "Sec" }));
     await user.click(screen.getByRole("button", { name: "Title" }));
     expect(onSearchChange).toHaveBeenCalledWith({ sort: "title", order: "asc" });
     expect(screen.queryByRole("button", { name: /next page/i })).not.toBeInTheDocument();
+  });
+
+  it("locks and unlocks an Episode with the padlock; a locked Episode cannot be deleted", async () => {
+    const first = item({ id: "item-1", feed_id: feed.id, title: "First", state: "archived" });
+    const locked = item({
+      id: "item-locked",
+      feed_id: feed.id,
+      ordinal: 9,
+      title: "Kept",
+      state: "archived",
+      archive_flag: true,
+    });
+    const flags: { id: string; body: unknown }[] = [];
+    server.use(
+      http.get("/api/feeds/:feedId/items", () =>
+        HttpResponse.json({ items: [locked, first], total: 2, limit: 100, offset: 0 }),
+      ),
+      http.put("/api/feeds/:feedId/items/:itemId/archive-flag", async ({ params, request }) => {
+        const body = (await request.json()) as { archive_flag: boolean };
+        flags.push({ id: String(params.itemId), body });
+        const current = params.itemId === locked.id ? locked : first;
+        return HttpResponse.json({ ...current, archive_flag: body.archive_flag });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(
+      <CatalogTable feed={feed} search={search()} onSearchChange={() => undefined} />,
+    );
+    const keptRow = (await screen.findByText("Kept")).closest("tr") as HTMLElement;
+    const firstRow = screen.getByText("First").closest("tr") as HTMLElement;
+
+    // Locked: the padlock is pressed and Delete is disabled, saying why.
+    const unlock = within(keptRow).getByRole("button", { name: "Lock", pressed: true });
+    expect(unlock).toHaveAttribute("aria-pressed", "true");
+    const lockedDelete = within(keptRow).getByRole("button", { name: "Delete" });
+    expect(lockedDelete).toHaveAttribute("aria-disabled", "true");
+    await user.hover(lockedDelete);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Locked: unlock it to delete");
+    await user.click(lockedDelete);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+
+    // Unlocked: the padlock is open and Delete works.
+    const lock = within(firstRow).getByRole("button", { name: "Lock", pressed: false });
+    expect(lock).toHaveAttribute("aria-pressed", "false");
+    expect(within(firstRow).getByRole("button", { name: "Delete" })).toBeEnabled();
+
+    await user.click(lock);
+    await waitFor(() =>
+      expect(flags).toContainEqual({ id: "item-1", body: { archive_flag: true } }),
+    );
+    expect(await screen.findByText("Locked")).toBeInTheDocument();
+    await user.click(unlock);
+    await waitFor(() =>
+      expect(flags).toContainEqual({ id: "item-locked", body: { archive_flag: false } }),
+    );
+    expect(await screen.findByText("Unlocked")).toBeInTheDocument();
+  });
+
+  it("leaves locked Episodes out of a bulk delete", async () => {
+    const locked = item({
+      id: "item-locked",
+      feed_id: feed.id,
+      ordinal: 9,
+      title: "Kept",
+      state: "archived",
+      archive_flag: true,
+    });
+    const deleted: string[] = [];
+    server.use(
+      http.get("/api/feeds/:feedId/items", () =>
+        HttpResponse.json({ items: [locked, rows[0]], total: 2, limit: 100, offset: 0 }),
+      ),
+      http.delete("/api/feeds/:feedId/items/:itemId", ({ params }) => {
+        deleted.push(String(params.itemId));
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(
+      <CatalogTable feed={feed} search={search()} onSearchChange={() => undefined} />,
+    );
+    await screen.findByText("Kept");
+    await user.click(screen.getByRole("checkbox", { name: "Select all loaded rows" }));
+    const bar = await screen.findByRole("region", { name: "Selection" });
+    await user.click(within(bar).getByRole("button", { name: "Delete 1" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Delete 1 Episode?");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deleted).toEqual(["item-1"]));
+  });
+
+  it("says a 409 on delete means the Episode is locked", async () => {
+    server.use(
+      http.get("/api/feeds/:feedId/items", () =>
+        HttpResponse.json({ items: [rows[0]], total: 1, limit: 100, offset: 0 }),
+      ),
+      http.delete("/api/feeds/:feedId/items/:itemId", () =>
+        HttpResponse.json(problem("conflict", 409), {
+          status: 409,
+          headers: { "Content-Type": "application/problem+json" },
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(
+      <CatalogTable feed={feed} search={search()} onSearchChange={() => undefined} />,
+    );
+    const row = (await screen.findByText("First")).closest("tr") as HTMLElement;
+    await user.click(within(row).getByRole("button", { name: "Delete" }));
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }),
+    );
+    expect(await screen.findByText("Locked: unlock it to delete")).toBeInTheDocument();
   });
 });
 

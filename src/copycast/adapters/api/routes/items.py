@@ -95,7 +95,7 @@ async def fetch_item_metadata(services: ServicesDep, feed_id: str, item_id: str)
     status_code=204,
     dependencies=[RebuildGuard],
     responses=problem_responses(404, 409),
-    summary="Delete an Episode's media and leave a tombstone",
+    summary="Delete an Episode's media and leave a tombstone (409 when it is locked)",
 )
 async def delete_item(services: ServicesDep, feed_id: str, item_id: str) -> Response:
     await services.delete_item(feed_id, item_id)
@@ -109,7 +109,7 @@ async def delete_item(services: ServicesDep, feed_id: str, item_id: str) -> Resp
     response_model=ItemRead,
     dependencies=[RebuildGuard],
     responses=problem_responses(404),
-    summary="Flag an Episode Archive (kept for good) or clear the flag",
+    summary="Lock an Episode (never deleted) or unlock it",
 )
 async def set_archive_flag(
     services: ServicesDep, feed_id: str, item_id: str, body: ArchiveFlagUpdate

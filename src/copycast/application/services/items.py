@@ -195,12 +195,15 @@ async def fetch_item_metadata(ctx: ServiceContext, feed_id: str, item_id: str) -
 async def delete_item(ctx: ServiceContext, feed_id: str, item_id: str) -> None:
     """Delete an Episode's media and tombstone the row (never re-archived automatically).
 
-    Retried when the transaction loses a deadlock against the worker archiving it.
+    A locked Episode (``archive_flag``) is refused with 409: unlock it first. Retried when
+    the transaction loses a deadlock against the worker archiving it.
     """
 
     async def _delete() -> None:
         async with ctx.uow_factory() as uow:
-            await uow.catalog.require(item_id, feed_id)
+            item = await uow.catalog.require(item_id, feed_id)
+            if item.archive_flag:
+                raise Conflict(f"item {item_id!r} is locked: unlock it first")
             job = await uow.jobs.latest_for_item(item_id)
             if job is not None and job.is_active:
                 cancelled = await uow.jobs.cancel(job.id)
@@ -220,7 +223,8 @@ async def delete_item(ctx: ServiceContext, feed_id: str, item_id: str) -> None:
 async def set_archive_flag(
     ctx: ServiceContext, feed_id: str, item_id: str, body: ArchiveFlagUpdate
 ) -> ItemRead:
-    """Flag a Catalog item Archive (kept for good) or clear the flag; any state may carry it."""
+    """Lock a Catalog item (``archive_flag``: never deleted) or unlock it; any state may
+    carry the Lock."""
     async with ctx.uow_factory() as uow:
         await uow.catalog.require(item_id, feed_id)
         await uow.catalog.set_archive_flag(item_id, body.archive_flag)

@@ -62,7 +62,7 @@ describe("AppShell", () => {
     expect(history.location.pathname).toBe("/about");
   });
 
-  it("offers Mirror / Send to Bucket for a URL and jumps to feeds", async () => {
+  it("offers Mirror / Send to Local feed for a URL and jumps to feeds", async () => {
     server.use(...handlers());
     const user = userEvent.setup();
     const { history } = renderApp("/about");
@@ -74,14 +74,18 @@ describe("AppShell", () => {
     expect(within(palette).getByText("Mirror this URL")).toBeInTheDocument();
     // The banner holds theme, palette and the live-update dot; no Add Source button.
     expect(screen.queryByRole("button", { name: /Add Source/ })).not.toBeInTheDocument();
-    await user.click(within(palette).getByText("Send to Bucket…"));
+    await user.click(within(palette).getByText("Send to Local feed…"));
     await waitFor(() => expect(history.location.pathname).toBe("/"));
     expect(history.location.search).toContain("url=https%3A%2F%2Fx.example%2Ff");
 
     await user.keyboard("{Control>}k{/Control}");
     const again = await screen.findByRole("dialog", { name: "Command palette" });
     await user.click(await within(again).findByText("Example Podcast"));
-    await waitFor(() => expect(history.location.pathname).toBe("/mirrors/mirror-1"));
+    await waitFor(() => expect(history.location.pathname).toBe("/feed/mirror-1"));
+    // A feed's page belongs to the Feeds tab.
+    const [feedsLink] = screen.getAllByRole("link", { name: "Feeds" });
+    expect(feedsLink).toHaveAttribute("aria-current", "page");
+    expect(screen.getAllByRole("link", { name: /^Jobs/ })[0]).not.toHaveAttribute("aria-current");
   });
 
   it("shows the shortcuts sheet on ? and closes it on Escape", async () => {

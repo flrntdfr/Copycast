@@ -8,14 +8,17 @@ import { OPS } from "@/api/ops";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
-/** Push one URL into a Bucket (`add_request`). */
+/** Push one URL into a Local feed (`add_request`): a video, a playlist or a page it expands. */
 export function AddRequestForm({
   bucketId,
   initialUrl = "",
+  className,
 }: {
   bucketId: string;
   initialUrl?: string;
+  className?: string;
 }) {
   const [url, setUrl] = useState(initialUrl);
   const queryClient = useQueryClient();
@@ -43,7 +46,7 @@ export function AddRequestForm({
     mutation.mutate({ params: { path: { bucket_id: bucketId } }, body: { url: trimmed } });
   };
   return (
-    <form onSubmit={submit} className="flex flex-col gap-1.5">
+    <form onSubmit={submit} className={cn("flex flex-col gap-1.5", className)}>
       <Label htmlFor="add-request-url">Add URL</Label>
       <div className="flex gap-2">
         <Input

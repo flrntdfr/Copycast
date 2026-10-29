@@ -3,20 +3,17 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
-import type { ClearFeedResult, EngineCookiesWrite, FeedRead, MirrorDefaults } from "@/api/types";
-import { about, cookieFile, engineCookies, bucket, mirror, mirrorDefaults } from "@/test/factories";
+import type { EngineCookiesWrite, MirrorDefaults } from "@/api/types";
+import { about, cookieFile, engineCookies, mirrorDefaults } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
 const COOKIES = ".youtube.com\tTRUE\t/\tTRUE\t1790000000\tSID\tsecret";
 
-function baseHandlers(feeds: FeedRead[] = []) {
+function baseHandlers() {
   return [
     http.get("/api/about", () => HttpResponse.json(about())),
-    http.get("/api/feeds", ({ request }) => {
-      const kind = new URL(request.url).searchParams.get("kind");
-      return HttpResponse.json({ feeds: kind ? feeds.filter((f) => f.kind === kind) : feeds });
-    }),
+    http.get("/api/feeds", () => HttpResponse.json({ feeds: [] })),
     http.get("/api/jobs", () => HttpResponse.json({ jobs: [], total: 0, limit: 1, offset: 0 })),
   ];
 }
@@ -146,140 +143,24 @@ describe("Settings page: Mirrors", () => {
   });
 });
 
-describe("Settings page: Buckets", () => {
-  const news = mirror({ id: "m-news", title: "News", storage_bytes: 12_000_000 });
-  const art = mirror({ id: "m-art", title: "Art", storage_bytes: 3_000_000 });
-  const capture = mirror({
-    id: "m-wl",
-    title: "Watch later",
-    playlist_capture: true,
-    storage_bytes: 1_000_000,
-  });
-  const box = bucket({ id: "i-default", title: "Copycast", is_default: true, storage_bytes: 0 });
-  const agent = bucket({ id: "i-agent", title: "Audiobooks", storage_bytes: 50_000_000 });
-
-  function handlers(state: { cleared: boolean[]; deleted: string[] }, preview: ClearFeedResult) {
-    return [
-      http.get("/api/feeds", ({ request }) => {
-        const kind = new URL(request.url).searchParams.get("kind");
-        // The api sorts; this fake answers in the Feeds page's order by title.
-        return HttpResponse.json({
-          feeds: kind === "mirror" ? [art, news, capture] : [art, box, agent, news, capture],
-        });
-      }),
+describe("Settings page: layout", () => {
+  it("shows Authentications, Mirror defaults and the OPML export, and no storage", async () => {
+    server.use(
       ...baseHandlers(),
       http.get("/api/engine/cookies", () => HttpResponse.json(engineCookies())),
       http.get("/api/settings/defaults", () => HttpResponse.json(mirrorDefaults())),
-      http.post("/api/feeds/:feedId/clear", async ({ request }) => {
-        const body = (await request.json()) as { dry_run: boolean };
-        state.cleared.push(body.dry_run);
-        return HttpResponse.json({ ...preview, dry_run: body.dry_run });
-      }),
-      http.delete("/api/feeds/:feedId", ({ params }) => {
-        state.deleted.push(String(params.feedId));
-        return new HttpResponse(null, { status: 204 });
-      }),
-    ];
-  }
-
-  it("lists the Mirrors first, then the Buckets and captured playlists, with sizes", async () => {
-    server.use(
-      ...handlers(
-        { cleared: [], deleted: [] },
-        {
-          matched: 0,
-          deleted_count: 0,
-          bytes_freed: 0,
-          dry_run: true,
-          kept_count: 0,
-          kept_bytes: 0,
-        },
-      ),
     );
     renderApp("/settings");
-    const table = await screen.findByRole("table", { name: "Buckets" });
-    await waitFor(() => expect(within(table).getAllByTestId(/^bucket-/)).toHaveLength(5));
-    expect(
-      within(table)
-        .getAllByTestId(/^bucket-/)
-        .map((row) => row.dataset.testid),
-    ).toEqual([
-      "bucket-m-art",
-      "bucket-m-news",
-      "bucket-i-default",
-      "bucket-i-agent",
-      "bucket-m-wl",
-    ]);
-    expect(within(table).getByTestId("bucket-m-news")).toHaveTextContent("12 MB");
-    expect(screen.getByText("66 MB in all")).toBeInTheDocument();
-  });
 
-  it("deletes a bucket without flagged Episodes after the plain confirmation", async () => {
-    const state = { cleared: [] as boolean[], deleted: [] as string[] };
-    server.use(
-      ...handlers(state, {
-        matched: 3,
-        deleted_count: 0,
-        bytes_freed: 3_000_000,
-        dry_run: true,
-        kept_count: 0,
-        kept_bytes: 0,
-      }),
-    );
-    const user = userEvent.setup();
-    renderApp("/settings");
-    await user.click(await screen.findByRole("button", { name: "Delete Art" }));
-    const dialog = await screen.findByRole("alertdialog", { name: "Delete Mirror “Art”?" });
-    await waitFor(() => expect(state.cleared).toEqual([true]));
-    expect(within(dialog).queryByTestId("bucket-archive-warning")).not.toBeInTheDocument();
-    await user.click(within(dialog).getByRole("button", { name: "Delete Mirror" }));
-    await waitFor(() => expect(state.deleted).toEqual(["m-art"]));
-  });
+    expect(await screen.findByRole("heading", { name: /Authentications/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Mirrors/ })).toBeInTheDocument();
+    const opml = screen.getByRole("region", { name: "Podcast apps" });
+    expect(opml).toHaveTextContent("Overcast, Pocket Casts or AntennaPod");
+    const link = within(opml).getByRole("link", { name: "Export OPML" });
+    expect(link).toHaveAttribute("href", "/api/feeds.opml");
+    expect(link).toHaveAttribute("download", "copycast.opml");
 
-  it("warns about Episodes flagged Archive and can delete only the rest", async () => {
-    const state = { cleared: [] as boolean[], deleted: [] as string[] };
-    server.use(
-      ...handlers(state, {
-        matched: 4,
-        deleted_count: 4,
-        bytes_freed: 40_000_000,
-        dry_run: true,
-        kept_count: 1,
-        kept_bytes: 10_000_000,
-      }),
-    );
-    const user = userEvent.setup();
-    renderApp("/settings");
-    await user.click(await screen.findByRole("button", { name: "Delete Audiobooks" }));
-    const dialog = await screen.findByRole("alertdialog", { name: "Delete Bucket “Audiobooks”?" });
-    expect(await within(dialog).findByTestId("bucket-archive-warning")).toHaveTextContent(
-      "1 Episode flagged Archive (10 MB)",
-    );
-    expect(within(dialog).getByRole("button", { name: "Delete everything" })).toBeEnabled();
-    await user.click(within(dialog).getByRole("button", { name: "Delete the rest" }));
-    await waitFor(() => expect(state.cleared).toEqual([true, false]));
-    expect(state.deleted).toEqual([]);
-    expect(await screen.findByText("4 Episodes deleted")).toBeInTheDocument();
-  });
-
-  it("never offers to delete the default Bucket, only to empty it", async () => {
-    const state = { cleared: [] as boolean[], deleted: [] as string[] };
-    server.use(
-      ...handlers(state, {
-        matched: 2,
-        deleted_count: 0,
-        bytes_freed: 2_000_000,
-        dry_run: true,
-        kept_count: 0,
-        kept_bytes: 0,
-      }),
-    );
-    const user = userEvent.setup();
-    renderApp("/settings");
-    await user.click(await screen.findByRole("button", { name: "Delete Copycast" }));
-    const dialog = await screen.findByRole("alertdialog", { name: "Empty the Bucket “Copycast”?" });
-    expect(within(dialog).queryByRole("button", { name: /Delete/ })).not.toBeInTheDocument();
-    await user.click(await within(dialog).findByRole("button", { name: "Empty the Bucket" }));
-    await waitFor(() => expect(state.cleared).toEqual([true, false]));
+    // Every Feed's storage lives on its own bucket page now.
+    expect(screen.queryByRole("table", { name: "Buckets" })).not.toBeInTheDocument();
   });
 });

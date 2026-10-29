@@ -152,6 +152,9 @@ async def test_revision_changes_the_etag(
     url = source.write_rss("rev", items=[2, 1], artwork=False)
     mirror = await create_mirror(client, url)
     archived = await archived_items(client, runner, mirror["id"])
+    # The Archive policy locked it: unlocked, it can be deleted.
+    unlock = api(f"/feeds/{mirror['id']}/items/{archived[0]['id']}/archive-flag")
+    assert (await client.put(unlock, json={"archive_flag": False})).status_code == 200
     before = await client.get(FEED_URL(mirror["id"]))
     etag = before.headers["etag"]
     # Deleting an Episode bumps the revision: new ETag, item gone from the feed.

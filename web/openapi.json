@@ -3,7 +3,7 @@
   "info": {
     "title": "Copycast",
     "description": "Self-hosted podcast mirroring and archiving.",
-    "version": "2.1.0"
+    "version": "2.2.0"
   },
   "paths": {
     "/api/feeds": {
@@ -310,6 +310,28 @@
           }
         },
         "x-capability": "create_bucket"
+      }
+    },
+    "/api/storage": {
+      "get": {
+        "tags": [
+          "feeds"
+        ],
+        "summary": "How many files every Feed keeps in its bucket, and their total size",
+        "operationId": "storage_summary",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageSummary"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "storage_summary"
       }
     },
     "/api/feeds.opml": {
@@ -759,7 +781,7 @@
         "tags": [
           "feeds"
         ],
-        "summary": "Delete every Episode not kept for good, keeping the Feed (dry run by default)",
+        "summary": "Purge a Feed's bucket: delete every Episode not locked (dry run by default)",
         "operationId": "clear_feed",
         "parameters": [
           {
@@ -1040,7 +1062,7 @@
         "tags": [
           "items"
         ],
-        "summary": "Delete an Episode's media and leave a tombstone",
+        "summary": "Delete an Episode's media and leave a tombstone (409 when it is locked)",
         "operationId": "delete_item",
         "parameters": [
           {
@@ -1239,7 +1261,7 @@
         "tags": [
           "items"
         ],
-        "summary": "Flag an Episode Archive (kept for good) or clear the flag",
+        "summary": "Lock an Episode (never deleted) or unlock it",
         "operationId": "set_archive_flag",
         "parameters": [
           {
@@ -2610,7 +2632,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Delete every archived Episode everywhere; feeds stay; dry run by default",
+        "summary": "Delete every archived Episode not locked, everywhere; feeds stay; dry run by default",
         "operationId": "purge_episodes",
         "requestBody": {
           "content": {
@@ -3554,7 +3576,7 @@
           "archive_flag": {
             "type": "boolean",
             "title": "Archive Flag",
-            "description": "True keeps the Episode for good: Retention, a Rolling window, Sync and clearing the Feed spare it"
+            "description": "Lock: true means never deleted \u2014 Retention, Rolling, Sync, purging the bucket and delete_item all spare it; false unlocks it"
           }
         },
         "additionalProperties": false,
@@ -4249,7 +4271,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ClearFeedRequest",
-        "description": "Delete every Episode of one Feed that is not kept for good; the Feed stays."
+        "description": "Purge a Feed's bucket: delete every archived Episode that is not locked; the Feed,\nits Catalog and its own files stay."
       },
       "ClearFeedResult": {
         "properties": {
@@ -4272,12 +4294,13 @@
           "kept_count": {
             "type": "integer",
             "title": "Kept Count",
-            "description": "Episodes spared: flagged Archive, or every Episode of a Mirror whose policy is Archive",
+            "description": "Episodes spared because they are locked (archive_flag)",
             "default": 0
           },
           "kept_bytes": {
             "type": "integer",
             "title": "Kept Bytes",
+            "description": "The media bytes of the locked Episodes",
             "default": 0
           }
         },
@@ -4736,7 +4759,7 @@
               }
             ],
             "title": "Item Id",
-            "description": "The Catalog item the name identifies"
+            "description": "The Catalog item the name identifies (its media, assets and sidecars)"
           },
           "item_title": {
             "anyOf": [
@@ -4748,6 +4771,18 @@
               }
             ],
             "title": "Item Title"
+          },
+          "locked": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locked",
+            "description": "The Lock (archive_flag) of the archived Episode the file belongs to: a locked Episode is never deleted, purging the bucket included. Null for a file a purge never deletes: the feed's own files (feed.json, source/, the feed artwork), an Episode's `.item.xml` record, leftovers of an item that is not archived, stray files"
           }
         },
         "type": "object",
@@ -4761,6 +4796,30 @@
         ],
         "title": "FeedObjectRead",
         "description": "One object a Feed keeps in the Object store (its storage view on the bucket page)."
+      },
+      "FeedStorage": {
+        "properties": {
+          "feed_id": {
+            "type": "string",
+            "title": "Feed Id"
+          },
+          "file_count": {
+            "type": "integer",
+            "title": "File Count",
+            "default": 0
+          },
+          "total_bytes": {
+            "type": "integer",
+            "title": "Total Bytes",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "feed_id"
+        ],
+        "title": "FeedStorage",
+        "description": "What one Feed keeps under ``feeds/{feed_id}/`` in the Object store (its bucket)."
       },
       "HTTPValidationError": {
         "properties": {
@@ -4942,7 +5001,7 @@
           "archive_flag": {
             "type": "boolean",
             "title": "Archive Flag",
-            "description": "Kept for good: Retention, a Rolling window, Sync and clearing the Feed never delete it",
+            "description": "The Lock: a locked Episode is never deleted. Retention, a Rolling window, Sync, purging the bucket (clear_feed, purge_episodes) spare it and delete_item refuses it; an Archive-policy Mirror without Sync locks what it archives",
             "default": false
           },
           "live_status": {
@@ -6304,7 +6363,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "PurgeRequest",
-        "description": "Delete every archived Episode of every feed; feeds, Catalogs and artwork stay."
+        "description": "Delete every archived Episode of every feed except the locked ones; feeds, Catalogs\nand artwork stay."
       },
       "ReadyCheck": {
         "properties": {
@@ -6873,6 +6932,30 @@
         ],
         "title": "StatusRead",
         "description": "Every component Copycast depends on; ``state`` is the worst of them (unknown counts ok)."
+      },
+      "StorageSummary": {
+        "properties": {
+          "feeds": {
+            "items": {
+              "$ref": "#/components/schemas/FeedStorage"
+            },
+            "type": "array",
+            "title": "Feeds"
+          },
+          "file_count": {
+            "type": "integer",
+            "title": "File Count",
+            "default": 0
+          },
+          "total_bytes": {
+            "type": "integer",
+            "title": "Total Bytes",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "StorageSummary",
+        "description": "Every Feed's bucket counted from one listing of the Object store.\n\nEach Feed appears, with zeros when it keeps nothing; objects under the prefix of no\nknown Feed are left out. ``file_count`` and ``total_bytes`` sum the Feeds'."
       },
       "Totals": {
         "properties": {

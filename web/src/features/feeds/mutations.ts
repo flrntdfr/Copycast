@@ -12,6 +12,9 @@ export function useInvalidateFeed() {
   const queryClient = useQueryClient();
   return (feedId?: string) => {
     void queryClient.invalidateQueries({ queryKey: [OPS.list_feeds[0], OPS.list_feeds[1]] });
+    void queryClient.invalidateQueries({
+      queryKey: [OPS.storage_summary[0], OPS.storage_summary[1]],
+    });
     if (feedId) {
       void queryClient.invalidateQueries({
         queryKey: [OPS.get_feed[0], OPS.get_feed[1], { params: { path: { feed_id: feedId } } }],
@@ -92,10 +95,7 @@ export function useDeleteFeed() {
   const mutation = $api.useMutation("delete", "/api/feeds/{feed_id}");
   return {
     ...mutation,
-    deleteFeed: async (
-      feed: Pick<FeedRead, "id" | "title" | "kind">,
-      { navigateAway = true } = {},
-    ) => {
+    deleteFeed: async (feed: Pick<FeedRead, "id" | "title">, { navigateAway = true } = {}) => {
       await mutation.mutateAsync({ params: { path: { feed_id: feed.id } } });
       queryClient.removeQueries({
         queryKey: [OPS.get_feed[0], OPS.get_feed[1], { params: { path: { feed_id: feed.id } } }],
@@ -103,11 +103,7 @@ export function useDeleteFeed() {
       invalidate();
       toast.success(`${feed.title} deleted`);
       if (navigateAway) {
-        await navigate({
-          to: "/",
-          hash: feed.kind === "bucket" ? "buckets" : undefined,
-          replace: true,
-        });
+        await navigate({ to: "/", replace: true });
       }
     },
   };

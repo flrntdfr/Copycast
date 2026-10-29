@@ -1,4 +1,4 @@
-import { Archive, Download, Pause, Play, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Download, Lock, LockOpen, Pause, Play, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import type { ItemRead } from "@/api/types";
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useArchiveItem, useDeleteItem, useSetArchiveFlag } from "./mutations";
+import { useArchiveItem, useDeleteItem, useSetLock } from "./mutations";
 import { canArchive, canDelete } from "./catalog-state";
 import { cn } from "@/lib/utils";
 import { play, useIsPlaying } from "@/stores/player";
@@ -23,6 +23,8 @@ function Action({
   label,
   onClick,
   disabled,
+  disabledReason,
+  tooltip,
   pressed,
   children,
   asChild,
@@ -30,6 +32,13 @@ function Action({
   label: string;
   onClick?: () => void;
   disabled?: boolean;
+  /**
+   * Why the action is unavailable: the button stays focusable and hoverable (aria-disabled,
+   * no click) so its tooltip can say so; a `disabled` button would get no pointer events.
+   */
+  disabledReason?: string;
+  /** Tooltip text when it differs from the accessible name (a toggle's state wording). */
+  tooltip?: string;
   pressed?: boolean;
   children: React.ReactNode;
   asChild?: boolean;
@@ -42,23 +51,26 @@ function Action({
           size="icon-sm"
           aria-label={label}
           aria-pressed={pressed}
-          onClick={onClick}
+          aria-disabled={disabledReason ? true : undefined}
+          onClick={disabledReason ? undefined : onClick}
           disabled={disabled}
           asChild={asChild}
+          className={cn(disabledReason && "cursor-not-allowed opacity-50 hover:bg-transparent")}
         >
           {children}
         </Button>
       </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent>{disabledReason ?? tooltip ?? label}</TooltipContent>
     </Tooltip>
   );
 }
 
-/** Play/Download/Archive flag/Delete for Episodes; Add or Retry for everything archivable. */
+/** Play/Download/Lock/Delete for Episodes; Add or Retry for everything archivable. */
 export function RowActions({ item, feedTitle }: { item: ItemRead; feedTitle: string }) {
   const archive = useArchiveItem(item.feed_id);
   const remove = useDeleteItem(item.feed_id);
-  const flag = useSetArchiveFlag(item.feed_id);
+  const lock = useSetLock(item.feed_id);
+  const locked = !!item.archive_flag;
   const [confirming, setConfirming] = useState(false);
   const playing = useIsPlaying(item.id);
 
@@ -96,19 +108,20 @@ export function RowActions({ item, feedTitle }: { item: ItemRead; feedTitle: str
           </Action>
         </>
       ) : null}
-      {item.media || item.archive_flag ? (
+      {item.media || locked ? (
         <Action
-          label={item.archive_flag ? "Clear the Archive flag" : "Flag Archive (keep for good)"}
-          pressed={!!item.archive_flag}
+          label="Lock"
+          tooltip={locked ? "Locked: click to unlock" : "Lock (never delete)"}
+          pressed={locked}
           onClick={() =>
-            flag.mutate({
+            lock.mutate({
               params: { path: { feed_id: item.feed_id, item_id: item.id } },
-              body: { archive_flag: !item.archive_flag },
+              body: { archive_flag: !locked },
             })
           }
-          disabled={flag.isPending}
+          disabled={lock.isPending}
         >
-          <Archive className={cn(item.archive_flag && "text-primary")} />
+          {locked ? <Lock className="text-primary" /> : <LockOpen />}
         </Action>
       ) : null}
       {canArchive(item) ? (
@@ -120,6 +133,11 @@ export function RowActions({ item, feedTitle }: { item: ItemRead; feedTitle: str
           disabled={archive.isPending}
         >
           {item.state === "failed" ? <RotateCcw /> : <Plus />}
+        </Action>
+      ) : null}
+      {item.state === "archived" && locked ? (
+        <Action label="Delete" disabledReason="Locked: unlock it to delete">
+          <Trash2 />
         </Action>
       ) : null}
       {canDelete(item) ? (
