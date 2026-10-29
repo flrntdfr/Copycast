@@ -66,7 +66,6 @@ export function RunningJobCard({
                 <Link
                   to="/buckets/$bucketId"
                   params={{ bucketId: job.feed_id }}
-                  search={{ tab: "requests" }}
                   className="hover:underline"
                 >
                   Request

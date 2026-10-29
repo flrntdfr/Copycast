@@ -167,6 +167,50 @@ class FeedList(ReadModel):
     feeds: list[FeedRead] = Field(default_factory=list[FeedRead])
 
 
+FeedObjectKind = Literal[
+    "media",
+    "artwork",
+    "chapters",
+    "transcript",
+    "attachment",
+    "descriptor",
+    "source",
+    "sidecar",
+    "other",
+]
+"""What one object under ``feeds/{id}/`` is: an archived audio file (``media``), one of the
+asset kinds, the ``feed.json`` descriptor, a verbatim Source copy (``source/``), a sidecar the
+worker keeps next to the media (``.info.json``, ``.item.xml``, ``.part``) or anything else."""
+
+
+class FeedObjectRead(ReadModel):
+    """One object a Feed keeps in the Object store (its storage view on the bucket page)."""
+
+    path: str = Field(description="Relative to feeds/{feed_id}/, e.g. media/0123456789abcdef.m4a")
+    name: str = Field(description="The last segment of the path")
+    kind: FeedObjectKind
+    size_bytes: int
+    last_modified: datetime
+    etag: str | None = None
+    url: str = Field(description="Downloads the object as an attachment (download_feed_object)")
+    item_id: str | None = Field(default=None, description="The Catalog item the name identifies")
+    item_title: str | None = None
+
+
+class FeedObjectList(ReadModel):
+    """Every object under ``feeds/{feed_id}/``.
+
+    Ordered by kind — media, then the assets (artwork, chapters, transcript, attachment), then
+    the descriptor and the Source copies, then the sidecars, then anything else — and by name
+    inside each kind, so the audio files come first and the worker's bookkeeping last.
+    """
+
+    feed_id: str
+    objects: list[FeedObjectRead] = Field(default_factory=list[FeedObjectRead])
+    total_bytes: int = 0
+    count: int = 0
+
+
 # --------------------------------------------------------------------------- items and assets
 
 
@@ -1008,6 +1052,9 @@ __all__ = [
     "FeedCredentials",
     "FeedHealth",
     "FeedList",
+    "FeedObjectKind",
+    "FeedObjectList",
+    "FeedObjectRead",
     "FeedRead",
     "ItemMedia",
     "ItemPage",

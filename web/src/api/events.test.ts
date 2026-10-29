@@ -35,6 +35,7 @@ describe("keysForEvent", () => {
     expect(keys).toEqual([
       [OPS.list_feeds[0], OPS.list_feeds[1]],
       [OPS.get_feed[0], OPS.get_feed[1], { params: { path: { feed_id: "m1" } } }],
+      [OPS.list_feed_objects[0], OPS.list_feed_objects[1], { params: { path: { feed_id: "m1" } } }],
     ]);
   });
 
@@ -57,6 +58,7 @@ describe("keysForEvent", () => {
       OPS.get_job[1],
       OPS.list_feeds[1],
       OPS.get_feed[1],
+      OPS.list_feed_objects[1],
     ]);
   });
 

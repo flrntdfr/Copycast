@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { describeCounts, refreshCounts, refreshDuration } from "./RefreshesTable";
 import {
   currentBackfill,
   formatEngineOptions,
@@ -10,7 +9,7 @@ import {
   settingsDefaults,
   toMirrorUpdate,
 } from "./settings-form";
-import { job, mirror } from "@/test/factories";
+import { mirror } from "@/test/factories";
 
 describe("settings form", () => {
   const base = mirror({
@@ -136,29 +135,5 @@ describe("settings form", () => {
     });
     const empty = mirrorSettingsSchema.parse(settingsDefaults(selectionMirror));
     expect(toMirrorUpdate(selectionMirror, empty)).toEqual({});
-  });
-});
-
-describe("refresh rows", () => {
-  it("reads the counts the refresh job reports", () => {
-    const counts = refreshCounts(
-      job({ result: { listed: 120, new: 3, delisted: 1, wanted: 3, enqueued: 3 } }),
-    );
-    expect(describeCounts(counts)).toBe("120 listed · 3 new · 1 delisted · 3 queued");
-    expect(refreshCounts(job({ result: null }))).toBeNull();
-    expect(refreshCounts(job({ result: { status: "ok" } }))).toBeNull();
-  });
-
-  it("computes the duration from the timestamps", () => {
-    expect(
-      refreshDuration(
-        job({
-          status: "succeeded",
-          started_at: "2024-01-15T09:00:00Z",
-          finished_at: "2024-01-15T09:01:05Z",
-        }),
-      ),
-    ).toBe("1:05");
-    expect(refreshDuration(job({ status: "queued" }))).toBe("");
   });
 });

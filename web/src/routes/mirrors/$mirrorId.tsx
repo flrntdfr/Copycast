@@ -1,25 +1,23 @@
 import { createFileRoute, stripSearchParams } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 
 import { $api, ApiProblem, asError } from "@/api/client";
 import { isMirror } from "@/api/types";
 import { NotFound } from "@/components/common/NotFound";
 import { PageSpinner } from "@/components/common/PageSpinner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CatalogTable } from "@/features/catalog/CatalogTable";
 import { catalogSearchDefaults, catalogSearchSchema } from "@/features/catalog/search";
 import { useRunningRefreshFeedIds } from "@/features/jobs/useRunningJobs";
 import { MirrorHeader } from "@/features/mirrors/MirrorHeader";
-import { MirrorSettingsForm } from "@/features/mirrors/MirrorSettingsForm";
-import { RefreshesTable } from "@/features/mirrors/RefreshesTable";
 
-const MIRROR_TABS = ["catalog", "refreshes", "settings"] as const;
-type MirrorTab = (typeof MIRROR_TABS)[number];
-
-const defaults = { tab: "catalog", ...catalogSearchDefaults } as const;
+const defaults = { settings: false, ...catalogSearchDefaults } as const;
 
 export const Route = createFileRoute("/mirrors/$mirrorId")({
-  validateSearch: catalogSearchSchema.extend({ tab: z.enum(MIRROR_TABS).default(defaults.tab) }),
+  validateSearch: catalogSearchSchema.extend({
+    /** `?settings=true` opens the Settings dialog once (a Feeds-page menu links here). */
+    settings: z.boolean().default(defaults.settings),
+  }),
   search: { middlewares: [stripSearchParams(defaults)] },
   component: MirrorPage,
 });
@@ -33,6 +31,13 @@ function MirrorPage() {
   });
   const refreshing = useRunningRefreshFeedIds();
 
+  // Remember the request before the URL is cleaned, so a reload does not reopen the dialog.
+  const [settingsRequested] = useState(search.settings);
+  useEffect(() => {
+    if (!search.settings) return;
+    void navigate({ search: (prev) => ({ ...prev, settings: false }), replace: true });
+  }, [search.settings, navigate]);
+
   if (feed.isPending) return <PageSpinner />;
   if (feed.isError) {
     if (ApiProblem.is(feed.error) && feed.error.status === 404) return <NotFound />;
@@ -43,34 +48,18 @@ function MirrorPage() {
 
   return (
     <>
-      <MirrorHeader mirror={mirror} refreshing={refreshing.has(mirror.id)} />
-      <Tabs
-        value={search.tab}
-        onValueChange={(tab) =>
-          void navigate({ search: (prev) => ({ ...prev, tab: tab as MirrorTab }) })
+      <MirrorHeader
+        mirror={mirror}
+        refreshing={refreshing.has(mirror.id)}
+        initialSettingsOpen={settingsRequested}
+      />
+      <CatalogTable
+        feed={mirror}
+        search={search}
+        onSearchChange={(patch) =>
+          void navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true })
         }
-      >
-        <TabsList aria-label="Mirror sections">
-          <TabsTrigger value="catalog">Catalog</TabsTrigger>
-          <TabsTrigger value="refreshes">Refreshes</TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
-        </TabsList>
-        <TabsContent value="catalog" className="mt-4">
-          <CatalogTable
-            feed={mirror}
-            search={search}
-            onSearchChange={(patch) =>
-              void navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true })
-            }
-          />
-        </TabsContent>
-        <TabsContent value="refreshes" className="mt-4">
-          <RefreshesTable feedId={mirror.id} />
-        </TabsContent>
-        <TabsContent value="settings" className="mt-4">
-          <MirrorSettingsForm mirror={mirror} />
-        </TabsContent>
-      </Tabs>
+      />
     </>
   );
 }

@@ -33,7 +33,7 @@ import { NewApiKeyDialog } from "./NewApiKeyDialog";
 import { useRevokeApiKey } from "./mutations";
 import { keyScopeHint, keyScopeLabel } from "@/lib/labels";
 
-/** The MCP API keys: name, scope, prefix, created, last used; mint and revoke. */
+/** The MCP page: the API keys MCP clients present (name, scope, prefix, created, last used); mint and revoke. */
 export function ApiKeysPage() {
   const about = $api.useQuery("get", "/api/about");
   const keys = $api.useQuery("get", "/api/keys");
@@ -47,11 +47,7 @@ export function ApiKeysPage() {
 
   return (
     <>
-      <PageHeader
-        title="API keys"
-        description="Bearer tokens for MCP clients such as Claude Code; each key's scope caps what the agent may do."
-        actions={<NewApiKeyDialog mcpUrl={mcpUrl} />}
-      />
+      <PageHeader title="MCP" actions={<NewApiKeyDialog mcpUrl={mcpUrl} />} />
       {!about.data.auth_enabled ? (
         <Alert className="mb-6">
           <AlertTriangle />
@@ -65,7 +61,7 @@ export function ApiKeysPage() {
       {keys.isSuccess && rows.length === 0 ? (
         <EmptyState
           icon={<KeyRound />}
-          title="No API keys yet"
+          title="No keys yet"
           description="Create one per agent or machine so you can revoke each on its own."
         />
       ) : (

@@ -108,7 +108,7 @@ export function CommandPalette({
             <RefreshCw /> Jobs
           </CommandItem>
           <CommandItem onSelect={() => go(() => void navigate({ to: "/keys" }))}>
-            <KeyRound /> API keys
+            <KeyRound /> MCP
           </CommandItem>
           <CommandItem onSelect={() => go(() => void navigate({ to: "/settings" }))}>
             <Settings /> Settings

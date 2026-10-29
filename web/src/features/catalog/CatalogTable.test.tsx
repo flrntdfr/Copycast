@@ -363,47 +363,6 @@ describe("CatalogTable", () => {
     );
   });
 
-  it("previews a range with a dry run and confirms with the real request", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const bodies: SelectionRequest[] = [];
-    server.use(
-      http.get("/api/feeds/:feedId/items", () =>
-        HttpResponse.json({ items: rows, total: rows.length, limit: 100, offset: 0 }),
-      ),
-      http.post("/api/mirrors/:feedId/selections", async ({ request }) => {
-        const body = (await request.json()) as SelectionRequest;
-        bodies.push(body);
-        const resolved = Array.from({ length: 43 }, (_, i) => `id-${i}`);
-        return HttpResponse.json(
-          selectionResult({
-            resolved,
-            already_archived_count: 2,
-            dry_run: body.dry_run,
-            jobs: body.dry_run ? [] : resolved.slice(2).map(() => ({}) as never),
-          }),
-          { status: body.dry_run ? 200 : 202 },
-        );
-      }),
-    );
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    renderWithProviders(
-      <CatalogTable feed={feed} search={search()} onSearchChange={() => undefined} />,
-    );
-    await screen.findAllByTestId("catalog-row");
-    await user.type(
-      screen.getByRole("textbox", { name: "Archive by episode numbers" }),
-      "1-42, 180",
-    );
-    const preview = await screen.findByTestId("dry-run-preview");
-    expect(preview).toHaveTextContent("43 Episodes, 2 already archived");
-    expect(bodies).toEqual([{ selection: "1-42, 180", numbering: "source", dry_run: true }]);
-    const confirm = screen.getByRole("button", { name: "Archive 41" });
-    await user.click(confirm);
-    await waitFor(() => expect(bodies).toHaveLength(2));
-    expect(bodies[1]).toEqual({ selection: "1-42, 180", numbering: "source", dry_run: false });
-    vi.useRealTimers();
-  });
-
   it("changes the facet and the sort through onSearchChange, with no page buttons", async () => {
     server.use(
       http.get("/api/feeds/:feedId/items", () =>

@@ -3,7 +3,7 @@
   "info": {
     "title": "Copycast",
     "description": "Self-hosted podcast mirroring and archiving.",
-    "version": "2.0.3"
+    "version": "2.1.0"
   },
   "paths": {
     "/api/feeds": {
@@ -454,6 +454,120 @@
           }
         },
         "x-capability": "delete_feed"
+      }
+    },
+    "/api/feeds/{feed_id}/objects": {
+      "get": {
+        "tags": [
+          "feeds"
+        ],
+        "summary": "Every object a Feed keeps in the Object store, with a download URL each",
+        "operationId": "list_feed_objects",
+        "parameters": [
+          {
+            "name": "feed_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feed Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedObjectList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "list_feed_objects"
+      }
+    },
+    "/api/feeds/{feed_id}/objects/{path}": {
+      "get": {
+        "tags": [
+          "feeds"
+        ],
+        "summary": "Download one stored object of a Feed as an attachment",
+        "operationId": "download_feed_object",
+        "parameters": [
+          {
+            "name": "feed_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feed Id"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/feeds/{feed_id}/credentials/rotate": {
@@ -4528,6 +4642,125 @@
         },
         "type": "object",
         "title": "FeedList"
+      },
+      "FeedObjectList": {
+        "properties": {
+          "feed_id": {
+            "type": "string",
+            "title": "Feed Id"
+          },
+          "objects": {
+            "items": {
+              "$ref": "#/components/schemas/FeedObjectRead"
+            },
+            "type": "array",
+            "title": "Objects"
+          },
+          "total_bytes": {
+            "type": "integer",
+            "title": "Total Bytes",
+            "default": 0
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "feed_id"
+        ],
+        "title": "FeedObjectList",
+        "description": "Every object under ``feeds/{feed_id}/``.\n\nOrdered by kind \u2014 media, then the assets (artwork, chapters, transcript, attachment), then\nthe descriptor and the Source copies, then the sidecars, then anything else \u2014 and by name\ninside each kind, so the audio files come first and the worker's bookkeeping last."
+      },
+      "FeedObjectRead": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "Relative to feeds/{feed_id}/, e.g. media/0123456789abcdef.m4a"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "The last segment of the path"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "media",
+              "artwork",
+              "chapters",
+              "transcript",
+              "attachment",
+              "descriptor",
+              "source",
+              "sidecar",
+              "other"
+            ],
+            "title": "Kind"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "last_modified": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Modified"
+          },
+          "etag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Etag"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Downloads the object as an attachment (download_feed_object)"
+          },
+          "item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Id",
+            "description": "The Catalog item the name identifies"
+          },
+          "item_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "name",
+          "kind",
+          "size_bytes",
+          "last_modified",
+          "url"
+        ],
+        "title": "FeedObjectRead",
+        "description": "One object a Feed keeps in the Object store (its storage view on the bucket page)."
       },
       "HTTPValidationError": {
         "properties": {

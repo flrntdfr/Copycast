@@ -21,6 +21,7 @@ export const OPS = {
   clear_feed: ["post", "/api/feeds/{feed_id}/clear"],
   export_opml: ["get", "/api/feeds.opml"],
   rotate_feed_credentials: ["post", "/api/feeds/{feed_id}/credentials/rotate"],
+  list_feed_objects: ["get", "/api/feeds/{feed_id}/objects"],
   list_items: ["get", "/api/feeds/{feed_id}/items"],
   get_item: ["get", "/api/feeds/{feed_id}/items/{item_id}"],
   archive_item: ["post", "/api/feeds/{feed_id}/items/{item_id}/archive"],
@@ -73,6 +74,7 @@ export type Capability = keyof typeof OPS;
 /** Routes without a capability that the UI still calls. */
 export const EXTRA_OPS = {
   resume_mirror: ["post", "/api/mirrors/{feed_id}/resume"],
+  download_feed_object: ["get", "/api/feeds/{feed_id}/objects/{path}"],
   health_ready: ["get", "/healthz/ready"],
 } as const satisfies Record<string, Op>;
 

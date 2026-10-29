@@ -3,64 +3,78 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
-import { applyEvent, Invalidator } from "@/api/events";
-import type { BucketCreate, BucketUpdate, RequestCreate, RequestRead } from "@/api/types";
-import { bucket, item, job, mirror, request } from "@/test/factories";
+import type { BucketUpdate, FeedObjectRead, RequestCreate, RequestRead } from "@/api/types";
+import { bucket, feedObject, mirror, mirrorDefaults, request } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
+import { bareFeedUrl } from "./FeedObjectsTable";
 
 const copycast = bucket({
   id: "bucket-1",
   name: "Copycast",
   title: "Copycast",
+  feed_url: "http://k7mpq2xz:s3cret@localhost:8080/feeds/bucket-1.xml",
   episode_count: 2,
   request_count: 2,
   storage_bytes: 8_800,
   autoprune_days: 30,
 });
 const empty = bucket({ id: "bucket-2", name: "Later", title: "Later", request_count: 0 });
+const podcast = mirror({ id: "mirror-1", title: "Example Podcast" });
+
+const objects: FeedObjectRead[] = [
+  feedObject({
+    name: "0123456789abcdef.m4a",
+    path: "media/0123456789abcdef.m4a",
+    size_bytes: 4_407,
+    item_title: "Episode one",
+  }),
+  feedObject({
+    name: "feed.artwork.jpg",
+    path: "assets/feed.artwork.jpg",
+    kind: "artwork",
+    size_bytes: 1_200,
+    item_id: null,
+    item_title: null,
+  }),
+  feedObject({
+    name: "feed.json",
+    path: "feed.json",
+    kind: "descriptor",
+    size_bytes: 300,
+    item_id: null,
+    item_title: null,
+  }),
+];
 
 function handlers(state: {
   requests: RequestRead[];
-  created?: BucketCreate[];
+  objects?: FeedObjectRead[];
   added?: RequestCreate[];
   updated?: BucketUpdate[];
 }) {
+  const feeds = [copycast, empty, podcast];
   return [
-    http.get("/api/feeds", () =>
-      HttpResponse.json({
-        feeds: [
-          copycast,
-          empty,
-          mirror({ id: "mirror-wl", title: "Watch Later", playlist_capture: true }),
-        ],
-      }),
-    ),
-    http.get("/api/youtube/playlists", () =>
-      HttpResponse.json({
-        playlists: [
-          {
-            id: "WL",
-            title: "Watch Later",
-            url: "https://www.youtube.com/playlist?list=WL",
-            captured_feed_id: "mirror-wl",
-          },
-        ],
-      }),
-    ),
-    http.get("/api/feeds/:feedId", ({ params }) =>
-      params.feedId === copycast.id
-        ? HttpResponse.json(copycast)
-        : params.feedId === empty.id
-          ? HttpResponse.json(empty)
-          : HttpResponse.json(
-              { type: "urn:copycast:problem:not-found", status: 404 },
-              { status: 404 },
-            ),
-    ),
-    http.get("/api/feeds/:feedId/items", () =>
-      HttpResponse.json({ items: [], total: 0, limit: 100, offset: 0 }),
-    ),
+    http.get("/api/feeds", () => HttpResponse.json({ feeds })),
+    http.get("/api/feeds/:feedId", ({ params }) => {
+      const feed = feeds.find((candidate) => candidate.id === params.feedId);
+      return feed
+        ? HttpResponse.json(feed)
+        : HttpResponse.json(
+            { type: "urn:copycast:problem:not-found", status: 404 },
+            { status: 404 },
+          );
+    }),
+    http.get("/api/feeds/:feedId/objects", ({ params }) => {
+      const listed = params.feedId === empty.id ? [] : (state.objects ?? objects);
+      return HttpResponse.json({
+        feed_id: params.feedId,
+        objects: listed,
+        total_bytes: listed.reduce((sum, object) => sum + object.size_bytes, 0),
+        count: listed.length,
+      });
+    }),
+    http.get("/api/settings/defaults", () => HttpResponse.json(mirrorDefaults())),
     http.get("/api/jobs", () => HttpResponse.json({ jobs: [], total: 0, limit: 1, offset: 0 })),
     http.get("/api/buckets/:bucketId/requests", ({ request: req }) => {
       const limit = Number(new URL(req.url).searchParams.get("limit") ?? 100);
@@ -69,13 +83,6 @@ function handlers(state: {
         total: state.requests.length,
         limit,
         offset: 0,
-      });
-    }),
-    http.post("/api/buckets", async ({ request: req }) => {
-      const body = (await req.json()) as BucketCreate;
-      state.created?.push(body);
-      return HttpResponse.json(bucket({ id: "bucket-3", name: body.name, title: body.name }), {
-        status: 201,
       });
     }),
     http.post("/api/buckets/:bucketId/requests", async ({ request: req }) => {
@@ -100,121 +107,82 @@ function handlers(state: {
   ];
 }
 
-describe("Buckets on the Feeds page", () => {
-  it("shows a card per Bucket with the last Request and creates a new one", async () => {
-    const state = {
-      requests: [
-        request({ status: "expanded", item_count: 3, created_at: "2024-01-15T09:00:00Z" }),
-      ],
-      created: [] as BucketCreate[],
-    };
-    server.use(...handlers(state));
-    const user = userEvent.setup();
-    const { history } = renderApp("/");
-
-    const cards = await screen.findAllByTestId("bucket-card");
-    expect(cards).toHaveLength(2);
-    // The Buckets sit under the Mirrors, with the captured playlists.
-    const section = screen.getByRole("region", { name: "Buckets" });
-    expect(within(section).getByTestId("capture-feed-card")).toHaveTextContent("Watch Later");
-    expect(cards[0]).toHaveTextContent("Copycast");
-    expect(cards[0]).toHaveTextContent("2 Episodes");
-    expect(within(cards[0]!).getByText("Storage not checked")).toBeInTheDocument();
-    await waitFor(() => expect(cards[0]).toHaveTextContent("Refreshed"));
-    expect(cards[1]).toHaveTextContent("Never refreshed");
-
-    await user.click(screen.getByRole("button", { name: "New Bucket" }));
-    const dialog = await screen.findByRole("dialog", { name: "New Bucket" });
-    expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
-    await user.type(within(dialog).getByLabelText("Name"), "  Music  ");
-    await user.click(within(dialog).getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(state.created).toEqual([{ name: "Music" }]));
-    await waitFor(() => expect(history.location.pathname).toBe("/buckets/bucket-3"));
+describe("bareFeedUrl", () => {
+  it("drops the Basic pair and leaves a URL without one alone", () => {
+    expect(bareFeedUrl("http://u:p@localhost:8080/feeds/a.xml")).toBe(
+      "http://localhost:8080/feeds/a.xml",
+    );
+    expect(bareFeedUrl("http://localhost:8080/feeds/a.xml")).toBe(
+      "http://localhost:8080/feeds/a.xml",
+    );
+    expect(bareFeedUrl("not a url")).toBe("not a url");
   });
 });
 
 describe("Bucket page", () => {
-  it("lists Requests with their produced Episodes and updates on request events", async () => {
-    const produced = item({ id: "item-1", feed_id: copycast.id, title: "Produced one" });
+  it("shows the storage view of a Bucket: every stored file, downloadable, and the Add URL form", async () => {
     const state = {
-      requests: [
-        request({
-          id: "00000000-0000-4000-8000-00000000aaaa",
-          url: "https://www.youtube.com/watch?v=one",
-          status: "expanded",
-          item_count: 1,
-          items: [produced],
-          requested_via: "mcp",
-        }),
-        request({
-          id: "00000000-0000-4000-8000-00000000bbbb",
-          url: "https://soundcloud.com/set",
-          status: "queued",
-          job: job({ kind: "expand_request", status: "running" }),
-        }),
-      ],
+      requests: [request({ status: "expanded", created_at: "2024-01-15T09:00:00Z" })],
       added: [] as RequestCreate[],
     };
     server.use(...handlers(state));
     const user = userEvent.setup();
-    const { client } = renderApp(`/buckets/${copycast.id}?tab=requests`);
+    renderApp(`/buckets/${copycast.id}`);
 
     expect(await screen.findByRole("heading", { name: "Copycast" })).toBeInTheDocument();
-    expect(screen.getByText(/2 Episodes · 2 Requests · 8\.8 kB/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Bucket Feed URL")).toHaveValue(copycast.feed_url);
+    expect(screen.getByText("Local")).toBeInTheDocument();
+    expect(screen.getByText(/2 Episodes · 0\.0 MB · Autoprune 30 days/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/^Synced/)).toBeInTheDocument());
+    // No feed URL, no credentials, no tabs, no Catalog filter on the storage view.
+    expect(screen.queryByRole("textbox", { name: "Bucket Feed URL" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Username and password")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Prune now…" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More actions" })).not.toBeInTheDocument();
 
-    const rows = await screen.findAllByTestId("request-row");
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent("https://www.youtube.com/watch?v=one");
-    expect(rows[0]).toHaveTextContent("MCP");
-    expect(rows[0]).toHaveTextContent("Expanded · 1 Episode");
-    expect(rows[1]).toHaveTextContent("Expand Request · Running");
-
-    await user.click(within(rows[0]!).getByRole("button", { name: "Show produced Episodes" }));
-    const list = await screen.findByRole("list", { name: "Produced Episodes" });
-    // `tab=episodes` is the default and is stripped from the URL.
-    expect(within(list).getByRole("link", { name: "Produced one" })).toHaveAttribute(
+    const rows = await screen.findAllByTestId("object-row");
+    await waitFor(() => expect(screen.getAllByTestId("object-row")).toHaveLength(4));
+    // The published feed comes first, downloadable without the Basic pair.
+    expect(rows[0]).toHaveTextContent("bucket-1.xml");
+    expect(rows[0]).toHaveTextContent("Feed");
+    expect(within(rows[0]!).getByRole("link", { name: "Download bucket-1.xml" })).toHaveAttribute(
       "href",
-      expect.stringMatching(/^\/buckets\/bucket-1\?q=Produced(\+|%20)one$/),
+      "http://localhost:8080/feeds/bucket-1.xml",
     );
-    expect(within(list).getByText("Listed")).toBeInTheDocument();
+    const all = screen.getAllByTestId("object-row");
+    expect(all[1]).toHaveTextContent("0123456789abcdef.m4a");
+    expect(all[1]).toHaveTextContent("Episode one");
+    expect(all[1]).toHaveTextContent("Media");
+    expect(all[1]).toHaveTextContent("4.4 kB");
+    expect(
+      within(all[1]!).getByRole("link", { name: "Download 0123456789abcdef.m4a" }),
+    ).toHaveAttribute("href", objects[0]!.url);
+    expect(within(all[1]!).getByRole("link", { name: /Download/ })).toHaveAttribute(
+      "download",
+      "0123456789abcdef.m4a",
+    );
+    expect(all[2]).toHaveTextContent("Artwork");
+    expect(all[3]).toHaveTextContent("Descriptor");
+    expect(screen.getByTestId("objects-summary")).toHaveTextContent("3 files · 0.0 MB");
 
-    // Add a URL from the header form; the new Request shows up first.
+    // The Add URL form stays: it is how URLs get into a Bucket.
     await user.type(screen.getByLabelText("Add URL"), "https://example.org/video");
     await user.click(screen.getByRole("button", { name: "Add" }));
     await waitFor(() => expect(state.added).toEqual([{ url: "https://example.org/video" }]));
     expect(await screen.findByText("Request queued")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getAllByTestId("request-row")).toHaveLength(3));
     expect(screen.getByLabelText("Add URL")).toHaveValue("");
-
-    // A `request` event from the worker refetches the table (expanded now).
-    state.requests = state.requests.map((r) =>
-      r.status === "queued" ? { ...r, status: "expanded", item_count: 4, job: null } : r,
-    );
-    applyEvent(
-      {
-        event: "request",
-        data: {
-          feed_id: copycast.id,
-          request_id: "00000000-0000-4000-8000-00000000bbbb",
-          status: "expanded",
-          item_count: 4,
-        },
-      },
-      new Invalidator(client, 0),
-    );
-    await waitFor(() =>
-      expect(screen.getAllByTestId("request-row")[2]).toHaveTextContent("Expanded · 4 Episodes"),
-    );
   });
 
-  it("saves renamed settings and autoprune, and opens the prune dialog from the header", async () => {
+  it("opens Settings: saves the renamed Bucket and autoprune, previews a prune, keeps Delete", async () => {
     const state = { requests: [] as RequestRead[], updated: [] as BucketUpdate[] };
     server.use(...handlers(state));
     const user = userEvent.setup();
-    renderApp(`/buckets/${copycast.id}?tab=settings`);
+    renderApp(`/buckets/${copycast.id}`);
 
-    const form = await screen.findByRole("form", { name: "Bucket settings" });
+    await screen.findByRole("heading", { name: "Copycast" });
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "Bucket settings" });
+    const form = within(dialog).getByRole("form", { name: "Bucket settings" });
     const name = within(form).getByLabelText("Name");
     await user.clear(name);
     await user.type(name, "Everything");
@@ -225,22 +193,51 @@ describe("Bucket page", () => {
     );
     expect(await screen.findByText("Bucket settings saved")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Prune now…" }));
-    const dialog = await screen.findByRole("dialog", { name: "Prune this Bucket" });
+    await user.click(within(dialog).getByRole("button", { name: "Prune now…" }));
+    const prune = await screen.findByRole("dialog", { name: "Prune this Bucket" });
     await waitFor(() =>
-      expect(within(dialog).getByTestId("prune-preview")).toHaveTextContent(
+      expect(within(prune).getByTestId("prune-preview")).toHaveTextContent(
         "Deletes 1 Episode (4.4 kB)",
       ),
     );
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Delete Bucket…" })).toBeInTheDocument();
+    await user.click(within(prune).getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Prune this Bucket" })).not.toBeInTheDocument(),
+    );
+    expect(within(dialog).getByRole("button", { name: "Delete Bucket…" })).toBeInTheDocument();
   });
 
-  it("shows the empty Requests state and a 404 for an unknown Bucket", async () => {
+  it("renders a Mirror's storage view with Open Mirror and the Mirror settings dialog", async () => {
     server.use(...handlers({ requests: [] }));
-    renderApp(`/buckets/${empty.id}?tab=requests`);
-    expect(await screen.findByText("No Requests yet")).toBeInTheDocument();
+    const user = userEvent.setup();
+    renderApp(`/buckets/${podcast.id}`);
+
+    expect(await screen.findByRole("heading", { name: "Example Podcast" })).toBeInTheDocument();
+    expect(screen.getByText("RSS")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Add URL")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /Feed URL/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Mirror" })).toHaveAttribute(
+      "href",
+      "/mirrors/mirror-1",
+    );
+    await waitFor(() => expect(screen.getAllByTestId("object-row")).toHaveLength(4));
+    expect(screen.getAllByTestId("object-row")[0]).toHaveTextContent("mirror-1.xml");
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mirror settings" });
+    expect(within(dialog).getByText("Example Podcast")).toBeInTheDocument();
+    expect(await within(dialog).findByLabelText("Source URL")).toHaveValue(podcast.source_url);
+  });
+
+  it("shows the empty state for a Bucket without files and a 404 for an unknown Feed", async () => {
+    server.use(...handlers({ requests: [] }));
+    renderApp(`/buckets/${empty.id}`);
+    expect(await screen.findByText("Nothing stored yet")).toBeInTheDocument();
+    expect(screen.getByText("Never synced")).toBeInTheDocument();
+
+    server.use(...handlers({ requests: [] }));
+    renderApp("/buckets/nope");
+    expect(await screen.findByRole("heading", { name: "Not found" })).toBeInTheDocument();
   });
 });
 

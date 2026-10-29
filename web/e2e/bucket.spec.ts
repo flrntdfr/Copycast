@@ -3,16 +3,23 @@ import { expect, test } from "@playwright/test";
 import { FIXTURE_MEDIA_URL, defaultBucket } from "./helpers";
 
 test.describe("Bucket", () => {
-  test("adds a Request and opens the prune dialog with a dry-run preview", async ({
+  test("opens the storage view from its card, adds a Request and previews a prune from Settings", async ({
     page,
     request,
   }) => {
     const bucket = await defaultBucket(request);
     await page.goto("/");
+    // The Buckets box is collapsed by default: open it, then the default Bucket's card.
+    await page.getByRole("button", { name: /Buckets/ }).click();
     await page.getByTestId("bucket-card").filter({ hasText: bucket.title }).first().click();
     await expect(page).toHaveURL(new RegExp(`/buckets/${bucket.id}`));
     await expect(page.getByRole("heading", { name: bucket.title })).toBeVisible();
-    await expect(page.getByRole("textbox", { name: "Bucket Feed URL" })).toHaveValue(
+    // The storage view: no feed URL field, the published feed as the first stored file.
+    await expect(page.getByRole("textbox", { name: "Bucket Feed URL" })).toHaveCount(0);
+    const feedRow = page.getByTestId("object-row").first();
+    await expect(feedRow).toContainText(`${bucket.id}.xml`);
+    await expect(feedRow.getByRole("link", { name: `Download ${bucket.id}.xml` })).toHaveAttribute(
+      "href",
       new RegExp(`/feeds/${bucket.id}\\.xml$`),
     );
 
@@ -20,14 +27,11 @@ test.describe("Bucket", () => {
     await page.getByLabel("Add URL").fill(FIXTURE_MEDIA_URL);
     await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect(page.getByText("Request queued")).toBeVisible();
-    await page.getByRole("tab", { name: "Requests" }).click();
-    const row = page.getByTestId("request-row").filter({ hasText: FIXTURE_MEDIA_URL }).first();
-    await expect(row).toBeVisible({ timeout: 30_000 });
-    await expect(row).toContainText("UI");
 
-    await page.getByRole("tab", { name: "Settings" }).click();
-    await expect(page.getByRole("form", { name: "Bucket settings" })).toBeVisible();
-    await page.getByRole("button", { name: "Prune now…" }).click();
+    await page.getByRole("button", { name: "Settings" }).click();
+    const settings = page.getByRole("dialog", { name: "Bucket settings" });
+    await expect(settings.getByRole("form", { name: "Bucket settings" })).toBeVisible();
+    await settings.getByRole("button", { name: "Prune now…" }).click();
     const dialog = page.getByRole("dialog", { name: "Prune this Bucket" });
     await expect(dialog).toBeVisible();
     const preview = dialog.getByTestId("prune-preview");

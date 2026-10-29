@@ -23,5 +23,4 @@ test("About shows the app and engine versions and the worker heartbeat", async (
   const worker = page.getByTestId("about-worker");
   await expect(worker).not.toHaveText("…", { timeout: 30_000 });
   await expect(worker).toContainText(/ago|just now|never|unknown/);
-  await expect(page.getByRole("heading", { name: "Storage per feed" })).toBeVisible();
 });

@@ -101,6 +101,7 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --animate-health-blink: health-blink 1.6s ease-in-out infinite;
+  --animate-placeholder-in: placeholder-in 0.45s ease-out both;
 
   @keyframes health-blink {
     0%,
@@ -109,6 +110,18 @@
     }
     50% {
       opacity: 0.35;
+    }
+  }
+
+  /* A rotating placeholder hint fades and slides up into place when it changes. */
+  @keyframes placeholder-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.4rem);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
 }
@@ -132,7 +145,8 @@
     padding-right: env(safe-area-inset-right);
   }
   @media (prefers-reduced-motion: reduce) {
-    .animate-health-blink {
+    .animate-health-blink,
+    .animate-placeholder-in {
       animation: none;
     }
   }

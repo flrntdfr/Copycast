@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Scissors, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { optionalCount } from "@/features/add-source/policy-form";
 import { DeleteFeedDialog } from "@/features/feeds/DeleteFeedDialog";
 import { useInvalidateFeed } from "@/features/feeds/mutations";
+import { PruneDialog } from "./PruneDialog";
 
 export const bucketSettingsSchema = z
   .object({
@@ -51,9 +52,11 @@ export function toBucketUpdate(bucket: BucketRead, values: BucketSettingsValues)
   return update;
 }
 
+/** Name, autoprune, Prune now… and the Danger zone (shown in `BucketSettingsDialog`). */
 export function BucketSettings({ bucket }: { bucket: BucketRead }) {
   const invalidate = useInvalidateFeed();
   const [deleting, setDeleting] = useState(false);
+  const [pruning, setPruning] = useState(false);
   const form = useForm<BucketSettingsInput, unknown, BucketSettingsValues>({
     resolver: zodResolver(bucketSettingsSchema),
     defaultValues: bucketDefaults(bucket),
@@ -138,16 +141,22 @@ export function BucketSettings({ bucket }: { bucket: BucketRead }) {
             <p className="text-xs text-destructive">{errors.autoprune_days.message}</p>
           ) : null}
         </div>
-        <div className="flex items-center gap-2">
-          <Button type="submit" disabled={update.isPending}>
-            {update.isPending ? <Loader2 className="animate-spin" /> : null}
-            Save changes
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            Prune on demand from the “Prune now…” button in the header.
-          </span>
-        </div>
+        <Button type="submit" disabled={update.isPending}>
+          {update.isPending ? <Loader2 className="animate-spin" /> : null}
+          Save changes
+        </Button>
       </form>
+      <section aria-labelledby="bucket-prune" className="max-w-2xl rounded-lg border p-4">
+        <h2 id="bucket-prune" className="text-sm font-medium">
+          Prune
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Delete downloaded or old Episodes now, with a preview first; their Requests stay.
+        </p>
+        <Button variant="outline" size="sm" className="mt-3" onClick={() => setPruning(true)}>
+          <Scissors /> Prune now…
+        </Button>
+      </section>
       <section
         aria-labelledby="bucket-danger-zone"
         className="max-w-2xl rounded-lg border border-destructive/40 p-4"
@@ -163,6 +172,7 @@ export function BucketSettings({ bucket }: { bucket: BucketRead }) {
           <Trash2 /> Delete Bucket…
         </Button>
       </section>
+      <PruneDialog bucketId={bucket.id} open={pruning} onOpenChange={setPruning} />
       <DeleteFeedDialog feed={bucket} open={deleting} onOpenChange={setDeleting} />
     </div>
   );

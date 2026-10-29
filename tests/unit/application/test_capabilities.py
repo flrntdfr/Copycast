@@ -15,6 +15,7 @@ PLAN_TOOLS = {
     "create_mirror",
     "list_feeds",
     "get_feed",
+    "list_feed_objects",
     "list_items",
     "get_item",
     "select_items",

@@ -77,9 +77,15 @@ export function keysForEvent(event: CopycastEvent): QueryKey[] {
     { params: { path: { feed_id: feedId } } },
   ];
   const listFeeds: QueryKey = [OPS.list_feeds[0], OPS.list_feeds[1]];
+  // The stored files of a Feed (the bucket page) change with every archive, delete or upload.
+  const objectsKey = (feedId: string): QueryKey => [
+    OPS.list_feed_objects[0],
+    OPS.list_feed_objects[1],
+    { params: { path: { feed_id: feedId } } },
+  ];
   switch (event.event) {
     case "feed":
-      return [listFeeds, feedKey(event.data.feed_id)];
+      return [listFeeds, feedKey(event.data.feed_id), objectsKey(event.data.feed_id)];
     case "item":
       return [
         [
@@ -92,13 +98,15 @@ export function keysForEvent(event: CopycastEvent): QueryKey[] {
           OPS.get_item[1],
           { params: { path: { feed_id: event.data.feed_id, item_id: event.data.item_id } } },
         ],
+        objectsKey(event.data.feed_id),
       ];
     case "job": {
       const keys: QueryKey[] = [
         [OPS.list_jobs[0], OPS.list_jobs[1]],
         [OPS.get_job[0], OPS.get_job[1], { params: { path: { job_id: event.data.job.id } } }],
       ];
-      if (event.data.job.feed_id) keys.push(listFeeds, feedKey(event.data.job.feed_id));
+      if (event.data.job.feed_id)
+        keys.push(listFeeds, feedKey(event.data.job.feed_id), objectsKey(event.data.job.feed_id));
       return keys;
     }
     case "request":

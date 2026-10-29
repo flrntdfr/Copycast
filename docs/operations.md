@@ -162,8 +162,9 @@ from the feed's password, opens only that feed's files, rotates with the pair an
 URLs still work with the pair. The upgrade to 2.0.2 moves every enclosure URL once, so apps
 may download Episodes they already have again (ADR 0020).
 
-**API keys.** Minted and revoked on the *API keys* page (`/api/keys`), shown once, stored as a
-SHA-256 digest, with a scope: `read` (read-only tools), `write` (everything but deletions) or
+**API keys.** Minted and revoked on the *MCP* page (`/keys` in the UI, `/api/keys` in the API),
+shown once as two `.env` lines (`COPYCAST_MCP_URL=<base URL>/mcp` and `COPYCAST_MCP_KEY=cck_…`),
+stored as a SHA-256 digest, with a scope: `read` (read-only tools), `write` (everything but deletions) or
 `full` (everything, including `delete_feed`, `delete_item`, `prune_bucket`, and setting a
 Bucket's Retention through `create_bucket` or `update_bucket`, since autoprune deletes). Every tool
 checks the scope before running and refuses with a `ToolError` naming the scope it needs.
@@ -248,8 +249,8 @@ untouched `./data` directory.
 
 ## Mirror modes
 
-A Mirror's Settings tab and the Settings page offer two policies as tabs, Ephemeral and
-Archive; Archive's *Backfill* switch picks between its two modes:
+A Mirror's Settings dialog (the *Settings* button on its page) and the Settings page offer two
+policies as tabs, Ephemeral and Archive; Archive's *Backfill* switch picks between its two modes:
 
 | Policy (mode) | Archives | Deletes |
 |---|---|---|
@@ -363,9 +364,21 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   the cookie file required, Watch Later first) and captures any of them with a click: a synced
   Mirror in Automatic mode flagged `playlist_capture`, which is listed among the Buckets rather
   than with the Mirrors. Agents get the same through `list_youtube_playlists` and `create_mirror`.
-- **The Feeds page** (`/`) lists every Feed: the Mirrors table first, then the Buckets and the
-  captured playlists. `/mirrors` and `/buckets` redirect there, and so do the `/inboxes` links
+- **The Feeds page** (`/`) lists every Feed in one table: the Mirrors with their service, and
+  the Buckets with the service *Local*. Under the table, a collapsed *Buckets* box opens on one
+  bucket per Feed (Mirrors included, then the Buckets and the captured playlists): the storage a
+  Feed keeps under `feeds/{id}/`, each card with a green or orange *Synced* badge, its Episode
+  count and its size. `/mirrors` and `/buckets` redirect there, and so do the `/inboxes` links
   from before Inboxes were renamed Buckets (ADR 0018).
+- **A Mirror's page** shows its Catalog directly, with *Settings* (a dialog holding the policy,
+  the Source URL, the overrides and the Danger zone), *Refresh now* and *Pause* at the top right.
+- **A bucket's page** (`/buckets/{id}`, reached from a bucket card or from a Local feed's row)
+  lists every object the Feed keeps (media, artwork, chapters, transcripts, attachments, the
+  descriptor, the Source copy) with a download link each, plus the published feed itself
+  (`GET /api/feeds/{id}/objects`, the `list_feed_objects` tool;
+  `GET /api/feeds/{id}/objects/{path}` downloads one object). A Bucket Feed's page also takes
+  URLs and uploads, and its *Settings* dialog holds the name, autoprune, *Prune now…* and the
+  Danger zone.
 - **Uploading files into a Bucket**: *Upload files…* on a Bucket's page takes mp3, m4a and m4b
   files, sends them one by one in natural file-name order (Part 2 before Part 10) with a
   progress bar each, then adds them as archived Episodes dated by arrival, one second apart
@@ -373,7 +386,7 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   three steps; `create_serial_bucket` stays the way to publish a work in an order they choose.
 - **Adding a Source** happens in a dialog from the Feeds page bar (a URL, an Apple Podcasts or
   Spotify link, or a name to search) or the command palette; the Mirror takes the operator's
-  default policy, changed afterwards in its Settings tab.
+  default policy, changed afterwards in its Settings dialog.
 
 ## Show notes, OPML and the player
 
@@ -409,7 +422,7 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
 
 ## Titles, artwork and crawlers
 
-- A Mirror's Settings tab has a *Title* field: a title of your own is shown in the UI, the
+- A Mirror's Settings dialog has a *Title* field: a title of your own is shown in the UI, the
   Mirror Feed and MCP and survives Refreshes (`title_override`; the Source's title stays in
   `source_title`); *Use Source title* clears it.
 - Artwork assets (`/feeds/{id}/assets/*.artwork.*`) and the Copycast logo
@@ -418,9 +431,9 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   stay unguessable. Media, feeds, chapters and transcripts keep the feed's pair.
 - `/robots.txt` disallows everything and every response carries
   `X-Robots-Tag: noindex, nofollow, noarchive`; the UI shell adds the equivalent meta tag.
-- The About page's trash button next to the totals deletes every archived Episode of every
-  feed after a dry run (`POST /api/admin/purge`, `dry_run` true by default); feeds, Catalogs,
-  artwork and credentials stay, and the Episodes leave Tombstones.
+- `POST /api/admin/purge` (`dry_run` true by default) deletes every archived Episode of every
+  feed; feeds, Catalogs, artwork and credentials stay, and the Episodes leave Tombstones. It has
+  no button in the UI any more (the About page shows versions and totals only).
 
 ## Settings page: Authentications, Mirrors and Buckets
 
@@ -441,10 +454,10 @@ operator changes from the UI:
 |---|---|---|
 | Metadata language (`fr`, `pt-BR`) | yt-dlp asks YouTube for that language instead of English, so a French channel's titles and descriptions stay French | the Mirror's *Metadata language* field (`preferred_language`; `language` stays what the Source reports) |
 | Minimum length (minutes) | items shorter than that are listed but never archived by Backfill or Follow; unknown lengths pass; explicit selections still work (keeps Shorts out) | the Mirror's *Minimum length* field (`min_duration_seconds`) |
-| Policy | the policy a new Mirror starts from: Ephemeral (with its retention) or Archive (with or without Backfill) | the Mirror's Settings tab, or `backfill` in `create_mirror` |
+| Policy | the policy a new Mirror starts from: Ephemeral (with its retention) or Archive (with or without Backfill) | the Mirror's Settings dialog, or `backfill` in `create_mirror` |
 | Refresh every (hours) | how often the scheduler Refreshes a Mirror (24 by default; replaces the `refresh.interval_hours` config key) | the Mirror's *Refresh every* field (`refresh_interval_hours`) |
 
-A Mirror's Settings tab shows "Using the default" when a field is empty, marks a value that
+A Mirror's Settings dialog shows "Using the default" when a field is empty, marks a value that
 diverges from the default, and offers *Use default*, which clears the override (sent as
 `null`). Changing a default applies from each Mirror's next Refresh. Both capabilities have
 routes but no MCP tools.
@@ -570,8 +583,8 @@ pushes the lock change to `main`; `image.yml` then builds and publishes:
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
-| `2.0.3` | yes, on every engine bump | "the current 2.0.3" |
-| `2.0.3-yt2026.10.26.220202.dev0` | never (until pruned) | exactly this app + engine combination |
+| `2.1.0` | yes, on every engine bump | "the current 2.1.0" |
+| `2.1.0-yt2026.10.26.220202.dev0` | never (until pruned) | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
 Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. After each build the
@@ -580,7 +593,7 @@ are deleted, so roll back within that window or pull and keep the image yourself
 runs with `GITHUB_TOKEN`, which needs the package to grant the repository the Admin role
 (Package settings → Manage Actions access). To roll back an engine that broke a site, pin
 the previous immutable tag in `.env`
-(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:2.0.3-yt<previous>`) or in the kustomize overlay
+(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:2.1.0-yt<previous>`) or in the kustomize overlay
 (`images[].newTag`), and `docker compose up -d` / `kubectl apply -k`. The About page and
 `copycast --version` show which engine is running; `jobs.engine_version` records which engine
 archived each item.

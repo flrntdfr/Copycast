@@ -13,7 +13,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { RangeArchiveInput } from "./RangeInput";
 import { COLUMN_LABELS, TOGGLEABLE_COLUMNS } from "./columns";
 import { CATALOG_FACETS, type CatalogFacet } from "./search";
 import type { CatalogCounts } from "@/api/types";
@@ -31,7 +30,6 @@ export interface CatalogToolbarProps {
   onFacetChange: (facet: CatalogFacet | undefined) => void;
   columnVisibility: Record<string, boolean>;
   onColumnVisibilityChange: (id: string, visible: boolean) => void;
-  onQueued: () => void;
 }
 
 function facetCount(counts: CatalogCounts | null | undefined, facet: CatalogFacet): number | null {
@@ -161,7 +159,6 @@ export function CatalogToolbar(props: CatalogToolbarProps) {
           </DropdownMenu>
         </div>
       </div>
-      <RangeArchiveInput feedId={props.feedId} onQueued={props.onQueued} />
     </div>
   );
 }

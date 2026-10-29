@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { copyWithToast } from "@/lib/copy";
-import type { MirrorRead } from "@/api/types";
+import type { BucketRead, MirrorRead } from "@/api/types";
 
 function IconAction({
   label,
@@ -109,7 +109,7 @@ export function MirrorRowActions({
             <Link
               to="/mirrors/$mirrorId"
               params={{ mirrorId: mirror.id }}
-              search={{ tab: "settings" }}
+              search={{ settings: true }}
             >
               <Link2 /> Change Source URL…
             </Link>
@@ -122,6 +122,46 @@ export function MirrorRowActions({
       </DropdownMenu>
       <DeleteFeedDialog
         feed={mirror}
+        open={deleting}
+        onOpenChange={setDeleting}
+        navigateAway={false}
+      />
+    </div>
+  );
+}
+
+/**
+ * The overflow menu of a Bucket Feed's row: open its bucket page, delete it. The default Bucket
+ * can never be deleted, so its menu only opens.
+ */
+export function BucketRowActions({ bucket }: { bucket: BucketRead }) {
+  const [deleting, setDeleting] = useState(false);
+  return (
+    <div className="flex items-center justify-end gap-0.5">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon-sm" aria-label={`More actions for ${bucket.name}`}>
+            <MoreHorizontal />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem asChild>
+            <Link to="/buckets/$bucketId" params={{ bucketId: bucket.id }}>
+              Open
+            </Link>
+          </DropdownMenuItem>
+          {bucket.is_default ? null : (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={() => setDeleting(true)}>
+                <Trash2 /> Delete…
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <DeleteFeedDialog
+        feed={bucket}
         open={deleting}
         onOpenChange={setDeleting}
         navigateAway={false}

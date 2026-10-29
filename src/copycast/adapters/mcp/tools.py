@@ -30,6 +30,7 @@ from copycast.application.models import (
     ClearFeedRequest,
     ClearFeedResult,
     FeedList,
+    FeedObjectList,
     FeedRead,
     ItemPage,
     ItemRead,
@@ -170,6 +171,11 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
     async def get_feed(feed_id: str) -> FeedRead:
         """One Feed by id (ids are opaque; quote ``feed_url`` to the user)."""
         return await container.services.get_feed(feed_id)
+
+    async def list_feed_objects(feed_id: str) -> FeedObjectList:
+        """Every object a Feed keeps in the Object store (media, assets, descriptor, Source
+        copies, sidecars) with its kind, size and download URL; media name their Episode."""
+        return await container.services.list_feed_objects(feed_id)
 
     async def delete_feed(feed_id: str, confirm: bool = False) -> dict[str, Any]:
         """Delete a Feed and its archived media, which may be the only copy.
@@ -387,6 +393,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         (create_mirror, "create_mirror", "create_mirror", False),
         (list_feeds, "list_feeds", "list_feeds", True),
         (get_feed, "get_feed", "get_feed", True),
+        (list_feed_objects, "list_feed_objects", "list_feed_objects", True),
         (delete_feed, "delete_feed", "delete_feed", False),
         (clear_feed, "clear_feed", "clear_feed", False),
         (list_items, "list_items", "list_items", True),

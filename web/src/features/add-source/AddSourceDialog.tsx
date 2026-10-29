@@ -91,7 +91,7 @@ function AddSourceFlow({ url, query, sync }: { url: string; query: string; sync:
       const timer = setTimeout(() => controller.abort(), CREATE_TIMEOUT_MS);
       setCreating(true);
       try {
-        // No policy here: the operator's default applies; the Mirror's Settings tab changes it.
+        // No policy here: the operator's default applies; the Mirror's Settings dialog changes it.
         const body: MirrorCreate = {
           source_url: candidate.source_url,
           candidate_token: candidate.candidate_token,

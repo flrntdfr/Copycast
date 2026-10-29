@@ -29,6 +29,7 @@ from copycast.application.models import (
     EngineCookiesRead,
     EngineCookiesWrite,
     FeedList,
+    FeedObjectList,
     FeedRead,
     ItemPage,
     ItemRead,
@@ -74,6 +75,7 @@ from copycast.application.services import policy as _policy
 from copycast.application.services import purge as _purge
 from copycast.application.services import sources as _sources
 from copycast.application.services import status as _status
+from copycast.application.services import storage as _storage
 from copycast.application.services import uploads as _uploads
 from copycast.application.services.context import (
     FeedSort,
@@ -128,6 +130,10 @@ class Services:
 
     async def resolve_bucket(self, ident: str) -> BucketRead:
         return await _feeds.resolve_bucket(self.ctx, ident)
+
+    # storage
+    async def list_feed_objects(self, feed_id: str) -> FeedObjectList:
+        return await _storage.list_feed_objects(self.ctx, feed_id)
 
     # items
     async def list_items(

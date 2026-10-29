@@ -43,27 +43,7 @@ function handlers(calls: { method: string; path: string; body?: unknown }[] = []
         offset: 0,
       }),
     ),
-    http.get("/api/jobs", ({ request }) => {
-      const url = new URL(request.url);
-      if (url.searchParams.get("kind") === "refresh") {
-        return HttpResponse.json({
-          jobs: [
-            job({
-              status: "succeeded",
-              trigger: "scheduled",
-              started_at: "2024-01-15T09:00:00Z",
-              finished_at: "2024-01-15T09:00:42Z",
-              result: { listed: 120, new: 3, delisted: 0, wanted: 3 },
-            }),
-            job({ status: "failed", trigger: "manual", error: "HTTP 503 from the Source" }),
-          ],
-          total: 2,
-          limit: 50,
-          offset: 0,
-        });
-      }
-      return HttpResponse.json({ jobs: [], total: 0, limit: 100, offset: 0 });
-    }),
+    http.get("/api/jobs", () => HttpResponse.json({ jobs: [], total: 0, limit: 100, offset: 0 })),
     http.post("/api/mirrors/:feedId/refresh", async ({ request }) => {
       await record(request);
       return HttpResponse.json(job({ status: "queued" }), { status: 202 });
@@ -115,8 +95,16 @@ function handlers(calls: { method: string; path: string; body?: unknown }[] = []
   ];
 }
 
+/** Click the header's Settings button and return the form inside the dialog. */
+async function openSettings(user: ReturnType<typeof userEvent.setup>) {
+  await screen.findByRole("heading", { name: "Example Podcast" });
+  await user.click(screen.getByRole("button", { name: "Settings" }));
+  const dialog = await screen.findByRole("dialog", { name: "Mirror settings" });
+  return within(dialog).getByRole("form", { name: "Mirror settings" });
+}
+
 describe("Mirror page", () => {
-  it("shows the header with health, counts, feed URL and the Catalog tab", async () => {
+  it("shows the header with health, counts, feed URL and the Catalog directly", async () => {
     const calls: { method: string; path: string }[] = [];
     server.use(...handlers(calls));
     const user = userEvent.setup();
@@ -129,6 +117,15 @@ describe("Mirror page", () => {
     expect(screen.getByText(/3 Episodes · 2 Available · 1 Delisted · 12.3 MB/)).toBeInTheDocument();
     expect(screen.getByLabelText("Mirror Feed URL")).toHaveValue(feed.feed_url);
     expect(await screen.findByText("First")).toBeInTheDocument();
+
+    // No tabs, no credentials, no range archive: the Catalog is the page.
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Username and password/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Archive by episode numbers" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Filter by title" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Refresh now" }));
     await waitFor(() =>
@@ -224,25 +221,51 @@ describe("Mirror page", () => {
     expect(dialog).toHaveTextContent(feed.feed_url);
   });
 
-  it("lists Refreshes with trigger, duration, counts and errors", async () => {
+  it("opens the Settings dialog from the header button and from the menu", async () => {
     server.use(...handlers());
-    renderApp("/mirrors/mirror-1?tab=refreshes");
-    const rows = await screen.findAllByTestId("refresh-row");
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent("Scheduled");
-    expect(rows[0]).toHaveTextContent("0:42");
-    expect(rows[0]).toHaveTextContent("120 listed · 3 new · 3 queued");
-    expect(rows[1]).toHaveTextContent("Failed");
-    expect(rows[1]).toHaveTextContent("HTTP 503 from the Source");
+    const user = userEvent.setup();
+    renderApp("/mirrors/mirror-1");
+    await screen.findByRole("heading", { name: "Example Podcast" });
+    expect(screen.queryByRole("dialog", { name: "Mirror settings" })).not.toBeInTheDocument();
+
+    // The actions row reads Settings, Refresh now, Pause, left to right.
+    const buttons = screen.getAllByRole("button").map((button) => button.textContent?.trim());
+    const settingsAt = buttons.indexOf("Settings");
+    expect(settingsAt).toBeGreaterThan(-1);
+    expect(buttons[settingsAt + 1]).toBe("Refresh now");
+    expect(buttons[settingsAt + 2]).toBe("Pause");
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mirror settings" });
+    expect(dialog).toHaveTextContent("Example Podcast");
+    expect(within(dialog).getByRole("form", { name: "Mirror settings" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Mirror settings" })).not.toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Change Source URL…" }));
+    const reopened = await screen.findByRole("dialog", { name: "Mirror settings" });
+    expect(within(reopened).getByLabelText("Source URL")).toHaveValue(feed.source_url);
+  });
+
+  it("opens the Settings dialog once from ?settings=true and cleans the URL", async () => {
+    server.use(...handlers());
+    const { history } = renderApp("/mirrors/mirror-1?settings=true");
+    const dialog = await screen.findByRole("dialog", { name: "Mirror settings" });
+    expect(within(dialog).getByRole("form", { name: "Mirror settings" })).toBeInTheDocument();
+    await waitFor(() => expect(history.location.search).toBe(""));
+    expect(history.location.pathname).toBe("/mirrors/mirror-1");
   });
 
   it("saves only the changed settings and shows rejected engine options per key", async () => {
     const calls: { method: string; path: string; body?: unknown }[] = [];
     server.use(...handlers(calls));
     const user = userEvent.setup();
-    renderApp("/mirrors/mirror-1?tab=settings");
+    renderApp("/mirrors/mirror-1");
 
-    const form = await screen.findByRole("form", { name: "Mirror settings" });
+    const form = await openSettings(user);
     expect(within(form).getByLabelText("Source URL")).toHaveValue(feed.source_url);
     expect(within(form).getByText(/None\. Copycast never deletes/)).toBeInTheDocument();
 
@@ -294,8 +317,8 @@ describe("Mirror page", () => {
     const calls: { method: string; path: string; body?: unknown }[] = [];
     server.use(...handlers(calls));
     const user = userEvent.setup();
-    renderApp("/mirrors/mirror-1?tab=settings");
-    const form = await screen.findByRole("form", { name: "Mirror settings" });
+    renderApp("/mirrors/mirror-1");
+    const form = await openSettings(user);
     expect(within(form).getByRole("tab", { name: "Archive" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -347,8 +370,8 @@ describe("Mirror page", () => {
       ...handlers(calls),
     );
     const user = userEvent.setup();
-    renderApp("/mirrors/mirror-1?tab=settings");
-    const form = await screen.findByRole("form", { name: "Mirror settings" });
+    renderApp("/mirrors/mirror-1");
+    const form = await openSettings(user);
     expect(within(form).getByRole("tab", { name: "Rolling N" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -384,7 +407,8 @@ describe("Mirror page", () => {
     const calls: { method: string; path: string }[] = [];
     server.use(...handlers(calls));
     const user = userEvent.setup();
-    const { history } = renderApp("/mirrors/mirror-1?tab=settings");
+    const { history } = renderApp("/mirrors/mirror-1");
+    await openSettings(user);
     await user.click(await screen.findByRole("button", { name: "Delete Mirror…" }));
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent("only copy");
@@ -397,38 +421,5 @@ describe("Mirror page", () => {
       }),
     );
     await waitFor(() => expect(history.location.pathname).toBe("/"));
-  });
-});
-
-describe("Mirrors list", () => {
-  it("renders a row with health, service, counts and copies the feed URL", async () => {
-    server.use(...handlers());
-    // user-event installs a clipboard stub for the test; read it back after the click.
-    const user = userEvent.setup();
-    renderApp("/");
-    const row = await screen.findByTestId("mirror-row");
-    expect(within(row).getByRole("link", { name: "Example Podcast" })).toHaveAttribute(
-      "href",
-      "/mirrors/mirror-1",
-    );
-    expect(within(row).getAllByText("Podcast RSS")[0]).toBeInTheDocument();
-    await user.click(within(row).getAllByRole("button", { name: "Copy feed URL" })[0]!);
-    expect(await screen.findByText("Feed URL copied")).toBeInTheDocument();
-    await expect(navigator.clipboard.readText()).resolves.toBe(feed.feed_url);
-  });
-
-  it("hands a pasted URL to the Add Source dialog", async () => {
-    server.use(
-      http.post("/api/probe", () => HttpResponse.json({ input_url: "x", candidates: [] })),
-      ...handlers(),
-    );
-    const user = userEvent.setup();
-    const { history } = renderApp("/");
-    await user.type(
-      await screen.findByLabelText("Source URL"),
-      "https://podcast.example/feed.xml{Enter}",
-    );
-    expect(await screen.findByRole("dialog", { name: "Choose a Source" })).toBeInTheDocument();
-    expect(history.location.pathname).toBe("/");
   });
 });

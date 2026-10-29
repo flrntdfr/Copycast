@@ -1,4 +1,3 @@
-import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
   Check,
@@ -12,6 +11,7 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
+  Settings2,
   Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -20,7 +20,6 @@ import { toast } from "sonner";
 import { $api } from "@/api/client";
 import type { MirrorRead } from "@/api/types";
 import { Artwork } from "@/components/common/Artwork";
-import { FeedCredentials } from "@/components/common/FeedCredentials";
 import { FeedUrlField } from "@/components/common/FeedUrlField";
 import { HealthDot } from "@/components/common/HealthDot";
 import { RelativeTime } from "@/components/common/RelativeTime";
@@ -45,6 +44,7 @@ import {
   useSetPaused,
 } from "@/features/feeds/mutations";
 import { ArchiveAvailableDialog } from "./ArchiveAvailableDialog";
+import { MirrorSettingsDialog } from "./MirrorSettingsDialog";
 import { formatBytes, formatNumber } from "@/lib/format";
 import { count } from "@/lib/labels";
 
@@ -149,11 +149,24 @@ function EditableTitle({ mirror }: { mirror: MirrorRead }) {
   );
 }
 
-/** Artwork, title, Service, Source link, health, the last Light Refresh, counts and the feed URL; Refresh / Pause / menu. */
-export function MirrorHeader({ mirror, refreshing }: { mirror: MirrorRead; refreshing: boolean }) {
+/**
+ * Artwork, title, Service, Source link, health, the last Light Refresh, counts and the feed URL;
+ * Settings / Refresh / Pause / menu. The header owns the Settings dialog.
+ */
+export function MirrorHeader({
+  mirror,
+  refreshing,
+  initialSettingsOpen = false,
+}: {
+  mirror: MirrorRead;
+  refreshing: boolean;
+  /** Open the Settings dialog on mount (the route's `?settings=true`). */
+  initialSettingsOpen?: boolean;
+}) {
   const refresh = useRequestRefresh();
   const { setPaused, isPending: pausing } = useSetPaused();
   const [deleting, setDeleting] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
   const [archivingAll, setArchivingAll] = useState(false);
   const retry = useRetryFailed();
   const counts = mirror.counts;
@@ -204,6 +217,9 @@ export function MirrorHeader({ mirror, refreshing }: { mirror: MirrorRead; refre
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>
+            <Settings2 /> Settings
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -242,14 +258,8 @@ export function MirrorHeader({ mirror, refreshing }: { mirror: MirrorRead; refre
                   <RotateCcw /> Retry {formatNumber(counts.failed)} failed
                 </DropdownMenuItem>
               ) : null}
-              <DropdownMenuItem asChild>
-                <Link
-                  to="/mirrors/$mirrorId"
-                  params={{ mirrorId: mirror.id }}
-                  search={{ tab: "settings" }}
-                >
-                  <Link2 /> Change Source URL…
-                </Link>
+              <DropdownMenuItem onSelect={() => setSettingsOpen(true)}>
+                <Link2 /> Change Source URL…
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onSelect={() => setDeleting(true)}>
@@ -269,7 +279,7 @@ export function MirrorHeader({ mirror, refreshing }: { mirror: MirrorRead; refre
         </Alert>
       ) : null}
       <FeedUrlField url={mirror.feed_url} label="Mirror Feed URL" className="max-w-2xl" />
-      <FeedCredentials feed={mirror} className="max-w-2xl" />
+      <MirrorSettingsDialog mirror={mirror} open={settingsOpen} onOpenChange={setSettingsOpen} />
       <DeleteFeedDialog feed={mirror} open={deleting} onOpenChange={setDeleting} />
       <ArchiveAvailableDialog mirror={mirror} open={archivingAll} onOpenChange={setArchivingAll} />
     </header>
