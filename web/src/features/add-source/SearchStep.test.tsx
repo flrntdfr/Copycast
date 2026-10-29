@@ -10,7 +10,7 @@ import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
 describe("Search step", () => {
-  it("lists YouTube hits next to podcasts and sends one to the Bucket", async () => {
+  it("lists YouTube hits next to podcasts and sends one to the Local feed", async () => {
     const sent: RequestCreate[] = [];
     const copycast = bucket({ id: "bucket-1", name: "Copycast", title: "Copycast" });
     server.use(
@@ -50,8 +50,8 @@ describe("Search step", () => {
     expect(row).toHaveTextContent("1:30:00");
     expect(screen.getByText("No podcasts found")).toBeInTheDocument();
 
-    await user.click(within(row).getByRole("button", { name: "Send to Bucket" }));
+    await user.click(within(row).getByRole("button", { name: "Send to Local feed" }));
     await waitFor(() => expect(sent).toEqual([{ url: "https://www.youtube.com/watch?v=abc123" }]));
-    await waitFor(() => expect(history.location.pathname).toBe("/buckets/bucket-1"));
+    await waitFor(() => expect(history.location.pathname).toBe("/feed/bucket-1"));
   });
 });

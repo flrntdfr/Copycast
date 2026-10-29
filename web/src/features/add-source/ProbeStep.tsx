@@ -44,7 +44,7 @@ export function ProbeStep({
           <Button onClick={onRetry}>Try again</Button>
           {onSendToBucket ? (
             <Button variant="outline" onClick={onSendToBucket} disabled={sendingToBucket}>
-              <PaintBucket /> Send to Bucket instead
+              <PaintBucket /> Send to Local feed instead
             </Button>
           ) : null}
           <Button variant="ghost" onClick={onCancel}>

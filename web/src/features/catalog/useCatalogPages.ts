@@ -10,7 +10,7 @@ import { CATALOG_PAGE_SIZE, type CatalogFilters, pageQuery } from "./search";
 export const LOAD_AHEAD_ROWS = 30;
 
 export interface CatalogPages {
-  /** Every loaded row in listing order, each once; tombstones only when asked for. */
+  /** Every loaded row in listing order, each once; tombstones no longer listed are left out. */
   rows: ItemRead[];
   /** The page each row came from. */
   pageOf: number[];
@@ -65,11 +65,7 @@ interface View {
  * keep their rows and refetch, if stale, when they come back. A new filter or sort starts
  * over from the first page, which shows the previous listing until it arrives.
  */
-export function useCatalogPages(
-  feedId: string,
-  filters: CatalogFilters,
-  { showHidden = false }: { showHidden?: boolean } = {},
-): CatalogPages {
+export function useCatalogPages(feedId: string, filters: CatalogFilters): CatalogPages {
   const queryClient = useQueryClient();
   const key = JSON.stringify([feedId, filters]);
   const [view, setView] = useState<View>({ key, count: 1, first: 0, last: 0 });
@@ -111,13 +107,13 @@ export function useCatalogPages(
         // A refetched page can repeat a neighbour's item until that page refetches too.
         if (seen.has(item.id)) continue;
         seen.add(item.id);
-        if (!showHidden && catalogStateOf(item) === "hidden") continue;
+        if (catalogStateOf(item) === "hidden") continue;
         rows.push(item);
         pageOf.push(page);
       }
     }
     return { rows, pageOf, loaded: seen.size };
-  }, [head.data, tail, showHidden]);
+  }, [head.data, tail]);
 
   const pages: PageResult[] = [head, ...tail];
   const last = pages[pages.length - 1] ?? head;

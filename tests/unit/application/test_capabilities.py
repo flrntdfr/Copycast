@@ -16,6 +16,7 @@ PLAN_TOOLS = {
     "list_feeds",
     "get_feed",
     "list_feed_objects",
+    "storage_summary",
     "list_items",
     "get_item",
     "select_items",

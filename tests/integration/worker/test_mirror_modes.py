@@ -1,5 +1,6 @@
 """Mirror modes: a Rolling window, switching into one, Ephemeral (on demand, expiring),
-Archive without backfill, and the Archive flag that every deleting mode spares."""
+Archive without backfill, and the Lock (``archive_flag``) that every deleting mode spares and
+the Archive policy sets."""
 
 from __future__ import annotations
 
@@ -8,9 +9,15 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from copycast.app import Container
-from copycast.application.models import ArchiveFlagUpdate, ClearFeedRequest, MirrorUpdate
+from copycast.application.models import (
+    ArchiveFlagUpdate,
+    ClearFeedRequest,
+    MirrorUpdate,
+    PurgeRequest,
+)
 from copycast.application.services import policy
 from copycast.domain.enums import ArchiveState, BackfillMode, WantedReason
+from copycast.domain.exceptions import Conflict
 from copycast.worker.runner import Runner
 from tests.integration.worker.conftest import Source, create_mirror, uow
 
@@ -62,7 +69,10 @@ async def test_switching_to_rolling_previews_and_prunes_at_once(
     container: Container, source: Source, runner: Runner
 ) -> None:
     url = source.write_rss("switch", items=[3, 2, 1], artwork=False)
-    mirror = await create_mirror(container, url)
+    # Ephemeral, everything archived by hand: nothing is locked (the Archive policy would).
+    mirror = await create_mirror(container, url, mode=BackfillMode.automatic)
+    await runner.run_until_idle()
+    await container.services.archive_available(mirror.id)
     await runner.run_until_idle()
     assert set((await _states(container, mirror.id)).values()) == {ArchiveState.archived}
 
@@ -223,12 +233,69 @@ async def test_the_archive_flag_survives_retention_rolling_and_clearing(
         3: ArchiveState.deleted,
     }
 
-    # On an Archive Mirror every Episode is kept: clearing deletes nothing.
+    # On an Archive Mirror only the Lock protects: unlocked by hand, clearing deletes it.
     await container.services.update_mirror(
         mirror.id, MirrorUpdate(backfill={"mode": BackfillMode.new})
     )
     await container.services.set_archive_flag(
         mirror.id, rows[1].id, ArchiveFlagUpdate(archive_flag=False)
     )
-    kept = await container.services.clear_feed(mirror.id, ClearFeedRequest(dry_run=False))
-    assert (kept.deleted_count, kept.kept_count) == (0, 1)
+    cleared = await container.services.clear_feed(mirror.id, ClearFeedRequest(dry_run=False))
+    assert (cleared.deleted_count, cleared.kept_count) == (1, 0)
+    assert (await _states(container, mirror.id))[1] == ArchiveState.deleted
+
+
+async def test_the_archive_policy_locks_what_it_archives(
+    container: Container, source: Source, runner: Runner
+) -> None:
+    """Archived under the Archive policy: locked (feed.json too), spared by Sync, by a purge
+    and by delete_item; an Ephemeral Mirror locks nothing. (A Mirror created with Sync is
+    never locked automatically; Sync is switched on here after the archives are locked.)"""
+    url = source.write_rss("auto-lock", items=[2, 1], artwork=False)
+    mirror = await create_mirror(container, url, mode=BackfillMode.all)
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        rows = {i.source_number: i for i in await unit.catalog.for_feed(mirror.id)}
+    assert {n: (r.archive_state, r.archive_flag) for n, r in rows.items()} == {
+        1: (ArchiveState.archived, True),
+        2: (ArchiveState.archived, True),
+    }
+    await container.uow_factory.flush_exports()
+    descriptor = container.layout.read_json(container.layout.descriptor_key(mirror.id))
+    assert descriptor is not None
+    assert {item["archive_flag"] for item in descriptor["items"]} == {True}
+
+    # Sync spares a locked Episode the Source dropped: it is only Delisted.
+    await container.services.update_mirror(mirror.id, MirrorUpdate(sync_deletions=True))
+    source.write_rss("auto-lock", items=[2], artwork=False)
+    assert await container.services.request_refresh(mirror.id) is not None
+    await runner.run_until_idle()
+    assert await _states(container, mirror.id) == {
+        1: ArchiveState.archived,
+        2: ArchiveState.archived,
+    }
+
+    # The operator's purge spares the locked; delete_item refuses them.
+    preview = await container.services.purge_episodes(PurgeRequest(dry_run=True))
+    assert preview.matched == 0
+    purged = await container.services.purge_episodes(PurgeRequest(dry_run=False))
+    assert purged.deleted_count == 0
+    with pytest.raises(Conflict, match="locked"):
+        await container.services.delete_item(mirror.id, rows[1].id)
+    await container.services.set_archive_flag(
+        mirror.id, rows[1].id, ArchiveFlagUpdate(archive_flag=False)
+    )
+    purged = await container.services.purge_episodes(PurgeRequest(dry_run=False))
+    assert purged.deleted_count == 1
+    assert (await _states(container, mirror.id))[1] == ArchiveState.deleted
+
+    url = source.write_rss("no-lock", items=[1], artwork=False)
+    ephemeral = await create_mirror(container, url, mode=BackfillMode.automatic)
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        (item,) = await unit.catalog.for_feed(ephemeral.id)
+    await container.services.archive_item(ephemeral.id, item.id)
+    await runner.run_until_idle()
+    async with uow(container) as unit:
+        item = await unit.catalog.require(item.id)
+    assert (item.archive_state, item.archive_flag) == (ArchiveState.archived, False)

@@ -141,6 +141,10 @@ class Layout:
 
     # ------------------------------------------------------------------ per-feed keys
 
+    def feeds_prefix(self) -> str:
+        """``feeds/``, the prefix under which every Feed keeps its objects."""
+        return f"{FEEDS_DIR}/"
+
     def feed_prefix(self, feed_id: str) -> str:
         """``feeds/{feed_id}/`` (with the slash), the prefix of everything a Feed keeps."""
         if not FEED_ID_RE.match(feed_id):

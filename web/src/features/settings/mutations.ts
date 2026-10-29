@@ -1,12 +1,9 @@
-/** Mutations of the Settings page: cookie files, the Mirror defaults, clearing a bucket. */
+/** Mutations of the Settings page: cookie files and the Mirror defaults. */
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { $api } from "@/api/client";
 import { OPS } from "@/api/ops";
-import { useInvalidateFeed } from "@/features/feeds/mutations";
-import { count } from "@/lib/labels";
-import { formatMegabytes } from "@/lib/format";
 
 export function useInvalidateCookies() {
   const queryClient = useQueryClient();
@@ -56,20 +53,6 @@ export function useSetDefaults() {
         [OPS.get_mirror_defaults[0], OPS.get_mirror_defaults[1], {}],
         stored,
       );
-    },
-  });
-}
-
-/** Deletes what a Feed does not keep for good; the dry run counts it first. */
-export function useClearFeed() {
-  const invalidate = useInvalidateFeed();
-  return $api.useMutation("post", "/api/feeds/{feed_id}/clear", {
-    onSuccess: (result, { params, body }) => {
-      if (body.dry_run) return;
-      invalidate(params.path.feed_id);
-      toast.success(`${count(result.deleted_count, "Episode")} deleted`, {
-        description: `${formatMegabytes(result.bytes_freed)} freed; ${count(result.kept_count ?? 0, "Episode")} flagged Archive kept.`,
-      });
     },
   });
 }

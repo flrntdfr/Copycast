@@ -54,6 +54,7 @@ from copycast.application.models import (
     SelectionResult,
     SerialBucketCreate,
     StatusRead,
+    StorageSummary,
     UploadCreate,
     UploadRead,
     UploadsAdd,
@@ -134,6 +135,9 @@ class Services:
     # storage
     async def list_feed_objects(self, feed_id: str) -> FeedObjectList:
         return await _storage.list_feed_objects(self.ctx, feed_id)
+
+    async def storage_summary(self) -> StorageSummary:
+        return await _storage.storage_summary(self.ctx)
 
     # items
     async def list_items(

@@ -40,7 +40,7 @@ DEFAULT_PURGE = PurgeRequest()
     operation_id="purge_episodes",
     openapi_extra={"x-capability": "purge_episodes"},
     response_model=PruneResult,
-    summary="Delete every archived Episode everywhere; feeds stay; dry run by default",
+    summary="Delete every archived Episode not locked, everywhere; feeds stay; dry run by default",
 )
 async def purge_episodes(
     services: ServicesDep, body: Annotated[PurgeRequest, Body()] = DEFAULT_PURGE

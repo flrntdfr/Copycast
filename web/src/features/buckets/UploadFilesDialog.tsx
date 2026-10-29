@@ -67,7 +67,7 @@ function errorText(error: unknown): string {
 
 /**
  * "Upload files…": pick audio files, upload them one by one in natural file-name order and
- * add them to the Bucket as Episodes, dated by arrival (`create_upload`, `add_uploads`).
+ * add them to the Local feed as Episodes, dated by arrival (`create_upload`, `add_uploads`).
  */
 export function UploadFilesButton({ bucket }: { bucket: BucketRead }) {
   const input = useRef<HTMLInputElement>(null);

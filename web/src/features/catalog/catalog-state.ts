@@ -1,7 +1,8 @@
 import type { ItemRead } from "@/api/types";
 import type { CatalogItemState } from "./search";
 
-/** The one state a Catalog row shows (AGENTS.md "Catalog"); `hidden` rows appear only under a facet. */
+/** The one state a Catalog row shows (AGENTS.md "Catalog"); `hidden` rows (deleted and no longer
+ * listed) are never shown: `useCatalogPages` drops them. */
 export function catalogStateOf(item: Pick<ItemRead, "state" | "listed">): CatalogItemState {
   switch (item.state) {
     case "archived":
@@ -26,8 +27,9 @@ export function canArchive(item: Pick<ItemRead, "state">): boolean {
   return item.state === "available" || item.state === "deleted" || item.state === "failed";
 }
 
-export function canDelete(item: Pick<ItemRead, "state">): boolean {
-  return item.state === "archived";
+/** An archived Episode that is not locked: a locked one is never deleted, by hand either. */
+export function canDelete(item: Pick<ItemRead, "state" | "archive_flag">): boolean {
+  return item.state === "archived" && !item.archive_flag;
 }
 
 /** The number shown in the `#` column: Source numbering wins, else the Ordinal. */

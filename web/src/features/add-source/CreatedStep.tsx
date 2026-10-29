@@ -19,8 +19,8 @@ export function CreatedStep({ mirror, onOpen }: { mirror: MirrorRead; onOpen?: (
       <FeedUrlField url={mirror.feed_url} label="Mirror Feed URL" />
       <div className="flex gap-2">
         <Button asChild>
-          <Link to="/mirrors/$mirrorId" params={{ mirrorId: mirror.id }} onClick={onOpen}>
-            Open Mirror
+          <Link to="/feed/$feedId" params={{ feedId: mirror.id }} onClick={onOpen}>
+            Open feed
           </Link>
         </Button>
         <Button variant="outline" onClick={() => openAddSource({})}>

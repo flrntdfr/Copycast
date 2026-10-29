@@ -154,6 +154,8 @@ async def test_deleted_item_media_is_gone(
 ) -> None:
     mirror, item = await one_archived(client, source, runner, name="deleted")
     assert (await client.get(media_path(item))).status_code == 200
+    unlock = api(f"/feeds/{mirror['id']}/items/{item['id']}/archive-flag")
+    assert (await client.put(unlock, json={"archive_flag": False})).status_code == 200
     deleted = await client.delete(api(f"/feeds/{mirror['id']}/items/{item['id']}"))
     assert deleted.status_code == 204
     assert (await client.get(media_path(item))).status_code == 404

@@ -31,7 +31,12 @@ from copycast.application.services.items import (
     enqueue_archive,
     refresh_dedup_key,
 )
-from copycast.application.services.policy import apply_policy, defaults_for, shortest_for
+from copycast.application.services.policy import (
+    apply_policy,
+    defaults_for,
+    locks_on_archive,
+    shortest_for,
+)
 from copycast.application.services.readmodels import job_read, mirror_read, one_feed_read
 from copycast.application.services.sources import probe_snapshots
 from copycast.domain.enums import (
@@ -373,6 +378,9 @@ async def update_mirror(
 
     Retargeting keeps the archive; a kind change is refused. ``language: null``,
     ``min_duration_seconds: null`` and ``title: null`` present in the body clear the value.
+    Switching to the Archive policy, or turning Sync off while on it, locks every Episode
+    archived so far (a Mirror with Sync is never locked automatically); switching away
+    unlocks nothing.
     """
     fields = body.model_fields_set
     defaults = defaults_for(ctx)
@@ -397,6 +405,8 @@ async def update_mirror(
             feed.min_duration_seconds = body.min_duration_seconds
         if "refresh_interval_hours" in fields:
             feed.refresh_interval_hours = body.refresh_interval_hours
+        # Whether the Archive policy locked this Mirror's archives before this update.
+        was_locking = locks_on_archive(feed)
         if "sync_deletions" in fields and body.sync_deletions is not None:
             feed.sync_deletions = body.sync_deletions
         if "backfill" in fields and body.backfill is not None:
@@ -429,6 +439,11 @@ async def update_mirror(
             else:
                 feed.policy_applied_at = None
                 refresh_needed = True
+        if locks_on_archive(feed) and not was_locking:
+            # Switching to the Archive policy (or leaving Sync on it) keeps what is archived.
+            locked = await uow.catalog.lock_archived(feed_id)
+            if locked:
+                log.info("mirror.locked_archived", feed_id=feed_id, locked=locked)
         await uow.flush()
         await uow.update_intent(feed_id)
         if refresh_needed and not feed.paused:

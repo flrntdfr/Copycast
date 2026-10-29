@@ -76,9 +76,9 @@ function AddSourceFlow({ url, query, sync }: { url: string; query: string; sync:
   }, [queryClient]);
 
   const openMirror = useCallback(
-    async (mirrorId: string) => {
+    async (feedId: string) => {
       closeAddSource();
-      await navigate({ to: "/mirrors/$mirrorId", params: { mirrorId } });
+      await navigate({ to: "/feed/$feedId", params: { feedId } });
     },
     [navigate],
   );

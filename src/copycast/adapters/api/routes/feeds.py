@@ -1,5 +1,5 @@
 """Feeds: list (plus the ``/mirrors`` and ``/buckets`` aliases), get, rotate credentials, delete,
-and the storage view: the objects a Feed keeps, each downloadable."""
+and the storage view: the objects a Feed keeps, each downloadable, and every Feed's file count."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from copycast.application.models import (
     FeedObjectList,
     FeedRead,
     SelectionResult,
+    StorageSummary,
 )
 from copycast.domain.enums import FeedKind, JobTrigger
 
@@ -70,6 +71,17 @@ async def list_buckets(
     order: Annotated[Order, Query()] = "asc",
 ) -> FeedList:
     return await services.list_feeds(FeedKind.bucket, sort=sort, order=order)
+
+
+@router.get(
+    "/storage",
+    operation_id="storage_summary",
+    openapi_extra={"x-capability": "storage_summary"},
+    response_model=StorageSummary,
+    summary="How many files every Feed keeps in its bucket, and their total size",
+)
+async def storage_summary(services: ServicesDep) -> StorageSummary:
+    return await services.storage_summary()
 
 
 OPML_MEDIA_TYPE = "text/x-opml+xml; charset=utf-8"
@@ -235,7 +247,7 @@ async def delete_feed(services: ServicesDep, feed_id: str) -> Response:
     response_model=ClearFeedResult,
     dependencies=[RebuildGuard],
     responses=problem_responses(404),
-    summary="Delete every Episode not kept for good, keeping the Feed (dry run by default)",
+    summary="Purge a Feed's bucket: delete every Episode not locked (dry run by default)",
 )
 async def clear_feed(
     services: ServicesDep, feed_id: str, body: ClearFeedRequest

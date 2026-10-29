@@ -83,7 +83,7 @@ describe("JobsPage", () => {
     expect(card).toHaveTextContent("Archive · Running");
     expect(await within(card).findByRole("link", { name: "Example Podcast" })).toHaveAttribute(
       "href",
-      "/mirrors/mirror-1",
+      "/feed/mirror-1",
     );
     expect(await within(card).findByRole("link", { name: "Episode 7" })).toBeInTheDocument();
 
@@ -110,7 +110,7 @@ describe("JobsPage", () => {
     expect(queuedRow).toHaveTextContent("retry 1: HTTP 503");
     expect(within(queuedRow).getByRole("link", { name: "Copycast" })).toHaveAttribute(
       "href",
-      "/buckets/bucket-1",
+      "/feed/bucket-1",
     );
 
     const row = await screen.findByTestId("job-row");

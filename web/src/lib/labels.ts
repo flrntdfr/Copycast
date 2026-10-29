@@ -141,7 +141,8 @@ export const keyScopeLabel = label<KeyScope>({
 /** What each API key scope lets an agent do over MCP. */
 export const keyScopeHint: Record<KeyScope, string> = {
   read: "Read-only tools: list feeds and items, search, probe, read jobs.",
-  write: "Everything except deletions: mirror, archive, push into Buckets, pause, refresh.",
+  write:
+    "Everything except deletions: mirror, archive, push into Local feeds, lock, pause, refresh.",
   full: "Everything, including delete_feed, delete_item and prune_bucket.",
 };
 

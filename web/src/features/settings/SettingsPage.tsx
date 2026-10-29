@@ -1,22 +1,21 @@
 import { PageHeader } from "@/components/common/PageHeader";
 import { AuthenticationsSection } from "./AuthenticationsSection";
-import { StorageSection } from "./StorageSection";
 import { MirrorDefaultsSection } from "./MirrorDefaultsSection";
+import { OpmlSection } from "./OpmlSection";
 
 /**
  * Operator settings that live in the data directory rather than in the environment: the
- * sites the engine signs in to, then two halves, the Mirror defaults and every Feed's bucket.
+ * sites the engine signs in to, the defaults every Mirror inherits, and the OPML export.
+ * A feed's own settings and its files live on its own pages.
  */
 export function SettingsPage() {
   return (
     <>
       <PageHeader title="Settings" />
-      <div className="space-y-10">
+      <div className="max-w-3xl space-y-10">
         <AuthenticationsSection />
-        <div className="grid gap-10 lg:grid-cols-2">
-          <MirrorDefaultsSection />
-          <StorageSection />
-        </div>
+        <MirrorDefaultsSection />
+        <OpmlSection />
       </div>
     </>
   );

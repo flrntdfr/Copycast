@@ -96,8 +96,8 @@ describe("Add Source dialog", () => {
     expect(screen.getByLabelText("Mirror Feed URL")).toHaveValue(
       "http://localhost:8080/feeds/mirror-new.xml",
     );
-    await user.click(screen.getByRole("link", { name: "Open Mirror" }));
-    await waitFor(() => expect(history.location.pathname).toBe("/mirrors/mirror-new"));
+    await user.click(screen.getByRole("link", { name: "Open feed" }));
+    await waitFor(() => expect(history.location.pathname).toBe("/feed/mirror-new"));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
@@ -122,7 +122,7 @@ describe("Add Source dialog", () => {
     expect(within(dialog).getByLabelText("Mirror Feed URL")).toHaveValue(
       "http://localhost:8080/feeds/mirror-new.xml",
     );
-    expect(within(dialog).getByRole("link", { name: "Open Mirror" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "Open feed" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Add another" })).toBeInTheDocument();
     // Only the title, the check line, the feed URL and the two buttons: no instructions,
     // no credentials, no Refresh status.
@@ -131,7 +131,7 @@ describe("Add Source dialog", () => {
     expect(within(dialog).queryByText(/Refresh/)).not.toBeInTheDocument();
   });
 
-  it("asks before mirroring a lone video, offering the Bucket instead", async () => {
+  it("asks before mirroring a lone video, offering the Local feed instead", async () => {
     server.use(
       http.post("/api/probe", () =>
         HttpResponse.json(
@@ -145,7 +145,7 @@ describe("Add Source dialog", () => {
     await submitBar(user, feedUrl);
     const dialog = await screen.findByRole("dialog", { name: "Choose a Source" });
     expect(
-      within(dialog).getByRole("button", { name: /Send to Bucket instead/ }),
+      within(dialog).getByRole("button", { name: /Send to Local feed instead/ }),
     ).toBeInTheDocument();
   });
 
@@ -183,13 +183,13 @@ describe("Add Source dialog", () => {
     const user = userEvent.setup();
     const { history } = renderApp("/");
     await submitBar(user, feedUrl);
-    await waitFor(() => expect(history.location.pathname).toBe("/mirrors/mirror-dup"));
+    await waitFor(() => expect(history.location.pathname).toBe("/feed/mirror-dup"));
 
     server.use(
       http.post("/api/probe", () =>
         HttpResponse.json(
           problem("source-unsupported", 422, {
-            detail: "Looks like a media file; send it to a Bucket.",
+            detail: "Looks like a media file; send it to a Local feed.",
           }),
           { status: 422, headers: { "Content-Type": "application/problem+json" } },
         ),
@@ -198,7 +198,7 @@ describe("Add Source dialog", () => {
     await user.click(screen.getByRole("link", { name: "Feeds" }));
     await submitBar(user, "https://media.example/file.mp3");
     expect(await screen.findByText("This URL cannot be mirrored")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Send to Bucket instead/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Send to Local feed instead/ })).toBeInTheDocument();
   });
 
   it("captures playlists from the dropdown, several in a row", async () => {
@@ -230,7 +230,7 @@ describe("Add Source dialog", () => {
     );
     const user = userEvent.setup();
     renderApp("/");
-    await user.click(await screen.findByRole("button", { name: /Capture a YouTube playlist/ }));
+    await user.click(await screen.findByRole("button", { name: "YouTube Playlists" }));
     const menu = await screen.findByRole("menu");
     await user.click(await within(menu).findByRole("menuitem", { name: /Watch Later/ }));
     await waitFor(() =>
@@ -247,7 +247,7 @@ describe("Add Source dialog", () => {
     // The menu stays open, so another playlist is one more click; a captured one opens its feed.
     expect(within(menu).getByRole("menuitem", { name: /Already captured/ })).toHaveAttribute(
       "href",
-      "/mirrors/mirror-done",
+      "/feed/mirror-done",
     );
     await user.click(within(menu).getByRole("menuitem", { name: /Talks/ }));
     await waitFor(() => expect(created).toHaveLength(2));
@@ -273,7 +273,7 @@ describe("Add Source dialog", () => {
     );
     const user = userEvent.setup();
     renderApp("/");
-    await user.click(await screen.findByRole("button", { name: /Capture a YouTube playlist/ }));
+    await user.click(await screen.findByRole("button", { name: "YouTube Playlists" }));
     const hint = await screen.findByTestId("capture-error");
     expect(hint).toHaveTextContent("Sign in to see your playlists");
     expect(screen.getByRole("menuitem", { name: "Open Settings" })).toHaveAttribute(

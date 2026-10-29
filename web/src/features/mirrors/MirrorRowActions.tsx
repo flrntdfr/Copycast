@@ -1,30 +1,27 @@
-import { Link } from "@tanstack/react-router";
-import { Copy, MoreHorizontal, Pause, Play, RefreshCw, Trash2, Link2 } from "lucide-react";
+import { Copy, Pause, Play, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { useRequestRefresh, useSetPaused } from "@/features/feeds/mutations";
 import { DeleteFeedDialog } from "@/features/feeds/DeleteFeedDialog";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { copyWithToast } from "@/lib/copy";
-import type { BucketRead, MirrorRead } from "@/api/types";
+import type { BucketRead, FeedRead, MirrorRead } from "@/api/types";
+
+/** The icons other than Delete only show from `md` up: a phone's row keeps just Delete. */
+const WIDE_ONLY = "hidden md:inline-flex";
 
 function IconAction({
   label,
   onClick,
   disabled,
+  className,
   children,
 }: {
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -36,6 +33,7 @@ function IconAction({
           aria-label={label}
           onClick={onClick}
           disabled={disabled}
+          className={className}
         >
           {children}
         </Button>
@@ -45,126 +43,107 @@ function IconAction({
   );
 }
 
-/** Copy feed URL / Refresh / Pause plus the overflow menu; compact mode keeps only the menu. */
-export function MirrorRowActions({
-  mirror,
-  compact = false,
+/**
+ * The row's Delete button and its confirmation. With `disabledReason` the button is disabled and
+ * the reason is its tooltip: `aria-disabled` rather than `disabled`, so it keeps the pointer and
+ * the focus that show the tooltip.
+ */
+function DeleteAction({
+  feed,
+  label,
+  disabledReason,
 }: {
-  mirror: MirrorRead;
-  compact?: boolean;
+  feed: FeedRead;
+  label: string;
+  disabledReason?: string;
 }) {
-  const refresh = useRequestRefresh();
-  const { setPaused, isPending: pausing } = useSetPaused();
   const [deleting, setDeleting] = useState(false);
-
-  const copy = () => void copyWithToast(mirror.feed_url, "Feed URL");
-  const doRefresh = () => refresh.mutate({ params: { path: { feed_id: mirror.id } } });
-  const togglePause = () => void setPaused(mirror.id, !mirror.paused);
-
-  return (
-    <div className="flex items-center justify-end gap-0.5">
-      {!compact ? (
-        <>
-          <IconAction label="Copy feed URL" onClick={copy}>
-            <Copy />
-          </IconAction>
-          <IconAction label="Refresh now" onClick={doRefresh} disabled={refresh.isPending}>
-            <RefreshCw className={refresh.isPending ? "animate-spin" : undefined} />
-          </IconAction>
-          <IconAction
-            label={mirror.paused ? "Resume" : "Pause"}
-            onClick={togglePause}
-            disabled={pausing}
+  if (disabledReason) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Delete ${label}`}
+            aria-disabled
+            className="cursor-not-allowed opacity-50 hover:bg-transparent dark:hover:bg-transparent"
           >
-            {mirror.paused ? <Play /> : <Pause />}
-          </IconAction>
-        </>
-      ) : null}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon-sm" aria-label={`More actions for ${mirror.title}`}>
-            <MoreHorizontal />
+            <Trash2 />
           </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem asChild>
-            <Link to="/mirrors/$mirrorId" params={{ mirrorId: mirror.id }}>
-              Open Mirror
-            </Link>
-          </DropdownMenuItem>
-          {compact ? (
-            <>
-              <DropdownMenuItem onSelect={copy}>
-                <Copy /> Copy feed URL
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={doRefresh}>
-                <RefreshCw /> Refresh now
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={togglePause}>
-                {mirror.paused ? <Play /> : <Pause />} {mirror.paused ? "Resume" : "Pause"}
-              </DropdownMenuItem>
-            </>
-          ) : null}
-          <DropdownMenuItem asChild>
-            <Link
-              to="/mirrors/$mirrorId"
-              params={{ mirrorId: mirror.id }}
-              search={{ settings: true }}
-            >
-              <Link2 /> Change Source URL…
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onSelect={() => setDeleting(true)}>
-            <Trash2 /> Delete…
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+        </TooltipTrigger>
+        <TooltipContent>{disabledReason}</TooltipContent>
+      </Tooltip>
+    );
+  }
+  return (
+    <>
+      <IconAction label={`Delete ${label}`} onClick={() => setDeleting(true)}>
+        <Trash2 />
+      </IconAction>
       <DeleteFeedDialog
-        feed={mirror}
+        feed={feed}
         open={deleting}
         onOpenChange={setDeleting}
         navigateAway={false}
       />
+    </>
+  );
+}
+
+/** A Mirror's row: Copy feed URL, Refresh now and Pause (from `md` up), then Delete. */
+export function MirrorRowActions({ mirror }: { mirror: MirrorRead }) {
+  const refresh = useRequestRefresh();
+  const { setPaused, isPending: pausing } = useSetPaused();
+
+  return (
+    <div className="flex items-center justify-end gap-0.5">
+      <IconAction
+        label="Copy feed URL"
+        onClick={() => void copyWithToast(mirror.feed_url, "Feed URL")}
+        className={WIDE_ONLY}
+      >
+        <Copy />
+      </IconAction>
+      <IconAction
+        label="Refresh now"
+        onClick={() => refresh.mutate({ params: { path: { feed_id: mirror.id } } })}
+        disabled={refresh.isPending}
+        className={WIDE_ONLY}
+      >
+        <RefreshCw className={refresh.isPending ? "animate-spin" : undefined} />
+      </IconAction>
+      <IconAction
+        label={mirror.paused ? "Resume" : "Pause"}
+        onClick={() => void setPaused(mirror.id, !mirror.paused)}
+        disabled={pausing}
+        className={WIDE_ONLY}
+      >
+        {mirror.paused ? <Play /> : <Pause />}
+      </IconAction>
+      <DeleteAction feed={mirror} label={mirror.title} />
     </div>
   );
 }
 
 /**
- * The overflow menu of a Bucket Feed's row: open its bucket page, delete it. The default Bucket
- * can never be deleted, so its menu only opens.
+ * A Local feed's row: Copy feed URL (from `md` up), then Delete. The default Local feed can never
+ * be deleted, so its Delete stays disabled and says why.
  */
-export function BucketRowActions({ bucket }: { bucket: BucketRead }) {
-  const [deleting, setDeleting] = useState(false);
+export function LocalFeedRowActions({ feed }: { feed: BucketRead }) {
   return (
     <div className="flex items-center justify-end gap-0.5">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon-sm" aria-label={`More actions for ${bucket.name}`}>
-            <MoreHorizontal />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem asChild>
-            <Link to="/buckets/$bucketId" params={{ bucketId: bucket.id }}>
-              Open
-            </Link>
-          </DropdownMenuItem>
-          {bucket.is_default ? null : (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={() => setDeleting(true)}>
-                <Trash2 /> Delete…
-              </DropdownMenuItem>
-            </>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <DeleteFeedDialog
-        feed={bucket}
-        open={deleting}
-        onOpenChange={setDeleting}
-        navigateAway={false}
+      <IconAction
+        label="Copy feed URL"
+        onClick={() => void copyWithToast(feed.feed_url, "Feed URL")}
+        className={WIDE_ONLY}
+      >
+        <Copy />
+      </IconAction>
+      <DeleteAction
+        feed={feed}
+        label={feed.name}
+        disabledReason={feed.is_default ? "The default Local feed cannot be deleted" : undefined}
       />
     </div>
   );

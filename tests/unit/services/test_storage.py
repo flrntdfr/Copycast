@@ -24,11 +24,12 @@ def obj(layout: Any, path: str, size: int = 1) -> StoredObject:
 
 def test_classify_every_kind(layout: Any) -> None:
     assert classify(layout, FEED, f"media/{ITEM}.m4a") == ("media", ITEM)
-    assert classify(layout, FEED, f"media/{ITEM}.info.json") == ("sidecar", None)
-    assert classify(layout, FEED, f"media/{ITEM}.item.xml") == ("sidecar", None)
-    assert classify(layout, FEED, f"media/{ITEM}.m4a.part") == ("sidecar", None)
-    assert classify(layout, FEED, f"media/{ITEM}.m4a.ytdl") == ("sidecar", None)
-    assert classify(layout, FEED, f"media/{ITEM}.m4a.tmp") == ("sidecar", None)
+    assert classify(layout, FEED, f"media/{ITEM}.info.json") == ("sidecar", ITEM)
+    assert classify(layout, FEED, f"media/{ITEM}.item.xml") == ("sidecar", ITEM)
+    assert classify(layout, FEED, f"media/{ITEM}.m4a.part") == ("sidecar", ITEM)
+    assert classify(layout, FEED, f"media/{ITEM}.m4a.ytdl") == ("sidecar", ITEM)
+    assert classify(layout, FEED, f"media/{ITEM}.m4a.tmp") == ("sidecar", ITEM)
+    assert classify(layout, FEED, "media/stray.info.json") == ("sidecar", None)
     assert classify(layout, FEED, "media/stray.txt") == ("other", None)
     assert classify(layout, FEED, "assets/feed.artwork.jpg") == ("artwork", None)
     assert classify(layout, FEED, f"assets/{ITEM}.artwork.png") == ("artwork", ITEM)
@@ -76,3 +77,31 @@ def test_reads_are_titled_sorted_by_kind_then_name_and_linked(layout: Any) -> No
     assert reads[0].item_title is None  # no Catalog row for that id
     assert reads[3].item_id == ITEM and reads[2].item_id is None
     assert set(KIND_ORDER) >= {read.kind for read in reads}
+
+
+def test_an_episodes_files_carry_its_lock_and_the_feeds_own_none(layout: Any) -> None:
+    objects = [
+        obj(layout, f"media/{ITEM}.m4a"),
+        obj(layout, f"media/{ITEM}.info.json"),
+        obj(layout, f"assets/{ITEM}.chapters.json"),
+        obj(layout, f"media/{ITEM}.item.xml"),
+        obj(layout, f"media/{ITEM}.m4a.part"),
+        obj(layout, "media/0000000000000000.m4a"),
+        obj(layout, "assets/feed.artwork.jpg"),
+        obj(layout, "feed.json"),
+    ]
+    reads = feed_object_reads(layout, Urls(), FEED, objects, {ITEM: "Episode 1"}, {ITEM: True})
+    locks = {read.path: read.locked for read in reads}
+    assert locks == {
+        f"media/{ITEM}.m4a": True,
+        f"media/{ITEM}.info.json": True,
+        f"assets/{ITEM}.chapters.json": True,
+        f"media/{ITEM}.item.xml": None,  # the Catalog's record: a purge keeps it
+        f"media/{ITEM}.m4a.part": None,  # a purge never deletes a leftover download
+        "media/0000000000000000.m4a": None,  # no Catalog row: nothing to lock
+        "assets/feed.artwork.jpg": None,
+        "feed.json": None,
+    }
+    unlocked = feed_object_reads(layout, Urls(), FEED, objects[:1], {}, {ITEM: False})
+    assert unlocked[0].locked is False
+    assert feed_object_reads(layout, Urls(), FEED, objects[:1], {})[0].locked is None

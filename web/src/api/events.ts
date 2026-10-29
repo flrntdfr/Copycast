@@ -83,9 +83,16 @@ export function keysForEvent(event: CopycastEvent): QueryKey[] {
     OPS.list_feed_objects[1],
     { params: { path: { feed_id: feedId } } },
   ];
+  // Every bucket's file count and size (the Feeds page's Buckets box).
+  const storageSummary: QueryKey = [OPS.storage_summary[0], OPS.storage_summary[1]];
   switch (event.event) {
     case "feed":
-      return [listFeeds, feedKey(event.data.feed_id), objectsKey(event.data.feed_id)];
+      return [
+        listFeeds,
+        feedKey(event.data.feed_id),
+        objectsKey(event.data.feed_id),
+        storageSummary,
+      ];
     case "item":
       return [
         [

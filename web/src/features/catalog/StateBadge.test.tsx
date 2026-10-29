@@ -24,8 +24,9 @@ describe("catalogStateOf", () => {
     expect(canArchive({ state: "deleted" })).toBe(true);
     expect(canArchive({ state: "failed" })).toBe(true);
     expect(canArchive({ state: "archived" })).toBe(false);
-    expect(canDelete({ state: "archived" })).toBe(true);
-    expect(canDelete({ state: "wanted" })).toBe(false);
+    expect(canDelete({ state: "archived", archive_flag: false })).toBe(true);
+    expect(canDelete({ state: "archived", archive_flag: true })).toBe(false);
+    expect(canDelete({ state: "wanted", archive_flag: false })).toBe(false);
   });
 
   it("prefers Source numbering over the Ordinal", () => {

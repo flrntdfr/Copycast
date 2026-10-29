@@ -59,7 +59,13 @@ async def test_lists_every_object_of_a_feed_by_kind_with_titles(
     assert [obj["path"] for obj in by_kind(listing, "descriptor")] == ["feed.json"]
     assert "source/feed.xml" in {obj["path"] for obj in by_kind(listing, "source")}
     sidecars = by_kind(listing, "sidecar")
-    assert sidecars and all(obj["item_id"] is None for obj in sidecars)
+    assert sidecars and {obj["item_id"] for obj in sidecars} <= {i["id"] for i in items}
+
+    # The files a purge would delete carry their Episode's Lock (an Archive Mirror locks what
+    # it archives); the feed's own files and the `.item.xml` records have none.
+    for obj in listing["objects"]:
+        purged = obj["item_id"] is not None and not obj["name"].endswith(".item.xml")
+        assert obj["locked"] is (True if purged else None), obj["path"]
 
     # Media first, then the assets, then descriptor and Source copies, then the sidecars.
     kinds = [obj["kind"] for obj in listing["objects"]]
@@ -132,3 +138,31 @@ async def test_download_names_a_non_ascii_object_safely(
     assert response.headers["content-disposition"] == (
         "attachment; filename=\"pisode final.txt\"; filename*=utf-8''%C3%A9pisode%20%22final%22.txt"
     )
+
+
+async def test_storage_summary_counts_every_feeds_files_from_one_listing(
+    client: httpx.AsyncClient, source: Source, runner: Runner, container: Container
+) -> None:
+    url = source.write_rss("summary", items=[2, 1], artwork=True)
+    mirror = await create_mirror(client, url)
+    await archived_items(client, runner, mirror["id"])
+    # An object under the prefix of no known Feed is left out.
+    container.layout.store.put_bytes("feeds/ghost-feed/feed.json", b"{}")
+
+    response = await client.get(api("/storage"))
+    assert response.status_code == 200, response.text
+    summary = response.json()
+    per_feed = {feed["feed_id"]: feed for feed in summary["feeds"]}
+    feeds = (await client.get(api("/feeds"))).json()["feeds"]
+    assert set(per_feed) == {feed["id"] for feed in feeds}
+    assert "ghost-feed" not in per_feed
+
+    listing = await listing_of(client, mirror["id"])
+    assert per_feed[mirror["id"]] == {
+        "feed_id": mirror["id"],
+        "file_count": listing["count"],
+        "total_bytes": listing["total_bytes"],
+    }
+    assert summary["file_count"] == sum(feed["file_count"] for feed in summary["feeds"])
+    assert summary["total_bytes"] == sum(feed["total_bytes"] for feed in summary["feeds"])
+    assert summary["file_count"] >= listing["count"] > 0

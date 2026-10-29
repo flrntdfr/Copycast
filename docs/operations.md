@@ -2,7 +2,7 @@
 
 This is the runbook: first run, configuration, the Object store, Kubernetes, backup and
 restore, rebuilding the database from the Object store, and engine bumps and rollbacks. The
-product language (Mirror, Bucket,
+product language (Mirror, Local feed, bucket,
 Refresh, ...) is defined in [AGENTS.md](../AGENTS.md).
 
 ## Shape of a deployment
@@ -166,7 +166,7 @@ may download Episodes they already have again (ADR 0020).
 shown once as two `.env` lines (`COPYCAST_MCP_URL=<base URL>/mcp` and `COPYCAST_MCP_KEY=cck_…`),
 stored as a SHA-256 digest, with a scope: `read` (read-only tools), `write` (everything but deletions) or
 `full` (everything, including `delete_feed`, `delete_item`, `prune_bucket`, and setting a
-Bucket's Retention through `create_bucket` or `update_bucket`, since autoprune deletes). Every tool
+Local feed's Retention through `create_bucket` or `update_bucket`, since autoprune deletes). Every tool
 checks the scope before running and refuses with a `ToolError` naming the scope it needs.
 `last_used_at` is updated at most once a minute per key. Keys cannot mint keys: the key
 capabilities have no MCP tools. For Claude Code:
@@ -267,9 +267,15 @@ that moment: nothing listed so far is archived. New Mirrors start from the opera
 with a 7-day retention out of the box), both in the wizard and for an MCP `create_mirror`
 without `backfill`.
 
-An Episode flagged **Archive** (the archive button on its Catalog row, `PUT
-/api/feeds/{id}/items/{item}/archive-flag`, the `set_archive_flag` tool) is kept for good:
-Ephemeral and Bucket Retention, a Rolling window and Sync skip it. The admin purge does not.
+A **Locked** Episode (the padlock on its Catalog row or on any of its files in its bucket,
+`PUT /api/feeds/{id}/items/{item}/archive-flag`, the `set_archive_flag` tool; `archive_flag` is
+the API's name for the Lock) is never deleted: Retention, a Rolling window, Sync, a Purge of its
+bucket and the admin purge skip it, and `delete_item` answers 409 (the UI disables its Delete
+button). Only deleting the whole Feed removes it. A Mirror on the Archive policy Locks every
+Episode it archives, and switching a Mirror to Archive (or turning Sync off on it) Locks the
+Episodes it already holds; switching away unlocks nothing. A Mirror with Sync, every captured
+playlist included, is never Locked automatically, so Sync keeps deleting what the Source drops
+([ADR 0021](docs/adr/0021-every-feed-has-a-bucket-and-locks.md)).
 
 Switching modes previews the change (`POST /api/mirrors/{id}/preview`) and asks for
 confirmation when archived Episodes would be deleted; rolled-out and expired Episodes leave
@@ -359,27 +365,35 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   from). `probe_source` and `create_mirror` accept both, so agents can too.
 - **Playlists kept in sync.** A Mirror with *Stay in sync with the Source* deletes an Episode
   when its item leaves the Source instead of Delisting it (a Tombstone, so the video comes back
-  as Available if re-added). The *Capture a YouTube playlist* dropdown of the Buckets lists the
+  as Available if re-added). The *Playlists* dropdown next to the *Mirror* button lists the
   signed-in account's playlists through the engine when it opens (`GET /api/youtube/playlists`,
   the cookie file required, Watch Later first) and captures any of them with a click: a synced
-  Mirror in Automatic mode flagged `playlist_capture`, which is listed among the Buckets rather
-  than with the Mirrors. Agents get the same through `list_youtube_playlists` and `create_mirror`.
-- **The Feeds page** (`/`) lists every Feed in one table: the Mirrors with their service, and
-  the Buckets with the service *Local*. Under the table, a collapsed *Buckets* box opens on one
-  bucket per Feed (Mirrors included, then the Buckets and the captured playlists): the storage a
-  Feed keeps under `feeds/{id}/`, each card with a green or orange *Synced* badge, its Episode
-  count and its size. `/mirrors` and `/buckets` redirect there, and so do the `/inboxes` links
-  from before Inboxes were renamed Buckets (ADR 0018).
-- **A Mirror's page** shows its Catalog directly, with *Settings* (a dialog holding the policy,
-  the Source URL, the overrides and the Danger zone), *Refresh now* and *Pause* at the top right.
-- **A bucket's page** (`/buckets/{id}`, reached from a bucket card or from a Local feed's row)
-  lists every object the Feed keeps (media, artwork, chapters, transcripts, attachments, the
-  descriptor, the Source copy) with a download link each, plus the published feed itself
+  Mirror flagged `playlist_capture`, listed in the Feeds table like any other Feed. Agents get
+  the same through `list_youtube_playlists` and `create_mirror`.
+- **The Feeds page** (`/`) starts with the bar (*Mirror*, *Playlists*) and lists every Feed in
+  one table: Mirrors and captured playlists with their service, Local feeds with the service
+  *Local*; each row has Copy feed URL, Refresh and Pause where they apply, and Delete (never
+  for the default Local feed). Under the table, a collapsed *Buckets* box opens on one card per
+  Feed: its bucket, with the number of files and their size in MB (`GET /api/storage`, the
+  `storage_summary` tool, one listing of the Object store, made only while the box is open).
+  `/mirrors` and `/buckets` redirect to `/`, and so do the `/inboxes` links from before ADR 0018.
+- **A feed's page** (`/feed/{id}`; `/mirrors/{id}` redirects there; `/feeds/` stays the public
+  feed routes) shows its Catalog with a title filter, a padlock and a Delete button per Episode.
+  A Mirror's header has *Files* (its bucket), *Settings* (a dialog holding the policy, the
+  Source URL, the overrides and the Danger zone), *Refresh now* and *Pause*. A Local feed's
+  header has its feed URL, *Upload files…*, *Files*, *Settings* (name, autoprune, Danger zone)
+  and the *Add URL* form.
+- **A bucket's page** (`/buckets/{id}`) shows the number of files and their total size under the
+  title, *Open feed* and *Purge…* at the top right, then every file the Feed keeps (the
+  published feed, media, artwork, chapters, transcripts, attachments, the descriptor, the
+  Source copy, sidecars) with its kind, size, a padlock and a download link
   (`GET /api/feeds/{id}/objects`, the `list_feed_objects` tool;
-  `GET /api/feeds/{id}/objects/{path}` downloads one object). A Bucket Feed's page also takes
-  URLs and uploads, and its *Settings* dialog holds the name, autoprune, *Prune now…* and the
-  Danger zone.
-- **Uploading files into a Bucket**: *Upload files…* on a Bucket's page takes mp3, m4a and m4b
+  `GET /api/feeds/{id}/objects/{path}` downloads one file). The padlock is the Lock of the
+  archived Episode the file belongs to; files a Purge never deletes (the Feed's own files, the
+  `.item.xml` records, leftovers of items not archived) show a disabled one. *Purge…* runs a dry
+  run of `clear_feed`, says how many files are Locked and stay, and on *Yes* deletes every
+  archived Episode that is not Locked.
+- **Uploading files into a Local feed**: *Upload files…* on its page takes mp3, m4a and m4b
   files, sends them one by one in natural file-name order (Part 2 before Part 10) with a
   progress bar each, then adds them as archived Episodes dated by arrival, one second apart
   (`create_upload`, the `PUT` to its `upload_url`, then `add_uploads`). Agents use the same
@@ -395,7 +409,7 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   file) are mirrored as `attachment` assets under `assets/{item}.attachment.{slot}.{ext}`,
   and the Mirror Feed's description points at the local copies. A file that cannot be fetched
   is recorded as a failed asset and its original URL stays in the notes.
-- **OPML.** *Export OPML* on the About page (`GET /api/feeds.opml`) lists every feed with
+- **OPML.** *Export OPML* on the Settings page (`GET /api/feeds.opml`) lists every feed with
   its credentialed URL, to subscribe to all of them in one go.
 - **Player.** The web player has a seek bar with chapter marks and the time left, a chapter
   list under the current chapter's title (from the Episode's chapters asset), skip back 15 s /
@@ -426,27 +440,23 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   Mirror Feed and MCP and survives Refreshes (`title_override`; the Source's title stays in
   `source_title`); *Use Source title* clears it.
 - Artwork assets (`/feeds/{id}/assets/*.artwork.*`) and the Copycast logo
-  (`/feeds/copycast-artwork.png`, the artwork of a Bucket feed without its own) answer without
+  (`/feeds/copycast-artwork.png`, the artwork of a Local feed without its own) answer without
   credentials even while authentication is on: podcast apps fetch images bare, and the URLs
   stay unguessable. Media, feeds, chapters and transcripts keep the feed's pair.
 - `/robots.txt` disallows everything and every response carries
   `X-Robots-Tag: noindex, nofollow, noarchive`; the UI shell adds the equivalent meta tag.
 - `POST /api/admin/purge` (`dry_run` true by default) deletes every archived Episode of every
-  feed; feeds, Catalogs, artwork and credentials stay, and the Episodes leave Tombstones. It has
-  no button in the UI any more (the About page shows versions and totals only).
+  feed except the Locked ones; feeds, Catalogs, artwork and credentials stay, and the Episodes
+  leave Tombstones. It has no button in the UI (the About page shows versions and totals only).
 
-## Settings page: Authentications, Mirrors and Buckets
+## Settings page: Authentications, Mirror defaults, OPML
 
 The Settings page saves every change as it is made, with no Save button. *Authentications*
 shows YouTube, Twitch, Vimeo and Mixcloud with a green check once a stored cookie file covers
-them (see below). *Buckets* lists every Feed's storage, the Mirrors in the Feeds page's order,
-then the Buckets and captured playlists, each with its size and a trash button. A bucket
-holding Episodes flagged Archive warns first and offers *Delete the rest* (`POST
-/api/feeds/{id}/clear`, the `clear_feed` tool: a dry run by default, it deletes every archived
-Episode not kept for good and keeps the feed) next to *Delete everything*. Every Episode of a
-Mirror on the Archive policy counts as kept. The default Bucket can only be emptied.
+them (see below). *Export OPML* downloads every feed for a podcast app. Each Feed's own settings
+live on its page, and its files on its bucket's page.
 
-The *Mirrors* half holds defaults that live in the Object store (`engine/defaults.json`,
+The *Mirrors* section holds defaults that live in the Object store (`engine/defaults.json`,
 `PUT /api/settings/defaults`) rather than in the environment, because they are policy the
 operator changes from the UI:
 
@@ -583,8 +593,8 @@ pushes the lock change to `main`; `image.yml` then builds and publishes:
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
-| `2.1.0` | yes, on every engine bump | "the current 2.1.0" |
-| `2.1.0-yt2026.10.26.220202.dev0` | never (until pruned) | exactly this app + engine combination |
+| `2.2.0` | yes, on every engine bump | "the current 2.2.0" |
+| `2.2.0-yt2026.10.26.220202.dev0` | never (until pruned) | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
 Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. After each build the
@@ -593,7 +603,7 @@ are deleted, so roll back within that window or pull and keep the image yourself
 runs with `GITHUB_TOKEN`, which needs the package to grant the repository the Admin role
 (Package settings → Manage Actions access). To roll back an engine that broke a site, pin
 the previous immutable tag in `.env`
-(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:2.1.0-yt<previous>`) or in the kustomize overlay
+(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:2.2.0-yt<previous>`) or in the kustomize overlay
 (`images[].newTag`), and `docker compose up -d` / `kubectl apply -k`. The About page and
 `copycast --version` show which engine is running; `jobs.engine_version` records which engine
 archived each item.

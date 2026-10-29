@@ -1,11 +1,10 @@
-import { AlertTriangle, ExternalLink, FileDown } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 
 import { $api, asError } from "@/api/client";
 import { PageHeader } from "@/components/common/PageHeader";
 import { PageSpinner } from "@/components/common/PageSpinner";
 import { RelativeTime } from "@/components/common/RelativeTime";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
 import { describeWorkerSeen, useWorkerStatus, workerSeenOf } from "./worker-status";
 import { formatBytes, formatDate, formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -28,23 +27,18 @@ export function AboutPage() {
     <>
       <PageHeader
         title="About"
-        description={`Copycast ${info.version}`}
-        actions={
+        description={
           <>
-            <Button variant="outline" size="sm" asChild>
-              <a
-                href="/api/feeds.opml"
-                download="copycast.opml"
-                title="Every Mirror and Bucket feed with its credentials, to subscribe to all of them at once in Overcast, Pocket Casts or AntennaPod"
-              >
-                <FileDown /> Export OPML
-              </a>
-            </Button>
-            <Button variant="outline" size="sm" asChild>
-              <a href={REPOSITORY_URL} target="_blank" rel="noreferrer">
-                <ExternalLink /> GitHub
-              </a>
-            </Button>
+            Copycast (
+            <a
+              href={REPOSITORY_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-4 hover:text-foreground"
+            >
+              GitHub
+            </a>
+            ) {info.version}
           </>
         }
       />

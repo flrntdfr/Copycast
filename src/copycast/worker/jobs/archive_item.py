@@ -6,7 +6,8 @@ RSS items are fetched through a synthesized info dict built from the item's
 The Engine downloads, transcodes and tags in a Scratch directory of the job's
 own; only the finished files leave it, uploaded to the Object store (the audio as a
 multipart upload) before the row is marked ``archived``, so nothing raw or
-partial is ever served and no row points at a missing object. The Scratch
+partial is ever served and no row points at a missing object; a Mirror on the
+Archive policy locks the Episode in that same transaction. The Scratch
 directory goes when the job ends, whatever happened. Engine outputs (Artwork,
 subtitles, chapters as Podcasting 2.0 JSON) become assets under ``assets/``;
 for RSS items the Source's own chapters, transcripts and image are mirrored
@@ -50,7 +51,9 @@ from copycast.application.ports import (
     StorageFull,
     TransientError,
 )
+from copycast.application.services.context import FeedRow
 from copycast.application.services.defaults import effective, load_defaults
+from copycast.application.services.policy import locks_on_archive
 from copycast.domain.chapters import podcast_chapters
 from copycast.domain.enums import (
     ArchiveState,
@@ -551,6 +554,10 @@ async def _fetch_and_store(
             uow.after_commit(_discard)
             log.warning("archive.row_changed", item_id=item_id)
             return JobOutcome(result={"skipped": "item state changed during the fetch"})
+        feed = await uow.feeds.get(target.feed_id)
+        if feed is not None and locks_on_archive(cast("FeedRow", feed)):
+            # The Archive policy keeps what it archives for good (feed.json follows the intent).
+            await uow.catalog.set_archive_flag(item_id, True)
         if prepared.item_xml is not None:
             await uow.catalog.set_source_item_xml(item_id, prepared.item_xml)
         if enriched:

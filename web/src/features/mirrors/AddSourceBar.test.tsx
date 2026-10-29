@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
@@ -31,7 +31,9 @@ describe("Add Source bar", () => {
     render(<AddSourceBar />);
     const field = screen.getByLabelText("Source URL");
     expect(field).toHaveAttribute("placeholder", "");
-    expect(field).toHaveAccessibleDescription(/podcast RSS feed.*podcast name to search/);
+    expect(field).toHaveAccessibleDescription(
+      /podcast feed.*YouTube.*Spotify.*SoundCloud.*podcast name to search/,
+    );
     // The overlay is decorative: hidden from assistive tech and never in the way of the pointer.
     expect(hint()).toHaveAttribute("aria-hidden", "true");
     expect(hint()).toHaveClass("pointer-events-none");
@@ -96,6 +98,26 @@ describe("Add Source bar", () => {
     expect(button).toBeEnabled();
   });
 
+  it("hints at the sites the Engine supports, then a name to search", () => {
+    expect(ADD_SOURCE_HINTS[0]).toMatch(/podcast RSS feed/);
+    for (const site of [
+      "YouTube channel",
+      "YouTube playlist",
+      "Apple Podcasts",
+      "Spotify",
+      "SoundCloud",
+      "Vimeo",
+      "Twitch",
+      "Bandcamp",
+      "Mixcloud",
+      "Dailymotion",
+      "Internet Archive",
+    ]) {
+      expect(ADD_SOURCE_HINTS.some((hint) => hint.includes(site))).toBe(true);
+    }
+    expect(ADD_SOURCE_HINTS.at(-1)).toBe("Type a podcast name to search…");
+  });
+
   it("hands a pasted URL to the Add Source dialog", async () => {
     server.use(
       http.get("/api/feeds", () => HttpResponse.json({ feeds: [] })),
@@ -113,5 +135,50 @@ describe("Add Source bar", () => {
     expect(history.location.pathname).toBe("/");
     // The bar is cleared for the next Source.
     expect(screen.getByLabelText("Source URL")).toHaveValue("");
+  });
+
+  it("holds the Playlists menu next to Mirror without it submitting the bar", async () => {
+    server.use(
+      http.get("/api/feeds", () => HttpResponse.json({ feeds: [] })),
+      http.get("/api/jobs", () => HttpResponse.json({ jobs: [], total: 0, limit: 100, offset: 0 })),
+      http.get("/api/youtube/playlists", () =>
+        HttpResponse.json({
+          playlists: [
+            {
+              id: "PL1",
+              title: "Talks",
+              url: "https://www.youtube.com/playlist?list=PL1",
+              item_count: 12,
+              captured_feed_id: "mirror-talks",
+            },
+          ],
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    const { history } = renderApp("/");
+    const field = await screen.findByLabelText("Source URL");
+    const form = field.closest("form")!;
+    // No visible "Feeds" heading any more: the bar comes first, the page heading is for screen
+    // readers only.
+    expect(screen.getByRole("heading", { name: "Feeds", level: 1 })).toHaveClass("sr-only");
+    const playlists = within(form).getByRole("button", { name: "YouTube Playlists" });
+    expect(playlists).toHaveAttribute("type", "button");
+    expect(playlists).toHaveTextContent(/^Playlists$/);
+
+    await user.type(field, "atp");
+    await user.click(playlists);
+    const menu = await screen.findByRole("menu");
+    // Watch Later is always offered; a captured playlist links to its feed page.
+    expect(within(menu).getByRole("menuitem", { name: /Watch Later/ })).toBeInTheDocument();
+    expect(await within(menu).findByRole("menuitem", { name: /Talks/ })).toHaveAttribute(
+      "href",
+      "/feed/mirror-talks",
+    );
+    await user.keyboard("{Escape}");
+    // Opening the menu submitted nothing: the text is still in the bar, no dialog opened.
+    expect(field).toHaveValue("atp");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(history.location.pathname).toBe("/");
   });
 });

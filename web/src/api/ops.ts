@@ -22,6 +22,7 @@ export const OPS = {
   export_opml: ["get", "/api/feeds.opml"],
   rotate_feed_credentials: ["post", "/api/feeds/{feed_id}/credentials/rotate"],
   list_feed_objects: ["get", "/api/feeds/{feed_id}/objects"],
+  storage_summary: ["get", "/api/storage"],
   list_items: ["get", "/api/feeds/{feed_id}/items"],
   get_item: ["get", "/api/feeds/{feed_id}/items/{item_id}"],
   archive_item: ["post", "/api/feeds/{feed_id}/items/{item_id}/archive"],

@@ -14,7 +14,6 @@ import type {
   ProbeCandidate,
   ProbeResult,
   Problem,
-  PruneResult,
   ReadyRead,
   RequestRead,
   SelectionResult,
@@ -334,10 +333,6 @@ export function ready(overrides: Partial<ReadyRead> = {}): ReadyRead {
     },
     ...overrides,
   };
-}
-
-export function pruneResult(overrides: Partial<PruneResult> = {}): PruneResult {
-  return { matched: 0, deleted_count: 0, bytes_freed: 0, dry_run: true, ...overrides };
 }
 
 export function problem(

@@ -12,7 +12,7 @@ import { useSendToBucket } from "@/features/buckets/useSendToBucket";
 import { formatDate, formatDuration } from "@/lib/format";
 import { count } from "@/lib/labels";
 
-/** iTunes search (`search_podcasts`) prefilling the wizard, plus YouTube hits (`search_videos`) to send to a Bucket. */
+/** iTunes search (`search_podcasts`) prefilling the wizard, plus YouTube hits (`search_videos`) to send to a Local feed. */
 export function SearchStep({
   query,
   onPick,
@@ -135,7 +135,7 @@ export function SearchStep({
                   disabled={bucket.isPending}
                   onClick={() => void bucket.send(video.url)}
                 >
-                  Send to Bucket
+                  Send to Local feed
                 </Button>
               </li>
             ))}

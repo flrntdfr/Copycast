@@ -50,6 +50,7 @@ from copycast.application.models import (
     SelectionResult,
     SerialBucketCreate,
     StatusRead,
+    StorageSummary,
     UploadCreate,
     UploadRead,
     UploadsAdd,
@@ -154,8 +155,10 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         ``backfill`` absent: the operator's default policy (Ephemeral unless changed on
         the Settings page). ``backfill.mode``: the Archive policy is ``all`` (everything
         listed, then every new item) or ``new`` (only what the Source publishes from now
-        on); the Ephemeral policy is ``automatic`` (downloaded when a podcast app first
-        asks, expiring ``retention_days`` after the last download, null keeps forever).
+        on), and it locks every Episode it archives unless ``sync_deletions`` is on; the
+        Ephemeral policy is ``automatic``
+        (downloaded when a podcast app first asks, expiring ``retention_days`` after the
+        last download, null keeps forever).
         Also ``rolling`` with ``latest_n`` (only the newest N stay archived) and
         ``selection`` with ``selection`` such as ``"1-42, 180"`` (follow then defaults to
         false). Rolling and expiring modes delete on their own, so they need a ``full``
@@ -174,8 +177,14 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
 
     async def list_feed_objects(feed_id: str) -> FeedObjectList:
         """Every object a Feed keeps in the Object store (media, assets, descriptor, Source
-        copies, sidecars) with its kind, size and download URL; media name their Episode."""
+        copies, sidecars) with its kind, size and download URL; an Episode's files name it
+        and carry its Lock (``locked``; null for the feed's own files)."""
         return await container.services.list_feed_objects(feed_id)
+
+    async def storage_summary() -> StorageSummary:
+        """How many files every Feed keeps in its bucket and their total size (one listing
+        of the Object store), plus the totals; a Feed that keeps nothing counts zeros."""
+        return await container.services.storage_summary()
 
     async def delete_feed(feed_id: str, confirm: bool = False) -> dict[str, Any]:
         """Delete a Feed and its archived media, which may be the only copy.
@@ -188,10 +197,10 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         return {"deleted": True, "feed_id": feed_id}
 
     async def clear_feed(feed_id: str, clear: ClearFeedRequest) -> ClearFeedResult:
-        """Delete every Episode of a Feed that is not kept for good; the Feed stays.
+        """Purge a Feed's bucket: delete every archived Episode that is not locked.
 
-        Kept: Episodes flagged Archive, and every Episode of a Mirror on the Archive
-        policy. ``dry_run`` (the default) counts what would go and what stays.
+        Locked Episodes (``archive_flag``) stay, as do the Feed, its Catalog and its own
+        files. ``dry_run`` (the default) counts what would go and what stays.
         """
         return await container.services.clear_feed(feed_id, clear)
 
@@ -234,15 +243,18 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
     async def delete_item(feed_id: str, item_id: str) -> dict[str, Any]:
         """Delete one Episode's media.
 
-        The item becomes Available again and is never re-archived automatically.
+        The item becomes Available again and is never re-archived automatically. A locked
+        Episode is refused (conflict): unlock it with ``set_archive_flag`` first.
         """
         await container.services.delete_item(feed_id, item_id)
         return {"deleted": True, "feed_id": feed_id, "item_id": item_id}
 
     async def set_archive_flag(feed_id: str, item_id: str, flag: ArchiveFlagUpdate) -> ItemRead:
-        """Flag an Episode Archive so nothing deletes it on its own, or clear the flag.
+        """Lock an Episode (``archive_flag`` true: never deleted) or unlock it (false).
 
-        Retention, a Rolling window, Sync and ``clear_feed`` spare a flagged Episode.
+        Retention, a Rolling window, Sync, ``clear_feed`` and ``delete_item`` spare a locked
+        Episode. A Mirror on the Archive policy (``all``, ``new``, ``latest``, ``selection``)
+        without ``sync_deletions`` locks what it archives on its own.
         """
         return await container.services.set_archive_flag(feed_id, item_id, flag)
 
@@ -270,7 +282,10 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         ``title`` is kept over the Source's across Refreshes; null restores the Source's.
         Switching to ``rolling``, or to ``automatic`` (Ephemeral) with a
         ``retention_days``, schedules deletions, so it needs a ``full`` key; switching to
-        ``new`` archives only what the Source publishes from then on.
+        ``new`` archives only what the Source publishes from then on. Switching to the
+        Archive policy (``all``, ``new``, ``latest``, ``selection``), or turning
+        ``sync_deletions`` off while on it, locks every Episode archived so far; a Mirror with
+        ``sync_deletions`` is never locked automatically, and switching away unlocks nothing.
         """
         _check_deleting_mode(patch.backfill, "update_mirror")
         return await container.services.update_mirror(feed_id, patch)
@@ -394,6 +409,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         (list_feeds, "list_feeds", "list_feeds", True),
         (get_feed, "get_feed", "get_feed", True),
         (list_feed_objects, "list_feed_objects", "list_feed_objects", True),
+        (storage_summary, "storage_summary", "storage_summary", True),
         (delete_feed, "delete_feed", "delete_feed", False),
         (clear_feed, "clear_feed", "clear_feed", False),
         (list_items, "list_items", "list_items", True),

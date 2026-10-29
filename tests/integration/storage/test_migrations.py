@@ -36,7 +36,7 @@ EXPECTED_TABLES = {
     "engine_versions",
     "api_keys",
 }
-HEAD = "0014"
+HEAD = "0015"
 
 
 def _table_names(conn: Connection) -> set[str]:
@@ -263,3 +263,88 @@ async def test_0014_turns_inboxes_into_buckets(db_engine: AsyncEngine) -> None:
     async with db_engine.connect() as conn:
         assert tuple((await conn.execute(select)).one()) == ("inbox", "Old")
     await ensure_schema(db_engine)
+
+
+async def test_0015_locks_what_archive_mirrors_archived(db_engine: AsyncEngine) -> None:
+    """Archived Episodes of Mirrors on the Archive policy without Sync are locked, and those
+    Mirrors' intent is bumped so feed.json follows; nothing else is touched."""
+    await downgrade_schema(db_engine, "0014")
+    async with db_engine.begin() as conn:
+        mirrors = (
+            ("keep-all", "all", False),
+            ("keep-new", "new", False),
+            ("keep-sel", "selection", False),
+            ("synced", "all", True),
+            ("eph", "automatic", False),
+        )
+        for feed_id, mode, sync in mirrors:
+            await conn.execute(
+                text(
+                    "INSERT INTO feeds (id, kind, title, auth_username, auth_password, "
+                    "source_url, source_dedup_key, source_kind, backfill_mode, sync_deletions) "
+                    "VALUES (:id, 'mirror', 'M', 'u', 'p', :url, :url, 'rss', :mode, :sync)"
+                ),
+                {
+                    "id": feed_id,
+                    "url": f"https://p.example/{feed_id}.xml",
+                    "mode": mode,
+                    "sync": sync,
+                },
+            )
+        await conn.execute(
+            text(
+                "INSERT INTO feeds (id, kind, title, auth_username, auth_password) "
+                "VALUES ('local', 'bucket', 'Local', 'u', 'p')"
+            )
+        )
+        rows = [
+            ("1111111111111111", "keep-all", "archived"),
+            ("2222222222222222", "keep-all", "available"),
+            ("3333333333333333", "keep-new", "archived"),
+            ("4444444444444444", "eph", "archived"),
+            ("5555555555555555", "local", "archived"),
+            ("6666666666666666", "keep-sel", "archived"),
+            ("7777777777777777", "synced", "archived"),
+        ]
+        for ordinal, (item_id, feed_id, state) in enumerate(rows, start=1):
+            await conn.execute(
+                text(
+                    "INSERT INTO catalog_items (id, feed_id, source_key, ordinal, title, "
+                    "last_listed_at, archive_state) VALUES (:id, :feed_id, :key, :ordinal, "
+                    "'T', now(), :state)"
+                ),
+                {
+                    "id": item_id,
+                    "feed_id": feed_id,
+                    "key": f"urn:old:{item_id}",
+                    "ordinal": ordinal,
+                    "state": state,
+                },
+            )
+    await ensure_schema(db_engine)
+    async with db_engine.connect() as conn:
+        found = dict((await conn.execute(text("SELECT id, archive_flag FROM catalog_items"))).all())
+    assert found == {
+        "1111111111111111": True,
+        "2222222222222222": False,  # not archived
+        "3333333333333333": True,
+        "4444444444444444": False,  # Ephemeral
+        "5555555555555555": False,  # a Local feed
+        "6666666666666666": True,  # a selection is an Archive mode
+        "7777777777777777": False,  # Sync: never locked automatically
+    }
+    async with db_engine.connect() as conn:
+        intents = dict((await conn.execute(text("SELECT id, intent_version FROM feeds"))).all())
+    bumped = {feed_id for feed_id, version in intents.items() if version > 1}
+    assert bumped == {"keep-all", "keep-new", "keep-sel"}
+    # The downgrade keeps the locks.
+    await downgrade_schema(db_engine, "0014")
+    async with db_engine.connect() as conn:
+        kept = (
+            await conn.execute(
+                text("SELECT archive_flag FROM catalog_items WHERE id = '1111111111111111'")
+            )
+        ).scalar_one()
+    assert kept is True
+    await ensure_schema(db_engine)
+    assert await schema_is_current(db_engine)

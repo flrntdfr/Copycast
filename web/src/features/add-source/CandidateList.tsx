@@ -104,7 +104,7 @@ export function CandidateList({
             onClick={() => onSendToBucket(chosen)}
             disabled={sendingToBucket}
           >
-            <PaintBucket /> Send to Bucket instead
+            <PaintBucket /> Send to Local feed instead
           </Button>
         ) : null}
         <Button variant="ghost" onClick={onBack}>
