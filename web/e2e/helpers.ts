@@ -23,9 +23,14 @@ interface FeedSummary {
   id: string;
   kind: "mirror" | "bucket";
   title: string;
-  /** A Local feed's name (its title for a Mirror). */
-  name: string;
   source_url?: string;
+}
+
+/** A Local feed (BucketRead): only it has a name and the default flag; a Mirror has neither. */
+interface LocalFeedSummary extends FeedSummary {
+  name: string;
+  /** The default Local feed, which can be renamed but never deleted. */
+  is_default: boolean;
 }
 
 /** Delete every Mirror so each spec starts from a Feeds page with no Mirror. */
@@ -45,11 +50,11 @@ export async function deleteAllMirrors(request: APIRequestContext): Promise<void
 }
 
 /** The default Local feed, "Copycast" unless renamed (the API's kind is still "bucket"). */
-export async function defaultLocalFeed(request: APIRequestContext): Promise<FeedSummary> {
+export async function defaultLocalFeed(request: APIRequestContext): Promise<LocalFeedSummary> {
   const response = await request.get("/api/feeds?kind=bucket");
   expect(response.ok()).toBeTruthy();
-  const { feeds } = (await response.json()) as { feeds: FeedSummary[] };
-  const localFeed = feeds.find((feed) => feed.name === "Copycast") ?? feeds[0];
+  const { feeds } = (await response.json()) as { feeds: LocalFeedSummary[] };
+  const localFeed = feeds.find((feed) => feed.is_default) ?? feeds[0];
   if (!localFeed) throw new Error("the default Local feed exists");
   return localFeed;
 }

@@ -1,5 +1,5 @@
-# CI overlay for the e2e job and `make test-e2e`:
-#   docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile direct up -d --wait
+# CI overlay for the e2e job and `make test-e2e`; start it with `make e2e-up` (after
+# `make image IMAGE=copycast:ci`), which also sets the COPYCAST_S3_SECRET_KEY docker-compose.yml requires.
 #
 # Adds a `fixtures` service (plain http.server over tests/fixtures, reachable from the api and
 # worker containers as http://fixtures:8000) and runs the locally built `copycast:ci` image with

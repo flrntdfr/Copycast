@@ -2,8 +2,8 @@
 
 The stack is started outside pytest (``make test-e2e`` or the CI ``e2e`` job)::
 
-    docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile direct up -d --wait
-    uv run pytest -m e2e tests/e2e
+    make e2e-up      # the stack with the environment it needs (COPYCAST_S3_SECRET_KEY, ...)
+    make e2e-smoke   # uv run pytest -m e2e tests/e2e against it
 
 Environment:
     COPYCAST_E2E_BASE_URL       where the api listens from the test runner
