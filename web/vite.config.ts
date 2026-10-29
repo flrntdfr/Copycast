@@ -48,13 +48,15 @@ export default defineConfig({
     outDir: "dist",
     sourcemap: false,
     target: "es2022",
-    rollupOptions: {
+    rolldownOptions: {
       output: {
         // Vendor libraries change less often than the app; keep them cacheable on their own.
-        manualChunks: {
-          react: ["react", "react-dom"],
-          tanstack: ["@tanstack/react-query", "@tanstack/react-router", "@tanstack/react-table"],
-          radix: ["radix-ui"],
+        codeSplitting: {
+          groups: [
+            { name: "react", test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
+            { name: "tanstack", test: /[\\/]node_modules[\\/]@tanstack[\\/]/ },
+            { name: "radix", test: /[\\/]node_modules[\\/](radix-ui|@radix-ui)[\\/]/ },
+          ],
         },
       },
     },
