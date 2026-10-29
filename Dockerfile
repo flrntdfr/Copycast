@@ -14,7 +14,7 @@ ARG APP_VERSION=2.2.0
 ARG ENGINE_VERSION=unknown
 
 # ---- web -------------------------------------------------------------------------------
-FROM node:22.23.2-alpine3.24@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS web
+FROM node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS web
 WORKDIR /web
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml web/openapi.json ./
 RUN corepack enable && corepack prepare pnpm@11.25.0 --activate \
@@ -23,7 +23,7 @@ COPY web/ ./
 RUN pnpm run build
 
 # ---- lock ------------------------------------------------------------------------------
-FROM python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS lock
+FROM python:3.13.17-slim-bookworm@sha256:e32be0e55814a08977501ca863271d9bd02443710db8f2afaf8372e2c4508530 AS lock
 COPY --from=ghcr.io/astral-sh/uv:0.11.21@sha256:ff07b86af50d4d9391d9daf4ff89ce427bc544f9aae87057e69a1cc0aa369946 /uv /usr/local/bin/uv
 WORKDIR /lock
 COPY pyproject.toml uv.lock ./
@@ -33,7 +33,7 @@ RUN uv export --frozen --no-dev --no-emit-project --no-emit-package yt-dlp -o ba
 # ---- deno ------------------------------------------------------------------------------
 # yt-dlp needs a JavaScript runtime for YouTube (signature and "n" challenges); deno is the
 # one it enables by default. Pinned by version and checksum for both architectures.
-FROM python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS deno
+FROM python:3.13.17-slim-bookworm@sha256:e32be0e55814a08977501ca863271d9bd02443710db8f2afaf8372e2c4508530 AS deno
 ARG TARGETARCH
 ARG DENO_VERSION=2.9.6
 ARG DENO_SHA256_AMD64=394f07f4da2bebe6ce6f1e7ce0fa16429b29b08c35e3fac3fe25972676dff4b2
@@ -51,7 +51,7 @@ RUN set -eu; \
     /usr/local/bin/deno --version
 
 # ---- runtime ---------------------------------------------------------------------------
-FROM python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS runtime
+FROM python:3.13.17-slim-bookworm@sha256:e32be0e55814a08977501ca863271d9bd02443710db8f2afaf8372e2c4508530 AS runtime
 ARG APP_VERSION
 ARG ENGINE_VERSION
 
