@@ -3,7 +3,8 @@
 #
 # Adds a `fixtures` service (plain http.server over tests/fixtures, reachable from the api and
 # worker containers as http://fixtures:8000) and runs the locally built `copycast:ci` image with
-# a localhost base URL so feed and media links resolve from the test runner.
+# a localhost base URL so feed and media links resolve from the test runner. COPYCAST_IMAGE (set
+# by the Makefile's e2e targets) names that image; it is never pulled.
 
 services:
   fixtures:
@@ -19,7 +20,7 @@ services:
     restart: "no"
 
   api-direct:
-    image: copycast:ci
+    image: ${COPYCAST_IMAGE:-copycast:ci}
     pull_policy: never
     environment:
       COPYCAST__BASE_URL: http://localhost:8080
@@ -32,7 +33,7 @@ services:
     restart: "no"
 
   worker:
-    image: copycast:ci
+    image: ${COPYCAST_IMAGE:-copycast:ci}
     pull_policy: never
     environment:
       COPYCAST__BASE_URL: http://localhost:8080

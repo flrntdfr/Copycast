@@ -23,10 +23,12 @@ interface FeedSummary {
   id: string;
   kind: "mirror" | "bucket";
   title: string;
+  /** A Local feed's name (its title for a Mirror). */
+  name: string;
   source_url?: string;
 }
 
-/** Delete every Mirror so each spec starts from an empty Mirrors page. */
+/** Delete every Mirror so each spec starts from a Feeds page with no Mirror. */
 export async function deleteAllMirrors(request: APIRequestContext): Promise<void> {
   const response = await request.get("/api/feeds?kind=mirror");
   expect(response.ok()).toBeTruthy();
@@ -42,16 +44,17 @@ export async function deleteAllMirrors(request: APIRequestContext): Promise<void
   }
 }
 
-export async function defaultBucket(request: APIRequestContext): Promise<FeedSummary> {
+/** The default Local feed, "Copycast" unless renamed (the API's kind is still "bucket"). */
+export async function defaultLocalFeed(request: APIRequestContext): Promise<FeedSummary> {
   const response = await request.get("/api/feeds?kind=bucket");
   expect(response.ok()).toBeTruthy();
   const { feeds } = (await response.json()) as { feeds: FeedSummary[] };
-  const bucket = feeds.find((feed) => feed.title === "Copycast") ?? feeds[0];
-  if (!bucket) throw new Error("the default Bucket exists");
-  return bucket;
+  const localFeed = feeds.find((feed) => feed.name === "Copycast") ?? feeds[0];
+  if (!localFeed) throw new Error("the default Local feed exists");
+  return localFeed;
 }
 
-/** Add the fixture feed from the Mirrors page bar and land on the dialog's Created step. */
+/** Add the fixture feed from the Feeds page bar and land on the dialog's Created step. */
 export async function createFixtureMirror(page: Page): Promise<string> {
   // Archive with Backfill, so the worker archives every fixture item (the default is Ephemeral).
   const defaults = await page.request.put("/api/settings/defaults", {

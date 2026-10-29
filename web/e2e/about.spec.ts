@@ -14,7 +14,7 @@ test("About shows the app and engine versions and the worker heartbeat", async (
 
   await page.goto("/about");
   await expect(page.getByRole("heading", { name: "About" })).toBeVisible();
-  // "Copycast (GitHub) 2.1.x", where GitHub links to the repository.
+  // "Copycast (GitHub) <version>", where GitHub links to the repository.
   const description = page.getByText(
     new RegExp(`^Copycast \\(GitHub\\) ${escapeRegExp(info.version)}$`),
   );

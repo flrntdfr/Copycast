@@ -1,6 +1,6 @@
 """httpx smoke against the compose stack (docker-compose.yml + docker-compose.ci.yml).
 
-Covers the plan's e2e list: readiness, the default Bucket, a Mirror created from the
+Covers the plan's e2e list: readiness, the default Local feed, a Mirror created from the
 fixtures server that the worker archives for real (yt-dlp + ffmpeg), the public feed and
 media (Range 206 counted once), the MCP endpoint's ``tools/list`` and the About engine
 version against the lockfile. The Mirror is deleted at the end so the Playwright suite
@@ -66,7 +66,8 @@ def _item(http: httpx.Client, feed_id: str, item_id: str) -> dict[str, Any]:
 
 def _create_or_reuse_mirror(http: httpx.Client, source_url: str) -> dict[str, Any]:
     """POST the Mirror; a leftover from an earlier run answers 409 feed-exists."""
-    # Everything: the smoke waits for every item to be archived (the default is Automatic).
+    # Archive with Backfill: the smoke waits for every item to be archived (the default is
+    # Ephemeral, which archives nothing ahead of time).
     response = http.post(
         "/api/mirrors", json={"source_url": source_url, "backfill": {"mode": "all"}}
     )
@@ -126,14 +127,15 @@ def test_liveness_and_readiness(http: httpx.Client, stack: Stack) -> None:
     wait_until(worker_seen, timeout=stack.timeout, interval=2.0, what="worker heartbeat")
 
 
-def test_default_bucket_exists(http: httpx.Client, stack: Stack) -> None:
+def test_default_local_feed_exists(http: httpx.Client, stack: Stack) -> None:
     response = http.get("/api/buckets")
     assert response.status_code == 200, response.text
     feeds: list[dict[str, Any]] = response.json()["feeds"]
-    buckets = [feed for feed in feeds if feed["kind"] == "bucket"]
-    assert len(buckets) >= 1, feeds
-    default = next((bucket for bucket in buckets if bucket["name"] == "Copycast"), None)
-    assert default is not None, buckets
+    # Local feeds keep the API's older kind, "bucket".
+    local_feeds = [feed for feed in feeds if feed["kind"] == "bucket"]
+    assert len(local_feeds) >= 1, feeds
+    default = next((feed for feed in local_feeds if feed["name"] == "Copycast"), None)
+    assert default is not None, local_feeds
     assert default["feed_url"] == f"{stack.base_url}/feeds/{default['id']}.xml"
 
     feed = http.get(f"/feeds/{default['id']}.xml")
