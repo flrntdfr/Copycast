@@ -1,14 +1,11 @@
 import {
   type Cell,
-  type ColumnFiltersState,
+  type ColumnVisibilityState,
   type ExpandedState,
   flexRender,
-  getCoreRowModel,
-  getExpandedRowModel,
   type Row,
   type RowSelectionState,
-  useReactTable,
-  type VisibilityState,
+  useTable,
 } from "@tanstack/react-table";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, ListMusic, Loader2 } from "lucide-react";
@@ -36,6 +33,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { type CatalogFeatures, catalogFeatures } from "./features";
 import { CatalogToolbar } from "./CatalogToolbar";
 import { RowDetails } from "./RowDetails";
 import { SelectionBar } from "./SelectionBar";
@@ -84,10 +82,10 @@ const DETAILS_ESTIMATE = 180;
 /** Rows rendered beyond each edge of the viewport, so Tab always finds the next one. */
 const OVERSCAN = 10;
 
-function readColumnVisibility(): VisibilityState {
+function readColumnVisibility(): ColumnVisibilityState {
   try {
     const raw = window.localStorage.getItem(COLUMNS_STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as VisibilityState;
+    if (raw) return JSON.parse(raw) as ColumnVisibilityState;
   } catch {
     // ignore
   }
@@ -97,14 +95,14 @@ function readColumnVisibility(): VisibilityState {
 /** One line of the virtual list: a Catalog row, or the details under an expanded one. */
 interface Entry {
   key: string;
-  row: Row<ItemRead>;
+  row: Row<CatalogFeatures, ItemRead>;
   details: boolean;
 }
 
 interface CatalogRowProps {
-  row: Row<ItemRead>;
+  row: Row<CatalogFeatures, ItemRead>;
   /** Visible cells; a new array when columns or their visibility change. */
-  cells: Cell<ItemRead, unknown>[];
+  cells: Cell<CatalogFeatures, ItemRead, unknown>[];
   index: number;
   selected: boolean;
   expanded: boolean;
@@ -165,8 +163,8 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [expanded, setExpanded] = useState<ExpandedState>({});
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(readColumnVisibility);
-  const [columnFilters] = useState<ColumnFiltersState>([]);
+  const [columnVisibility, setColumnVisibility] =
+    useState<ColumnVisibilityState>(readColumnVisibility);
   const lastToggled = useRef<number | null>(null);
   const rowsRef = useRef(rows);
   useLayoutEffect(() => {
@@ -182,24 +180,27 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
   }, [columnVisibility]);
 
   // Stable, so the columns (and every rendered row) survive a page loading or refetching.
-  const onToggleRow = useCallback((row: Row<ItemRead>, checked: boolean, shiftKey: boolean) => {
-    const index = row.index;
-    setRowSelection((current) => {
-      const next = { ...current };
-      const from =
-        shiftKey && lastToggled.current != null ? Math.min(lastToggled.current, index) : index;
-      const to =
-        shiftKey && lastToggled.current != null ? Math.max(lastToggled.current, index) : index;
-      for (let i = from; i <= to; i += 1) {
-        const id = rowsRef.current[i]?.id;
-        if (!id) continue;
-        if (checked) next[id] = true;
-        else delete next[id];
-      }
-      return next;
-    });
-    lastToggled.current = index;
-  }, []);
+  const onToggleRow = useCallback(
+    (row: Row<CatalogFeatures, ItemRead>, checked: boolean, shiftKey: boolean) => {
+      const index = row.index;
+      setRowSelection((current) => {
+        const next = { ...current };
+        const from =
+          shiftKey && lastToggled.current != null ? Math.min(lastToggled.current, index) : index;
+        const to =
+          shiftKey && lastToggled.current != null ? Math.max(lastToggled.current, index) : index;
+        for (let i = from; i <= to; i += 1) {
+          const id = rowsRef.current[i]?.id;
+          if (!id) continue;
+          if (checked) next[id] = true;
+          else delete next[id];
+        }
+        return next;
+      });
+      lastToggled.current = index;
+    },
+    [],
+  );
 
   // The Mirror's effective minimum length greys out the items the policy ignores.
   const defaults = $api.useQuery("get", "/api/settings/defaults", undefined, {
@@ -216,25 +217,21 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
   }, [feed, defaults.data]);
 
   const columns = useMemo(
+    // eslint-disable-next-line react-hooks/refs -- onToggleRow reads its refs only from click handlers
     () => buildColumns({ feedId: feed.id, feedTitle: feed.title, feedKind, minimum, onToggleRow }),
     [feed.id, feed.title, feedKind, minimum, onToggleRow],
   );
 
-  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table's instance is not memoized by design
-  const table = useReactTable({
+  const table = useTable({
+    features: catalogFeatures,
     data: rows,
     columns,
     getRowId: (item) => item.id,
-    state: { rowSelection, expanded, columnVisibility, columnFilters },
+    state: { rowSelection, expanded, columnVisibility },
     onRowSelectionChange: setRowSelection,
     onExpandedChange: setExpanded,
     onColumnVisibilityChange: setColumnVisibility,
-    getCoreRowModel: getCoreRowModel(),
-    getExpandedRowModel: getExpandedRowModel(),
     getRowCanExpand: () => true,
-    manualPagination: true,
-    manualSorting: true,
-    manualFiltering: true,
     enableRowSelection: true,
   });
 
@@ -303,10 +300,16 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
     onSearchChange({ sort, order });
   };
 
-  useEffect(() => {
+  // A new search or order starts a new selection (adjusted during render, not in an effect).
+  const selectionScope = `${search.q ?? ""}\u0000${search.sort ?? ""}\u0000${search.order ?? ""}`;
+  const [scope, setScope] = useState(selectionScope);
+  if (scope !== selectionScope) {
+    setScope(selectionScope);
     setRowSelection({});
+  }
+  useEffect(() => {
     lastToggled.current = null;
-  }, [search.q, search.sort, search.order]);
+  }, [selectionScope]);
 
   const empty =
     !pages.isPending &&

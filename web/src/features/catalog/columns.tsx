@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { LiveBadge } from "./LiveBadge";
 import { RowActions } from "./RowActions";
 import { StateBadge } from "./StateBadge";
+import type { CatalogFeatures } from "./features";
 import { catalogStateOf, displayNumber, isBelowMinimum } from "./catalog-state";
 import {
   formatBytes,
@@ -27,7 +28,7 @@ export interface CatalogColumnContext {
   /** The Mirror's effective minimum length, and where it comes from; null when none. */
   minimum?: { seconds: number; source: "mirror" | "default" } | null;
   /** Shift-click range selection needs the last row toggled. */
-  onToggleRow: (row: Row<ItemRead>, checked: boolean, shiftKey: boolean) => void;
+  onToggleRow: (row: Row<CatalogFeatures, ItemRead>, checked: boolean, shiftKey: boolean) => void;
 }
 
 export const COLUMN_LABELS: Record<string, string> = {
@@ -50,8 +51,8 @@ export function minimumHint(minimum: NonNullable<CatalogColumnContext["minimum"]
   return `Ignored: shorter than ${where} (${minutes} min). Archive it on purpose to override.`;
 }
 
-export function buildColumns(ctx: CatalogColumnContext): ColumnDef<ItemRead>[] {
-  const columns: ColumnDef<ItemRead>[] = [
+export function buildColumns(ctx: CatalogColumnContext): ColumnDef<CatalogFeatures, ItemRead>[] {
+  const columns: ColumnDef<CatalogFeatures, ItemRead>[] = [
     {
       id: "select",
       enableHiding: false,
