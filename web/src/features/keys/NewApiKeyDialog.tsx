@@ -1,8 +1,7 @@
-import { Loader2, Plus } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { Check, Copy, Loader2, Plus } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import type { ApiKeyCreated, KeyScope } from "@/api/types";
-import { CopyField } from "@/components/common/CopyField";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,14 +15,57 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Textarea } from "@/components/ui/textarea";
 import { useCreateApiKey } from "./mutations";
+import { copyWithToast } from "@/lib/copy";
 import { keyScopeHint, keyScopeLabel } from "@/lib/labels";
 
 const SCOPES: KeyScope[] = ["read", "write", "full"];
 
-/** The `claude mcp add` line for a freshly minted key; the secret is read from the environment. */
-export function claudeCodeCommand(mcpUrl: string): string {
-  return `claude mcp add --transport http copycast ${mcpUrl} --header "Authorization: Bearer $COPYCAST_MCP_KEY"`;
+/**
+ * The `.env` lines for a freshly minted key: the MCP endpoint and the secret, under the names
+ * README.md and docs/operations.md use.
+ */
+export function envBlock(mcpUrl: string, secret: string): string {
+  return `COPYCAST_MCP_URL=${mcpUrl}\nCOPYCAST_MCP_KEY=${secret}`;
+}
+
+/** The `.env` block in a read-only textarea with a Copy button; the lines select on focus. */
+function EnvBlockField({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  return (
+    <div className="space-y-2">
+      <Textarea
+        readOnly
+        value={value}
+        rows={2}
+        wrap="off"
+        aria-label="Environment variables"
+        onFocus={(event) => event.currentTarget.select()}
+        className="overflow-x-auto font-mono text-xs whitespace-pre md:text-xs"
+      />
+      <div className="flex justify-end">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            void copyWithToast(value, "Environment variables").then(() => setCopied(true));
+          }}
+        >
+          {copied ? <Check className="text-success" /> : <Copy />}
+          Copy
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 /** `create_api_key`: a name and a scope, then the secret shown exactly once. */
@@ -59,23 +101,14 @@ export function NewApiKeyDialog({ mcpUrl }: { mcpUrl: string }) {
           <Plus /> New key
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      {/* The created step has no description: tell Radix so, or it warns about the missing id. */}
+      <DialogContent {...(created ? { "aria-describedby": undefined } : {})}>
         {created ? (
           <div className="space-y-4">
             <DialogHeader>
               <DialogTitle>Key “{created.key.name}” created</DialogTitle>
-              <DialogDescription>
-                Copy the secret now. It is shown only this once; Copycast keeps a digest.
-              </DialogDescription>
             </DialogHeader>
-            <CopyField label="Secret" value={created.secret} />
-            <div className="space-y-1.5">
-              <p className="text-sm text-muted-foreground">
-                For Claude Code, export it as <code className="font-mono">COPYCAST_MCP_KEY</code>{" "}
-                and run:
-              </p>
-              <CopyField label="Claude Code command" value={claudeCodeCommand(mcpUrl)} hideLabel />
-            </div>
+            <EnvBlockField value={envBlock(mcpUrl, created.secret)} />
             <DialogFooter>
               <Button type="button" onClick={close}>
                 Done
@@ -85,7 +118,7 @@ export function NewApiKeyDialog({ mcpUrl }: { mcpUrl: string }) {
         ) : (
           <form onSubmit={submit} className="space-y-4">
             <DialogHeader>
-              <DialogTitle>New API key</DialogTitle>
+              <DialogTitle>New key</DialogTitle>
               <DialogDescription>
                 An MCP client presents the key as a bearer token; its scope caps what the agent may
                 do.

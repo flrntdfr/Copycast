@@ -1,4 +1,4 @@
-/** Mutations of the API keys page: mint and revoke, then refetch the list. */
+/** Mutations of the MCP page: mint and revoke, then refetch the list. */
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -23,7 +23,7 @@ export function useRevokeApiKey() {
   return $api.useMutation("delete", "/api/keys/{key_id}", {
     onSuccess: () => {
       void invalidate();
-      toast.success("API key revoked");
+      toast.success("Key revoked");
     },
   });
 }

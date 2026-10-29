@@ -329,3 +329,24 @@ async def test_add_uploads_to_an_existing_bucket(
     items = structured(await mcp_client.call_tool("list_items", {"feed_id": bucket["id"]}))
     titles = [item["title"] for item in items["items"]]
     assert titles == ["Chapter 10", "Chapter 9"]  # newest first: 9 arrived before 10
+
+
+async def test_list_feed_objects_tool(
+    mcp_client: Client[Any], source: Source, runner: Runner
+) -> None:
+    url = source.write_rss("mcp-objects", items=[1], artwork=True)
+    mirror = structured(
+        await mcp_client.call_tool(
+            "create_mirror", {"mirror": {"source_url": url, "backfill": {"mode": "all"}}}
+        )
+    )
+    await runner.run_until_idle()
+    listing = structured(await mcp_client.call_tool("list_feed_objects", {"feed_id": mirror["id"]}))
+    assert listing["feed_id"] == mirror["id"] and listing["count"] == len(listing["objects"]) > 0
+    kinds = {obj["kind"] for obj in listing["objects"]}
+    assert {"media", "descriptor", "source"} <= kinds
+    media = next(obj for obj in listing["objects"] if obj["kind"] == "media")
+    assert media["item_title"] == "Episode 1" and media["url"].endswith(f"/objects/{media['path']}")
+    assert listing["total_bytes"] == sum(obj["size_bytes"] for obj in listing["objects"])
+    with pytest.raises((ToolError, MCPError)):
+        await mcp_client.call_tool("list_feed_objects", {"feed_id": "nope"})

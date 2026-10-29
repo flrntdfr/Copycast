@@ -4,6 +4,7 @@ import type {
   AssetKind,
   BackfillMode,
   ErrorKind,
+  FeedObjectKind,
   HealthStatus,
   JobKind,
   JobStatus,
@@ -116,6 +117,19 @@ export const assetKindLabel = label<AssetKind>({
   chapters: "Chapters",
   transcript: "Transcript",
   attachment: "Attachment",
+});
+
+/** What one object of a Feed's storage is (the bucket page's Kind column). */
+export const feedObjectKindLabel = label<FeedObjectKind>({
+  media: "Media",
+  artwork: "Artwork",
+  chapters: "Chapters",
+  transcript: "Transcript",
+  attachment: "Attachment",
+  descriptor: "Descriptor",
+  source: "Source",
+  sidecar: "Sidecar",
+  other: "Other",
 });
 
 export const keyScopeLabel = label<KeyScope>({

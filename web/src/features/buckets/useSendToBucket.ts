@@ -16,11 +16,7 @@ export function useSendToBucket() {
   const mutation = $api.useMutation("post", "/api/buckets/{bucket_id}/requests", {
     onSuccess: (request) => {
       toast.success("Sent to the Bucket", { description: request.url });
-      void navigate({
-        to: "/buckets/$bucketId",
-        params: { bucketId: request.bucket_id },
-        search: { tab: "requests" },
-      });
+      void navigate({ to: "/buckets/$bucketId", params: { bucketId: request.bucket_id } });
     },
   });
   const candidates = (buckets.data?.feeds ?? []).filter(isBucket);

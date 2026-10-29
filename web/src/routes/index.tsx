@@ -23,20 +23,17 @@ export const Route = createFileRoute("/")({
   component: FeedsPage,
 });
 
-/** Every Feed on one page: the Mirrors first, the Buckets and captured playlists below. */
+/** Every Feed on one page: the table of Mirrors and Bucket Feeds, their buckets in a box below. */
 function FeedsPage() {
   const { sort, order, url } = Route.useSearch();
   const hash = useLocation({ select: (location) => location.hash });
   const navigate = Route.useNavigate();
   const buckets = useRef<HTMLElement>(null);
   const scrolledFor = useRef<string | null>(null);
-  // Both lists share these queries with the table and the section; once they have rendered,
-  // the Buckets sit where they will stay, so a URL to send or `#buckets` scrolls there once.
-  const mirrors = $api.useQuery("get", "/api/feeds", {
-    params: { query: { kind: "mirror", sort, order } },
-  });
-  const feeds = $api.useQuery("get", "/api/feeds");
-  const ready = mirrors.isSuccess && feeds.isSuccess;
+  // The table and the Buckets box share this query; once it has rendered, the box sits where it
+  // will stay, so a URL to send or `#buckets` scrolls there once.
+  const feeds = $api.useQuery("get", "/api/feeds", { params: { query: { sort, order } } });
+  const ready = feeds.isSuccess;
   const target = url || hash === "buckets" ? `${url}#${hash}` : null;
   useEffect(() => {
     if (!target || !ready || scrolledFor.current === target) return;
@@ -47,8 +44,8 @@ function FeedsPage() {
   return (
     <>
       <h1 className="sr-only">Feeds</h1>
-      <section aria-labelledby="mirrors-heading" className="mb-10">
-        <SectionHeader id="mirrors-heading" title="Mirrors" />
+      <section aria-labelledby="feeds-heading" className="mb-10">
+        <SectionHeader id="feeds-heading" title="Feeds" />
         <div className="mb-4">
           <AddSourceBar />
         </div>
@@ -63,7 +60,7 @@ function FeedsPage() {
           }
         />
       </section>
-      <BucketsSection ref={buckets} url={url} />
+      <BucketsSection ref={buckets} sort={sort} order={order} url={url} />
     </>
   );
 }

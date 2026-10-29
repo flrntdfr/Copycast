@@ -178,7 +178,7 @@ A Feed's secret path segment, derived from its password, under which the Feed pu
 _Avoid_: Feed key (that is the multi-user plan's per-listener credential), token, signed URL
 
 **API key**:
-A bearer secret minted from the UI for one MCP client, shown once, stored as a digest, revocable on its own. The only credential the MCP mount accepts while authentication is on.
+A bearer secret minted on the MCP page for one MCP client, shown once as `.env` lines (`COPYCAST_MCP_URL`, `COPYCAST_MCP_KEY`), stored as a digest, revocable on its own. The only credential the MCP mount accepts while authentication is on.
 _Avoid_: Token, PAT, MCP password, service account
 
 **Default**:
@@ -194,7 +194,7 @@ A Netscape `cookies.txt` added under *Authentications* on the Settings page so s
 _Avoid_: Cookies setting, session file, YouTube login, credentials
 
 **Storage**:
-A Feed's storage: its prefix of the Object store (`feeds/{id}/`: media, Artwork and assets), listed with its size in the Buckets half of the Settings page (the Mirrors in the Feeds page's order, then the Buckets and captured playlists). Clearing a bucket deletes every Episode not kept for good and keeps the Feed; deleting it deletes the Feed.
+A Feed's storage: its prefix of the Object store (`feeds/{id}/`: media, Artwork and assets). The UI calls it the Feed's bucket: one card per Feed in the collapsed Buckets box of the Feeds page (the Mirrors in the table's order, then the Buckets and captured playlists), opening on the list of every object it keeps with a download link each (`list_feed_objects`); and one row with its size in the Buckets half of the Settings page. Clearing a bucket deletes every Episode not kept for good and keeps the Feed; deleting it deletes the Feed.
 _Avoid_: folder, volume, data directory
 
 **Scope**:

@@ -6,6 +6,8 @@ from posixpath import basename
 from urllib.parse import quote, urlsplit, urlunsplit
 
 FEEDS_PREFIX = "/feeds"
+OBJECTS_PREFIX = "/api/feeds"
+"""``/api/feeds/{id}/objects/...``: the operator's download of a Feed's stored objects."""
 KEY_SEGMENT = "k"
 """``/feeds/{id}/k/{key}/media/...``: a feed's media key in place of its Basic pair."""
 
@@ -59,4 +61,20 @@ def asset_url(base_url: str, feed_id: str, local_path: str, *, key: str | None =
     return f"{_files(base_url, feed_id, key)}/assets/{quote(name, safe='')}"
 
 
-__all__ = ["FEEDS_PREFIX", "KEY_SEGMENT", "asset_url", "feed_url", "media_url", "with_credentials"]
+def feed_object_url(base_url: str, feed_id: str, path: str) -> str:
+    """``{base_url}/api/feeds/{id}/objects/{path}``: the operator download of one stored object
+    (``path`` is relative to ``feeds/{id}/``; each of its segments is quoted)."""
+    segments = "/".join(quote(segment, safe="") for segment in path.split("/"))
+    return f"{_base(base_url)}{OBJECTS_PREFIX}/{quote(feed_id, safe='')}/objects/{segments}"
+
+
+__all__ = [
+    "FEEDS_PREFIX",
+    "KEY_SEGMENT",
+    "OBJECTS_PREFIX",
+    "asset_url",
+    "feed_object_url",
+    "feed_url",
+    "media_url",
+    "with_credentials",
+]

@@ -6,6 +6,7 @@ import type {
   EngineCookieFileRead,
   EngineCookiesRead,
   BucketRead,
+  FeedObjectRead,
   MirrorDefaults,
   ItemRead,
   JobRead,
@@ -200,6 +201,24 @@ export function request(overrides: Partial<RequestRead> = {}): RequestRead {
     items: [],
     job: null,
     created_at: "2024-01-15T09:00:00Z",
+    ...overrides,
+  };
+}
+
+export function feedObject(overrides: Partial<FeedObjectRead> = {}): FeedObjectRead {
+  const feedId = "bucket-1";
+  const name = overrides.name ?? "0123456789abcdef.m4a";
+  const path = overrides.path ?? `media/${name}`;
+  return {
+    path,
+    name,
+    kind: "media",
+    size_bytes: 4_407,
+    last_modified: "2024-01-15T09:00:00Z",
+    etag: null,
+    url: `http://localhost:8080/api/feeds/${feedId}/objects/${path}`,
+    item_id: "0123456789abcdef",
+    item_title: "Episode one",
     ...overrides,
   };
 }

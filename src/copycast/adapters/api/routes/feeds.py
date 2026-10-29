@@ -1,17 +1,22 @@
-"""Feeds: list (plus the ``/mirrors`` and ``/buckets`` aliases), get, rotate credentials, delete."""
+"""Feeds: list (plus the ``/mirrors`` and ``/buckets`` aliases), get, rotate credentials, delete,
+and the storage view: the objects a Feed keeps, each downloadable."""
 
 from __future__ import annotations
 
+import mimetypes
 from typing import Annotated, Literal
+from urllib.parse import quote
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Query, Request, Response
 
-from copycast.adapters.api.deps import RebuildGuard, ServicesDep
-from copycast.adapters.api.problems import problem_responses
+from copycast.adapters.api.deps import ContainerDep, RebuildGuard, ServicesDep
+from copycast.adapters.api.objects import ObjectResponse
+from copycast.adapters.api.problems import problem_response, problem_responses
 from copycast.application.models import (
     ClearFeedRequest,
     ClearFeedResult,
     FeedList,
+    FeedObjectList,
     FeedRead,
     SelectionResult,
 )
@@ -97,6 +102,75 @@ async def export_opml(services: ServicesDep) -> Response:
 )
 async def get_feed(services: ServicesDep, feed_id: str) -> FeedRead:
     return await services.get_feed(feed_id)
+
+
+@router.get(
+    "/feeds/{feed_id}/objects",
+    operation_id="list_feed_objects",
+    openapi_extra={"x-capability": "list_feed_objects"},
+    response_model=FeedObjectList,
+    responses=problem_responses(404),
+    summary="Every object a Feed keeps in the Object store, with a download URL each",
+)
+async def list_feed_objects(services: ServicesDep, feed_id: str) -> FeedObjectList:
+    return await services.list_feed_objects(feed_id)
+
+
+OBJECT_CONTENT_TYPES = {".m4a": "audio/mp4", ".vtt": "text/vtt", ".srt": "application/x-subrip"}
+"""Types ``mimetypes`` does not know on every platform."""
+
+
+def content_disposition(name: str) -> str:
+    """``attachment`` with an ASCII ``filename`` and, for other names, RFC 5987's ``filename*``
+    (what Starlette's ``FileResponse`` does); quotes, backslashes and control characters never
+    reach the header."""
+    ascii_name = "".join(
+        ch for ch in name.encode("ascii", "ignore").decode() if ch >= " " and ch not in '"\\'
+    )
+    header = f'attachment; filename="{ascii_name or "download"}"'
+    if quote(name) != name:
+        header += f"; filename*=utf-8''{quote(name)}"
+    return header
+
+
+def object_media_type(name: str) -> str:
+    """The content type to download ``name`` under; ``application/octet-stream`` when unknown."""
+    lower = name.lower()
+    for suffix, media_type in OBJECT_CONTENT_TYPES.items():
+        if lower.endswith(suffix):
+            return media_type
+    guessed, _ = mimetypes.guess_type(name, strict=False)
+    return guessed or "application/octet-stream"
+
+
+@router.get(
+    "/feeds/{feed_id}/objects/{path:path}",
+    operation_id="download_feed_object",
+    response_class=Response,
+    responses={
+        200: {"content": {"application/octet-stream": {"schema": {"type": "string"}}}},
+        **problem_responses(404),
+    },
+    summary="Download one stored object of a Feed as an attachment",
+)
+async def download_feed_object(
+    request: Request, container: ContainerDep, services: ServicesDep, feed_id: str, path: str
+) -> Response:
+    await services.get_feed(feed_id)
+    layout = container.layout
+    try:
+        key: str = layout.resolve(feed_id, path)
+    except ValueError:
+        return problem_response(request, status=404, slug="not-found", detail="no such object")
+    obj = await layout.store.head_async(key)
+    if obj is None:
+        return problem_response(request, status=404, slug="not-found", detail="no such object")
+    return ObjectResponse(
+        layout.store,
+        obj,
+        media_type=object_media_type(obj.name),
+        headers={"Content-Disposition": content_disposition(obj.name)},
+    )
 
 
 @router.post(

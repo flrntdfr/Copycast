@@ -26,6 +26,8 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "clear_feed",
         "rotate_feed_credentials",
         "export_opml",
+        # storage
+        "list_feed_objects",
         # items
         "list_items",
         "get_item",

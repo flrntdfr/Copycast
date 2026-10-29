@@ -54,8 +54,8 @@ export function MirrorDefaultsSection() {
           <span className="inline-flex items-center gap-1.5">
             Mirrors
             <HelpTip label="About the Mirror defaults">
-              Every Mirror follows these unless its own Settings tab sets a value; new Mirrors, from
-              the Add Source dialog or an agent, start from the policy.
+              Every Mirror follows these unless its own Settings dialog sets a value; new Mirrors,
+              from the Add Source dialog or an agent, start from the policy.
             </HelpTip>
           </span>
         }

@@ -313,6 +313,11 @@ class PublicUrlsAdapter:
         url: str = compose(self._base_url, feed_id, local_path)
         return url
 
+    def feed_object_url(self, feed_id: str, path: str) -> str:
+        compose = _load("copycast.adapters.feeds.urls", "feed_object_url")
+        url: str = compose(self._base_url, feed_id, path)
+        return url
+
 
 class RowFactoryAdapter:
     """New ORM rows for the repositories that only accept instances (``feeds.add``)."""

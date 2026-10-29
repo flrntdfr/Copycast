@@ -15,6 +15,13 @@ export function useInvalidateCatalog(feedId: string) {
       queryKey: [OPS.get_feed[0], OPS.get_feed[1], { params: { path: { feed_id: feedId } } }],
     });
     void queryClient.invalidateQueries({ queryKey: [OPS.list_jobs[0], OPS.list_jobs[1]] });
+    void queryClient.invalidateQueries({
+      queryKey: [
+        OPS.list_feed_objects[0],
+        OPS.list_feed_objects[1],
+        { params: { path: { feed_id: feedId } } },
+      ],
+    });
   };
 }
 

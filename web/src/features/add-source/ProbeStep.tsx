@@ -67,12 +67,6 @@ export function ProbeStep({
         className="[&>[data-slot=progress-indicator]]:animate-pulse"
         aria-label="Probing the Source"
       />
-      <p className="text-sm text-muted-foreground">
-        Feeds answer in a moment; pages and video sites can take longer while the Engine lists them.
-        {creating
-          ? " The operator’s default policy applies; change it in the Mirror’s Settings tab."
-          : ""}
-      </p>
       {creating ? null : (
         <Button variant="outline" onClick={onCancel}>
           Cancel

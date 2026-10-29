@@ -114,9 +114,21 @@ describe("Add Source dialog", () => {
     const user = userEvent.setup();
     renderApp("/");
     await submitBar(user, feedUrl);
-    expect(await screen.findByRole("dialog", { name: "Mirror created" })).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "Mirror created" });
     expect(created).toEqual([{ source_url: feedUrl, candidate_token: "only" }]);
-    expect(screen.getByText(/Refresh · Running/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("status")).toHaveTextContent(
+      "Example Podcast is now a Mirror.",
+    );
+    expect(within(dialog).getByLabelText("Mirror Feed URL")).toHaveValue(
+      "http://localhost:8080/feeds/mirror-new.xml",
+    );
+    expect(within(dialog).getByRole("link", { name: "Open Mirror" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Add another" })).toBeInTheDocument();
+    // Only the title, the check line, the feed URL and the two buttons: no instructions,
+    // no credentials, no Refresh status.
+    expect(within(dialog).queryByText(/In your podcast app/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/Username and password/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/Refresh/)).not.toBeInTheDocument();
   });
 
   it("asks before mirroring a lone video, offering the Bucket instead", async () => {

@@ -1,22 +1,15 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import { describeWorkerSeen, workerSeenOf } from "./worker-status";
-import { about, bucket, mirror, ready } from "@/test/factories";
+import { about, ready } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
-
-const feeds = [
-  mirror({ id: "mirror-1", title: "Example Podcast", storage_bytes: 900_000_000 }),
-  bucket({ id: "bucket-1", name: "Copycast", title: "Copycast", storage_bytes: 12_000 }),
-];
 
 function handlers(readiness = ready(), readyStatus = 200) {
   return [
     http.get("/api/about", () => HttpResponse.json(about())),
-    http.get("/api/feeds", () => HttpResponse.json({ feeds })),
     http.get("/api/jobs", () => HttpResponse.json({ jobs: [], total: 0, limit: 1, offset: 0 })),
     http.get("/healthz/ready", () => HttpResponse.json(readiness, { status: readyStatus })),
   ];
@@ -52,7 +45,7 @@ describe("worker-status helpers", () => {
 });
 
 describe("AboutPage", () => {
-  it("shows versions, totals, storage per feed and the worker heartbeat", async () => {
+  it("shows versions, totals and the worker heartbeat", async () => {
     server.use(...handlers());
     renderApp("/about");
 
@@ -70,57 +63,21 @@ describe("AboutPage", () => {
     expect(within(worker).getByRole("time")).toHaveAttribute("datetime", "2024-01-15T09:00:00Z");
     expect(screen.queryByText("The worker has not reported recently")).not.toBeInTheDocument();
 
-    const rows = await screen.findAllByTestId("storage-row");
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent("Example Podcast");
-    expect(rows[0]).toHaveTextContent("Mirror");
-    expect(rows[0]).toHaveTextContent("900 MB");
-    expect(within(rows[0]!).getByRole("link", { name: "Example Podcast" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Export OPML" })).toHaveAttribute(
       "href",
-      "/mirrors/mirror-1",
+      "/api/feeds.opml",
     );
-    expect(rows[1]).toHaveTextContent("Bucket");
     expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute(
       "href",
       "https://github.com/flrntdfr/Copycast",
     );
 
-    // Sorting: by name (ascending first), then size toggles direction.
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Sort by name" }));
-    expect(screen.getAllByTestId("storage-row")[0]).toHaveTextContent("Copycast");
-    await user.click(screen.getByRole("button", { name: "Sort by size" }));
-    expect(screen.getAllByTestId("storage-row")[0]).toHaveTextContent("Example Podcast");
-    await user.click(screen.getByRole("button", { name: "Sort by size" }));
-    expect(screen.getAllByTestId("storage-row")[0]).toHaveTextContent("Copycast");
-  });
-
-  it("purges every archived Episode after a dry run and a confirmation", async () => {
-    const bodies: { dry_run?: boolean }[] = [];
-    server.use(
-      ...handlers(),
-      http.post("/api/admin/purge", async ({ request }) => {
-        const body = (await request.json()) as { dry_run?: boolean };
-        bodies.push(body);
-        return HttpResponse.json({
-          matched: 42,
-          deleted_count: body.dry_run ? 0 : 42,
-          bytes_freed: 1_500_000_000,
-          dry_run: body.dry_run ?? true,
-        });
-      }),
-    );
-    const user = userEvent.setup();
-    renderApp("/about");
-    await screen.findByRole("heading", { name: "About" });
-    await user.click(screen.getByRole("button", { name: "Delete every archived Episode" }));
-    const dialog = await screen.findByRole("alertdialog");
-    await waitFor(() => expect(dialog).toHaveTextContent("Delete 42 archived Episodes (1.5 GB)?"));
-    expect(bodies).toEqual([{ dry_run: true }]);
-    await user.click(within(dialog).getByRole("button", { name: "Delete 42" }));
-    await waitFor(() => expect(bodies).toEqual([{ dry_run: true }, { dry_run: false }]));
-    expect(await screen.findByText("42 Episodes deleted, 1.5 GB freed")).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    // The storage table and the purge button are gone: buckets live on the Feeds page.
+    expect(screen.queryByRole("heading", { name: "Storage per feed" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("storage-row")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete every archived Episode" }),
+    ).not.toBeInTheDocument();
   });
 
   it("warns when the worker was never seen, even though readiness answers 503", async () => {

@@ -41,7 +41,7 @@ import { RowDetails } from "./RowDetails";
 import { SelectionBar } from "./SelectionBar";
 import { buildColumns } from "./columns";
 import { isBelowMinimum } from "./catalog-state";
-import { useBulkActions, useInvalidateCatalog } from "./mutations";
+import { useBulkActions } from "./mutations";
 import { type CatalogSearch, toCatalogFilters } from "./search";
 import { useCatalogPages } from "./useCatalogPages";
 import { count } from "@/lib/labels";
@@ -163,7 +163,6 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
   const pages = useCatalogPages(feed.id, filters, { showHidden: search.state === "deleted" });
   const { rows, reach } = pages;
   const bulk = useBulkActions(feed.id, feedKind);
-  const invalidate = useInvalidateCatalog(feed.id);
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [expanded, setExpanded] = useState<ExpandedState>({});
@@ -331,7 +330,6 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
         onColumnVisibilityChange={(id, visible) =>
           setColumnVisibility((v) => ({ ...v, [id]: visible }))
         }
-        onQueued={invalidate}
       />
       {empty ? (
         <EmptyState

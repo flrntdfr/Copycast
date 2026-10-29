@@ -23,7 +23,7 @@ const NAV: {
 }[] = [
   { to: "/", label: "Feeds" },
   { to: "/jobs", label: "Jobs", extra: <JobsIndicator /> },
-  { to: "/keys", label: "API keys" },
+  { to: "/keys", label: "MCP" },
   { to: "/settings", label: "Settings" },
   { to: "/about", label: "About" },
 ];

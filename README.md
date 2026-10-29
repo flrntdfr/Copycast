@@ -56,8 +56,9 @@ TLS in front first: HTTP Basic without it is not a gate. With a password set:
   accept for the feed and its episodes. Apple Podcasts fetches such a feed but not its audio.
   A pair opens that one feed; **Rotate** mints a new one and cuts off every client holding
   the old one.
-- **MCP takes API keys** minted on the *API keys* page, each with a scope (`read`, `write`
-  or `full`) that caps what the agent may do. The key is shown once. For Claude Code:
+- **MCP takes API keys** minted on the *MCP* page, each with a scope (`read`, `write`
+  or `full`) that caps what the agent may do. The key is shown once, as two lines ready for a
+  `.env` file (`COPYCAST_MCP_URL` and `COPYCAST_MCP_KEY`). For Claude Code:
 
   ```bash
   claude mcp add --transport http copycast https://copycast.example/mcp --header "Authorization: Bearer $COPYCAST_MCP_KEY"

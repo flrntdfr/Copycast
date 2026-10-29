@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from copycast.adapters.feeds.urls import asset_url, feed_url, media_url, with_credentials
+from copycast.adapters.feeds.urls import (
+    asset_url,
+    feed_object_url,
+    feed_url,
+    media_url,
+    with_credentials,
+)
 from tests.support.paths import ASSET_URL, FEED_URL, MEDIA_URL
 
 BASE = "http://testserver"
@@ -52,4 +58,14 @@ def test_feed_url_carries_a_basic_pair_in_the_netloc() -> None:
 def test_with_credentials_quotes_and_keeps_ipv6_hosts() -> None:
     assert with_credentials("http://[::1]:8080/feeds/a.xml?x=1", "u@x", "p:q") == (
         "http://u%40x:p%3Aq@[::1]:8080/feeds/a.xml?x=1"
+    )
+
+
+def test_feed_object_url_quotes_each_segment_of_the_relative_path() -> None:
+    assert (
+        feed_object_url(BASE + "/", "abc", "media/0123456789abcdef.m4a")
+        == f"{BASE}/api/feeds/abc/objects/media/0123456789abcdef.m4a"
+    )
+    assert feed_object_url(BASE, "a b", "assets/we ird.jpg") == (
+        f"{BASE}/api/feeds/a%20b/objects/assets/we%20ird.jpg"
     )

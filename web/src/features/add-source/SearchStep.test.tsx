@@ -40,7 +40,7 @@ describe("Search step", () => {
     );
     const user = userEvent.setup();
     const { history } = renderApp("/");
-    await screen.findByRole("heading", { name: "Mirrors" });
+    await screen.findByRole("heading", { name: "Feeds", level: 1 });
     openAddSource({ query: "gruber wwdc" });
 
     const videos = await screen.findByRole("list", { name: "Video results" });

@@ -4,7 +4,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import type { ApiKeyCreate, ApiKeyRead } from "@/api/types";
-import { claudeCodeCommand } from "./NewApiKeyDialog";
+import { envBlock } from "./NewApiKeyDialog";
 import { about, apiKey } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
@@ -40,7 +40,7 @@ function handlers(
   ];
 }
 
-describe("API keys page", () => {
+describe("MCP page", () => {
   it("lists keys with scope, prefix and last use, and warns while auth is off", async () => {
     const state = {
       keys: [
@@ -58,7 +58,7 @@ describe("API keys page", () => {
     server.use(...handlers(state, false));
     renderApp("/keys");
 
-    expect(await screen.findByRole("heading", { name: "API keys" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "MCP" })).toBeInTheDocument();
     expect(screen.getByText("Authentication is off")).toBeInTheDocument();
     const rows = await screen.findAllByTestId("key-row");
     expect(rows).toHaveLength(2);
@@ -71,7 +71,7 @@ describe("API keys page", () => {
     expect(rows[1]).toHaveTextContent("never");
   });
 
-  it("mints a key, shows the secret once with the Claude Code command, then revokes it", async () => {
+  it("mints a key, shows the .env block once, then revokes it", async () => {
     const state = {
       keys: [] as ApiKeyRead[],
       created: [] as ApiKeyCreate[],
@@ -81,29 +81,28 @@ describe("API keys page", () => {
     const user = userEvent.setup();
     renderApp("/keys");
 
-    expect(await screen.findByText("No API keys yet")).toBeInTheDocument();
+    expect(await screen.findByText("No keys yet")).toBeInTheDocument();
     expect(screen.queryByText("Authentication is off")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "New key" }));
-    const dialog = await screen.findByRole("dialog", { name: "New API key" });
+    const dialog = await screen.findByRole("dialog", { name: "New key" });
     await user.type(within(dialog).getByLabelText("Name"), "Laptop");
     await user.click(within(dialog).getByRole("radio", { name: /Full/ }));
     await user.click(within(dialog).getByRole("button", { name: "Create key" }));
 
     await waitFor(() => expect(state.created).toEqual([{ name: "Laptop", scope: "full" }]));
     const shown = await screen.findByRole("dialog", { name: "Key “Laptop” created" });
-    expect(within(shown).getByLabelText("Secret")).toHaveValue(
-      "cck_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0",
+    expect(within(shown).queryByText(/shown only this once/)).not.toBeInTheDocument();
+    expect(within(shown).getByLabelText("Environment variables")).toHaveValue(
+      "COPYCAST_MCP_URL=http://localhost:8080/mcp\nCOPYCAST_MCP_KEY=cck_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0",
     );
-    expect(within(shown).getByLabelText("Claude Code command")).toHaveValue(
-      claudeCodeCommand("http://localhost:8080/mcp"),
-    );
+    expect(within(shown).getByRole("button", { name: "Copy" })).toBeInTheDocument();
     await user.click(within(shown).getByRole("button", { name: "Done" }));
 
     // Exactly once: reopening the dialog starts a fresh form, the secret is gone.
     await user.click(screen.getByRole("button", { name: "New key" }));
-    const again = await screen.findByRole("dialog", { name: "New API key" });
+    const again = await screen.findByRole("dialog", { name: "New key" });
     expect(within(again).getByLabelText("Name")).toHaveValue("");
-    expect(within(again).queryByLabelText("Secret")).not.toBeInTheDocument();
+    expect(within(again).queryByLabelText("Environment variables")).not.toBeInTheDocument();
     await user.click(within(again).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
@@ -114,14 +113,14 @@ describe("API keys page", () => {
     const confirm = await screen.findByRole("alertdialog", { name: "Revoke “Laptop”?" });
     await user.click(within(confirm).getByRole("button", { name: "Revoke" }));
     await waitFor(() => expect(state.revoked).toEqual(["00000000-0000-4000-8000-000000000099"]));
-    expect(await screen.findByText("No API keys yet")).toBeInTheDocument();
+    expect(await screen.findByText("No keys yet")).toBeInTheDocument();
   });
 });
 
-describe("claudeCodeCommand", () => {
-  it("names the MCP URL and reads the secret from the environment", () => {
-    expect(claudeCodeCommand("https://copycast.example/mcp")).toBe(
-      'claude mcp add --transport http copycast https://copycast.example/mcp --header "Authorization: Bearer $COPYCAST_MCP_KEY"',
+describe("envBlock", () => {
+  it("names the MCP URL and the secret under the documented variable names", () => {
+    expect(envBlock("https://copycast.example/mcp", "cck_secret")).toBe(
+      "COPYCAST_MCP_URL=https://copycast.example/mcp\nCOPYCAST_MCP_KEY=cck_secret",
     );
   });
 });
