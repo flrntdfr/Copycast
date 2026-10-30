@@ -7,16 +7,18 @@ COMPOSE ?= docker compose
 IMAGE   ?= copycast:local
 VERSION ?=
 
-# End-to-end stack: the CI overlay adds the fixtures server and pins the locally built image.
-# The containers run as the caller's uid/gid; the Object store is the stack's own SeaweedFS.
+# End-to-end stack: the CI overlay adds the fixtures server and runs the locally built image.
+# Every byte lives in the stack's own SeaweedFS, so the containers keep the image's user (1000) and
+# need no host directory but ./config. The CI e2e job runs these same targets.
 E2E_IMAGE    ?= copycast:ci
 E2E_BASE_URL ?= http://localhost:8080
 E2E_COMPOSE  := -f docker-compose.yml -f docker-compose.ci.yml --profile direct
-E2E_ENV      := COPYCAST_IMAGE=$(E2E_IMAGE) COPYCAST_UID=$$(id -u) COPYCAST_GID=$$(id -g) \
-                COPYCAST_S3_SECRET_KEY=e2e-object-store-secret
+E2E_ENV      := COPYCAST_IMAGE=$(E2E_IMAGE) COPYCAST_S3_SECRET_KEY=e2e-object-store-secret
+E2E_STACK    := $(E2E_ENV) $(COMPOSE) $(E2E_COMPOSE)
 
 .PHONY: help setup db-up db-down migrate api worker web-dev dev lint fmt typecheck \
-        test test-unit test-integration test-e2e web-test web-lint web-build web-e2e \
+        test test-unit test-integration test-e2e e2e-up e2e-smoke e2e-playwright \
+        e2e-logs e2e-down web-test web-lint web-build web-e2e \
         openapi openapi-check golden-regen coverage-domain build image image-run up down \
         engine-version bump clean
 
@@ -75,16 +77,28 @@ test-integration: ## Integration tests (Postgres via COPYCAST_TEST_DATABASE_URL 
 
 test-e2e: ## Build copycast:ci, start the compose stack (direct profile + fixtures), httpx smoke + Playwright, tear down
 	$(MAKE) image IMAGE=$(E2E_IMAGE)
-	mkdir -p config
-	$(E2E_ENV) $(COMPOSE) $(E2E_COMPOSE) up -d --wait
+	$(MAKE) e2e-up
 	@status=0; \
-	{ COPYCAST_E2E_BASE_URL=$(E2E_BASE_URL) $(UV) run pytest -m e2e tests/e2e -q \
-	  && PLAYWRIGHT_BASE_URL=$(E2E_BASE_URL) $(PNPM) run e2e; } || status=$$?; \
-	if [ $$status -ne 0 ]; then \
-	  $(E2E_ENV) $(COMPOSE) $(E2E_COMPOSE) logs --no-color --tail 200; \
-	fi; \
-	$(E2E_ENV) $(COMPOSE) $(E2E_COMPOSE) down -v; \
+	{ $(MAKE) e2e-smoke && $(MAKE) e2e-playwright; } || status=$$?; \
+	if [ $$status -ne 0 ]; then $(MAKE) e2e-logs; fi; \
+	$(MAKE) e2e-down; \
 	exit $$status
+
+e2e-up: ## Start the end-to-end stack with the already built $(E2E_IMAGE)
+	mkdir -p config
+	$(E2E_STACK) up -d --wait
+
+e2e-smoke: ## httpx smoke tests against the running end-to-end stack
+	COPYCAST_E2E_BASE_URL=$(E2E_BASE_URL) $(UV) run pytest -m e2e tests/e2e -q
+
+e2e-playwright: ## Playwright specs against the running end-to-end stack (its worker archives)
+	PLAYWRIGHT_BASE_URL=$(E2E_BASE_URL) COPYCAST_E2E_WORKER=1 $(PNPM) run e2e
+
+e2e-logs: ## Tail the end-to-end stack's logs
+	$(E2E_STACK) logs --no-color --tail 300
+
+e2e-down: ## Stop the end-to-end stack and drop its volumes
+	$(E2E_STACK) down -v
 
 web-test: ## Frontend unit tests (vitest)
 	$(PNPM) run test -- --run

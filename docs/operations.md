@@ -593,8 +593,8 @@ pushes the lock change to `main`; `image.yml` then builds and publishes:
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
-| `2.2.0` | yes, on every engine bump | "the current 2.2.0" |
-| `2.2.0-yt2026.10.26.220202.dev0` | never (until pruned) | exactly this app + engine combination |
+| `2.2.1` | yes, on every engine bump | "the current 2.2.1" |
+| `2.2.1-yt2026.10.26.220202.dev0` | never (until pruned) | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
 Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. After each build the
@@ -603,7 +603,7 @@ are deleted, so roll back within that window or pull and keep the image yourself
 runs with `GITHUB_TOKEN`, which needs the package to grant the repository the Admin role
 (Package settings → Manage Actions access). To roll back an engine that broke a site, pin
 the previous immutable tag in `.env`
-(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:2.2.0-yt<previous>`) or in the kustomize overlay
+(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:2.2.1-yt<previous>`) or in the kustomize overlay
 (`images[].newTag`), and `docker compose up -d` / `kubectl apply -k`. The About page and
 `copycast --version` show which engine is running; `jobs.engine_version` records which engine
 archived each item.

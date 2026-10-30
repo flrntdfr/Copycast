@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "copycast"
-version = "2.2.0"
+version = "2.2.1"
 description = "Self-hosted podcast mirroring and archiving service"
 requires-python = ">=3.13,<3.14"
 license = "MIT"
@@ -19,7 +19,7 @@ dependencies = [
     "structlog==26.1.0",
     "httpx==0.28.1",
     "sse-starlette==3.4.11",
-    "fastmcp==4.0.3",
+    "fastmcp==4.1.4",
     "lxml==6.1.3",
     "yt-dlp[default]==2026.10.26.220202.dev0",
     "click==8.5.0",

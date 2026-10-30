@@ -3,7 +3,7 @@
 # Feed cache, localhost:6379). Matches config/copycast.toml.
 services:
   postgres:
-    image: postgres:17.11@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
+    image: postgres:17.11@sha256:31ba9c94a03ada9988f2bb493a22a75eef3a185884533e5cdbcd498ea835b08f
     environment:
       POSTGRES_USER: copycast
       POSTGRES_PASSWORD: copycast

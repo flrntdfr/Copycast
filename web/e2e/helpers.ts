@@ -26,7 +26,14 @@ interface FeedSummary {
   source_url?: string;
 }
 
-/** Delete every Mirror so each spec starts from an empty Mirrors page. */
+/** A Local feed (BucketRead): only it has a name and the default flag; a Mirror has neither. */
+interface LocalFeedSummary extends FeedSummary {
+  name: string;
+  /** The default Local feed, which can be renamed but never deleted. */
+  is_default: boolean;
+}
+
+/** Delete every Mirror so each spec starts from a Feeds page with no Mirror. */
 export async function deleteAllMirrors(request: APIRequestContext): Promise<void> {
   const response = await request.get("/api/feeds?kind=mirror");
   expect(response.ok()).toBeTruthy();
@@ -42,16 +49,17 @@ export async function deleteAllMirrors(request: APIRequestContext): Promise<void
   }
 }
 
-export async function defaultBucket(request: APIRequestContext): Promise<FeedSummary> {
+/** The default Local feed, "Copycast" unless renamed (the API's kind is still "bucket"). */
+export async function defaultLocalFeed(request: APIRequestContext): Promise<LocalFeedSummary> {
   const response = await request.get("/api/feeds?kind=bucket");
   expect(response.ok()).toBeTruthy();
-  const { feeds } = (await response.json()) as { feeds: FeedSummary[] };
-  const bucket = feeds.find((feed) => feed.title === "Copycast") ?? feeds[0];
-  if (!bucket) throw new Error("the default Bucket exists");
-  return bucket;
+  const { feeds } = (await response.json()) as { feeds: LocalFeedSummary[] };
+  const localFeed = feeds.find((feed) => feed.is_default) ?? feeds[0];
+  if (!localFeed) throw new Error("the default Local feed exists");
+  return localFeed;
 }
 
-/** Add the fixture feed from the Mirrors page bar and land on the dialog's Created step. */
+/** Add the fixture feed from the Feeds page bar and land on the dialog's Created step. */
 export async function createFixtureMirror(page: Page): Promise<string> {
   // Archive with Backfill, so the worker archives every fixture item (the default is Ephemeral).
   const defaults = await page.request.put("/api/settings/defaults", {

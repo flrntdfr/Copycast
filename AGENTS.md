@@ -205,7 +205,7 @@ _Avoid_: Role, permission, level, grant
 
 ### Stack
 
-Python 3.13, uv lockfile, FastAPI, Pydantic v2, pydantic-settings (`config/copycast.toml` plus `COPYCAST__SECTION__KEY` environment variables; `COPYCAST__AUTH__PASSWORD` switches authentication on), SQLAlchemy 2 async with psycopg 3, Alembic, structlog, httpx, lxml, sse-starlette, fastmcp, click, obstore (the Object store client), redis (the Feed cache client, against Valkey); `yt-dlp[default]` from the lockfile; ffmpeg from the OS image; Postgres 17, SeaweedFS (S3), Valkey 9. Frontend: React 19, TypeScript, Vite 7, Tailwind v4, shadcn/ui, TanStack Router/Query/Table, openapi-typescript + openapi-fetch, vitest + MSW, Playwright; package manager pnpm 11 via corepack (never npm or yarn). Delivery: one image, Docker Compose (Tailscale sidecar or direct port), Kubernetes kustomize base, GitHub Actions.
+Python 3.13, uv lockfile, FastAPI, Pydantic v2, pydantic-settings (`config/copycast.toml` plus `COPYCAST__SECTION__KEY` environment variables; `COPYCAST__AUTH__PASSWORD` switches authentication on), SQLAlchemy 2 async with psycopg 3, Alembic, structlog, httpx, lxml, sse-starlette, fastmcp, click, obstore (the Object store client), redis (the Feed cache client, against Valkey); `yt-dlp[default]` from the lockfile; ffmpeg from the OS image; Postgres 17, SeaweedFS (S3), Valkey 9. Frontend: React 19, TypeScript, Vite 8, Tailwind v4, shadcn/ui, TanStack Router/Query/Table, openapi-typescript + openapi-fetch, vitest + MSW, Playwright; package manager pnpm 11 via corepack (never npm or yarn). Delivery: one image, Docker Compose (Tailscale sidecar or direct port), Kubernetes kustomize base, GitHub Actions.
 
 ### Repository map
 

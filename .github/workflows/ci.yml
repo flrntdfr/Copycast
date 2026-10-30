@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-24.04
     services:
       postgres:
-        image: postgres:17.11@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
+        image: postgres:17.11@sha256:31ba9c94a03ada9988f2bb493a22a75eef3a185884533e5cdbcd498ea835b08f
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -38,12 +38,12 @@ jobs:
     env:
       COPYCAST_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
 
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.21"
           enable-cache: true
@@ -69,7 +69,7 @@ jobs:
       - name: Tests (unit + integration, coverage gate)
         run: uv run pytest -m "not e2e and not network" --cov --cov-report=term-missing --cov-report=xml
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: coverage-python
@@ -80,19 +80,19 @@ jobs:
     name: Web (lint, types, tests, build, OpenAPI drift)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: web/package.json
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.21"
           enable-cache: true
@@ -122,7 +122,7 @@ jobs:
     name: Image (build + smoke)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Versions
         id: versions
@@ -130,9 +130,9 @@ jobs:
           echo "app=$(grep -E '^version = ' pyproject.toml | head -n1 | sed -E 's/version = "(.*)"/\1/')" >> "$GITHUB_OUTPUT"
           echo "engine=$(python3 scripts/engine_version.py)" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           load: true
@@ -154,9 +154,9 @@ jobs:
     runs-on: ubuntu-24.04
     needs: [python, web]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Versions
         id: versions
@@ -164,7 +164,7 @@ jobs:
           echo "app=$(grep -E '^version = ' pyproject.toml | head -n1 | sed -E 's/version = "(.*)"/\1/')" >> "$GITHUB_OUTPUT"
           echo "engine=$(python3 scripts/engine_version.py)" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           load: true
@@ -175,17 +175,17 @@ jobs:
           cache-from: type=gha,scope=ci-linux/amd64
           cache-to: type=gha,mode=max,scope=ci-linux/amd64
 
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.21"
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: web/package.json
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: pnpm
@@ -197,34 +197,22 @@ jobs:
           pnpm --dir web install --frozen-lockfile
           pnpm --dir web exec playwright install --with-deps chromium
 
+      # The stack, its environment and the suites come from the Makefile's e2e targets, the same
+      # ones `make test-e2e` runs locally; the image is built above as copycast:ci.
       - name: Start the stack
-        run: |
-          mkdir -p data && sudo chown -R 1000:1000 data
-          docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile direct up -d --wait
-
-      - name: Wait for readiness
-        run: |
-          for _ in $(seq 1 60); do
-            curl -fsS http://localhost:8080/healthz/ready && exit 0
-            sleep 3
-          done
-          echo "stack did not become ready" >&2
-          docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile direct ps
-          exit 1
+        run: make e2e-up
 
       - name: E2E smoke (httpx)
-        run: uv run pytest -m e2e tests/e2e -q
+        run: make e2e-smoke
 
       - name: Playwright
-        env:
-          PLAYWRIGHT_BASE_URL: http://localhost:8080
-        run: pnpm --dir web run e2e
+        run: make e2e-playwright
 
       - name: Stack logs
         if: failure()
-        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile direct logs --no-color --tail 300
+        run: make e2e-logs
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: playwright-report
@@ -233,7 +221,7 @@ jobs:
 
       - name: Stop the stack
         if: always()
-        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile direct down -v
+        run: make e2e-down
 
   k8s:
     name: Kubernetes manifests (kustomize + kubeconform)
@@ -241,7 +229,7 @@ jobs:
     env:
       KUBECONFORM_VERSION: v0.6.7
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install kubeconform
         run: |

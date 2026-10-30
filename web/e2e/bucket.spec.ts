@@ -1,23 +1,24 @@
 import { expect, test } from "@playwright/test";
 
-import { defaultBucket } from "./helpers";
+import { defaultLocalFeed } from "./helpers";
 
 test.describe("Bucket", () => {
   test("opens a feed's bucket from its card, lists its files and previews a purge", async ({
     page,
     request,
   }) => {
-    const bucket = await defaultBucket(request);
+    // Every Feed has a bucket; the default Local feed always exists, so its bucket does too.
+    const feed = await defaultLocalFeed(request);
     await page.goto("/");
     // The Buckets box is collapsed by default: open it, then the default Local feed's card.
     await page.getByRole("button", { name: /Buckets/ }).click();
-    await page.getByTestId("bucket-card").filter({ hasText: bucket.title }).first().click();
-    await expect(page).toHaveURL(new RegExp(`/buckets/${bucket.id}`));
-    await expect(page.getByRole("heading", { name: bucket.title })).toBeVisible();
-    await expect(page.getByTestId("bucket-summary")).toContainText(/\d+ files? · [\d.,]+ MB/);
+    await page.getByTestId("bucket-card").filter({ hasText: feed.name }).first().click();
+    await expect(page).toHaveURL(new RegExp(`/buckets/${feed.id}`));
+    await expect(page.getByRole("heading", { name: feed.name })).toBeVisible();
+    await expect(page.getByTestId("bucket-summary")).toContainText(/[\d,]+ files? · [\d.,]+ MB/);
     await expect(page.getByRole("link", { name: "Open feed" })).toHaveAttribute(
       "href",
-      `/feed/${bucket.id}`,
+      `/feed/${feed.id}`,
     );
     // Every setting lives on the feed page: no Settings or Add URL on the bucket.
     await expect(page.getByRole("button", { name: "Settings" })).toHaveCount(0);
@@ -25,10 +26,10 @@ test.describe("Bucket", () => {
 
     // The published feed comes first, never purged.
     const feedRow = page.getByTestId("object-row").first();
-    await expect(feedRow).toContainText(`${bucket.id}.xml`);
-    await expect(feedRow.getByRole("link", { name: `Download ${bucket.id}.xml` })).toHaveAttribute(
+    await expect(feedRow).toContainText(`${feed.id}.xml`);
+    await expect(feedRow.getByRole("link", { name: `Download ${feed.id}.xml` })).toHaveAttribute(
       "href",
-      new RegExp(`/feeds/${bucket.id}\\.xml$`),
+      new RegExp(`/feeds/${feed.id}\\.xml$`),
     );
     await expect(
       feedRow.getByRole("button", { name: "Part of the feed itself: never purged" }),
