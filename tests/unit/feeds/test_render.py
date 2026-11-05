@@ -19,6 +19,7 @@ from lxml import etree
 from copycast.adapters.feeds.render import (
     CONTENT_TYPE,
     GENERATOR,
+    RENDER_FORMAT_SINCE,
     AssetView,
     FeedView,
     ItemView,
@@ -239,14 +240,14 @@ def test_rss_preserved(rich: ParsedFeed) -> None:
     )
     items.append(item("i2", 2, "Episode 2", state=ArchiveState.available, published_at=NOW))
     rendered = render_feed(feed, items, base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
-    assert rendered.revision == 7 and rendered.last_modified == NOW
+    assert rendered.revision == 7 and rendered.last_modified == RENDER_FORMAT_SINCE
     assert rendered.content_type == CONTENT_TYPE
     root, channel = channel_of(rendered)
     assert root.get("version") == "2.0"
     assert root.nsmap["itunes"] == NS_ITUNES and root.nsmap["podcast"] == NS_PODCAST
     assert channel.findtext("title") == "Copycast Test Podcast"
     assert channel.findtext("generator") == GENERATOR
-    assert channel.findtext("lastBuildDate") == rfc2822(NOW)
+    assert channel.findtext("lastBuildDate") == rfc2822(RENDER_FORMAT_SINCE)
     assert channel.find(tag(NS_ITUNES, "new-feed-url")) is None
     self_links = [
         link for link in channel.findall(tag(NS_ATOM, "link")) if link.get("rel") == "self"
@@ -732,7 +733,7 @@ def test_channel_only_source_xml_and_conflicting_prefixes_are_handled() -> None:
     root, channel = channel_of(rendered)
     assert root.tag == "rss" and root.get("version") == "2.0"
     assert channel.findtext("generator") == GENERATOR
-    assert channel.findtext("lastBuildDate") == rfc2822(NOW)
+    assert channel.findtext("lastBuildDate") == rfc2822(RENDER_FORMAT_SINCE)
     self_links = channel.findall(tag(NS_ATOM, "link"))
     assert [link.get("href") for link in self_links] == [f"{BASE_URL}/feeds/f.xml"]
     assert channel.find("{urn:other}link").get("href") == "https://elsewhere"  # type: ignore[union-attr]
@@ -872,6 +873,30 @@ def test_every_feed_asks_directories_not_to_list_it(rich: ParsedFeed) -> None:
         root, channel = channel_of(rendered)
         assert root.nsmap["podcast"] == NS_PODCAST
         assert _blocks(channel) == [(NS_ITUNES, "Yes"), (NS_PODCAST, "yes")]
+
+
+def test_last_modified_never_predates_the_render_format() -> None:
+    """A feed unchanged since before 2.3.0 still reports a Last-Modified from after it, so a
+    client revalidating with If-Modified-Since alone gets the new body (block tags, /art/)
+    once; a feed changed later keeps its own date, and lastBuildDate says the same."""
+    old = datetime(2025, 6, 1, 8, 30, tzinfo=UTC)
+    later = RENDER_FORMAT_SINCE + timedelta(days=3, seconds=7)
+    for last_modified, expected in (
+        (old, RENDER_FORMAT_SINCE),
+        (None, RENDER_FORMAT_SINCE),  # falls back to ``now``, itself before the floor here
+        (later, later),
+    ):
+        feed = FeedView(
+            id="copycast-abc234",
+            kind=FeedKind.bucket,
+            title="Copycast",
+            last_modified=last_modified,
+        )
+        rendered = render_feed(feed, [], base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
+        assert rendered.last_modified == expected
+        _, channel = channel_of(rendered)
+        assert channel.findtext("lastBuildDate") == rfc2822(expected)
+    assert datetime.now(UTC) >= RENDER_FORMAT_SINCE  # a Last-Modified is never in the future
 
 
 def test_a_sources_own_block_tags_are_replaced_never_duplicated() -> None:

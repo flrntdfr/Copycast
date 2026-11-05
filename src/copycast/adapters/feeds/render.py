@@ -64,6 +64,12 @@ TRANSCRIPT_MIME: Final[dict[AssetFormat, str]] = {
     AssetFormat.html: "text/html",
 }
 CHAPTERS_MIME: Final = "application/json+chapters"
+RENDER_FORMAT_SINCE: Final = datetime(2026, 11, 5, tzinfo=UTC)
+"""When the rendering last changed for every feed (2.3.0: block tags, ``/art/`` artwork).
+``Last-Modified`` never goes below it: a client that revalidates with ``If-Modified-Since``
+alone would otherwise keep a body cached before the change through 304s, as long as the
+feed itself does not change. Move it forward with any change of that kind; never past the
+release, since a ``Last-Modified`` in the future is not allowed."""
 
 _DROPPED_CHANNEL_CHILDREN: Final = frozenset(
     {
@@ -204,6 +210,7 @@ def render_feed(
     """The feed document for ``feed`` and its archived ``items``.
 
     ``artwork_secret`` is the instance secret the public artwork tokens are keyed with.
+    ``last_modified`` is the feed's own, never earlier than :data:`RENDER_FORMAT_SINCE`.
 
     Items are ordered ``published_at DESC NULLS LAST, ordinal DESC``;
     tombstoned and never-archived items are excluded, Delisted ones kept. An
@@ -211,7 +218,10 @@ def render_feed(
     item keeps once archived; the media route archives it on the first request.
     """
     current = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
-    last_modified = (feed.last_modified or current).astimezone(UTC).replace(microsecond=0)
+    last_modified = max(
+        (feed.last_modified or current).astimezone(UTC).replace(microsecond=0),
+        RENDER_FORMAT_SINCE,
+    )
     renderable = sorted(
         (item for item in items if item.renderable or (feed.automatic and item.on_demand)),
         key=_order_key,
