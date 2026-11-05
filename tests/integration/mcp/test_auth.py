@@ -21,7 +21,7 @@ from mcp.shared.exceptions import MCPError
 
 from copycast.adapters.api.app import TaskScopedContext
 from copycast.settings import Settings, get_settings
-from tests.conftest import TEST_BASE_URL
+from tests.conftest import TEST_ALLOW_PRIVATE_HOSTS, TEST_BASE_URL
 from tests.integration.mcp.conftest import Source, structured
 from tests.support.paths import MCP_PATH, api
 
@@ -39,6 +39,7 @@ def settings(store: Any, storage_config: dict[str, Any], scratch_dir: Path, db: 
         database_url=db,
         refresh={"interval_hours": 24, "fetch_cooldown_minutes": 15, "concurrency": 1},
         auth={"username": OPERATOR[0], "password": OPERATOR[1]},
+        security={"allow_private_hosts": TEST_ALLOW_PRIVATE_HOSTS},
     )
 
 

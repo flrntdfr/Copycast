@@ -21,8 +21,10 @@ from copycast.adapters.assets.mirror import (
     sniff_image,
     transcript_format,
 )
+from copycast.adapters.sources.guard import install_policy
 from copycast.adapters.sources.rss import item_xml, parse_feed
 from copycast.adapters.storage.layout import Layout
+from copycast.domain.destinations import DestinationPolicy
 from copycast.domain.enums import AssetFormat, AssetKind, AssetProvenance
 from tests.support.origin import Origin
 
@@ -263,3 +265,16 @@ def test_mirror_attachments_by_sniff_type_or_extension(origin: Origin, layout: L
     )
     with pytest.raises(AssetError, match="not an image, PDF or audio"):
         mirror_asset(page, layout, FEED)
+
+
+def test_an_asset_at_a_refused_destination_fails_alone(origin: Origin, layout: Layout) -> None:
+    """Show notes pointing at an internal host cost that asset, nothing is stored."""
+    previous = install_policy(DestinationPolicy())
+    try:
+        asset = RemoteAsset(AssetKind.attachment, origin.url_for("/media/tiny.jpg"), item_id="a")
+        with pytest.raises(AssetError, match="not an allowed destination"):
+            mirror_asset(asset, layout, FEED)
+    finally:
+        install_policy(previous)
+    assert origin.requests == []
+    assert layout.store.list(layout.assets_prefix(FEED)) == []

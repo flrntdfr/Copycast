@@ -24,12 +24,15 @@ from urllib.parse import urlsplit, urlunsplit
 import pytest
 
 from copycast.settings import Settings, get_settings
+from tests.support.dns import fake_resolve
 from tests.support.fake_engine import FakeEngine
 from tests.support.origin import FIXTURES_DIR, Origin
 
 TEMPLATE_DB = "copycast_template"
 LAYOUT_VERSION = "2\n"
 TEST_BASE_URL = "http://testserver"
+TEST_ALLOW_PRIVATE_HOSTS = ["127.0.0.0/8", "::1", "localhost"]
+"""``[security] allow_private_hosts`` of the suite: the local fake servers (``Origin``) only."""
 
 
 def _load(module: str, attr: str) -> Any:
@@ -63,6 +66,35 @@ def _isolated_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for name in list(os.environ):
         if name.startswith("COPYCAST__"):
             monkeypatch.delenv(name)
+
+
+@pytest.fixture(autouse=True)
+def _fetch_guard_policy() -> Iterator[None]:
+    """The fetch guard exempts the loopback fake servers, as the ``settings`` fixture configures.
+
+    Tests that call the Source adapters without a container need it too; a container
+    built during a test installs its own settings' policy, and the previous one comes
+    back afterwards. The guard tests pass their own policies.
+    """
+    security = _load("copycast.settings", "SecuritySettings")(
+        allow_private_hosts=TEST_ALLOW_PRIVATE_HOSTS
+    )
+    install = _load("copycast.adapters.sources.guard", "install_policy")
+    previous = install(security.destination_policy)
+    try:
+        yield
+    finally:
+        install(previous)
+
+
+@pytest.fixture(autouse=True)
+def _fake_dns(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fetch guard resolves names through ``tests.support.dns``, never the real resolver.
+
+    Tests marked ``network`` reach the internet and keep the real one.
+    """
+    if request.node.get_closest_marker("network") is None:
+        monkeypatch.setattr("copycast.adapters.sources.guard.resolve", fake_resolve)
 
 
 @pytest.fixture
@@ -195,6 +227,7 @@ def settings(
         storage={**storage_config, "scratch_dir": scratch_dir},
         database_url=database_url,
         refresh={"interval_hours": 24, "fetch_cooldown_minutes": 15, "concurrency": 1},
+        security={"allow_private_hosts": TEST_ALLOW_PRIVATE_HOSTS},
     )
 
 

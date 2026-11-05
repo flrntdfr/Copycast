@@ -22,6 +22,7 @@ from copycast.adapters.sources.http import BodyTooLarge, SourceError, fetch
 from copycast.adapters.sources.rss import NS_ITUNES, NS_PODCAST, PARSER, tag
 from copycast.adapters.storage.layout import Layout
 from copycast.domain.enums import AssetFormat, AssetKind, AssetProvenance
+from copycast.domain.exceptions import DestinationNotAllowed
 from copycast.domain.ids import attachment_slot
 
 if TYPE_CHECKING:
@@ -352,7 +353,9 @@ def mirror_asset(
         fetched = fetch(asset.url, max_bytes=limit, client=client)
     except BodyTooLarge as exc:
         raise AssetError(f"{asset.kind.value} exceeds {limit} bytes: {asset.url}") from exc
-    except SourceError as exc:
+    except (SourceError, DestinationNotAllowed) as exc:
+        # A refused destination fails this asset only: the Source's show notes and
+        # image tags are not the Source itself, and the archive goes on without them.
         raise AssetError(str(exc)) from exc
     body = fetched.body
     if not body:

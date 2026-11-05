@@ -30,6 +30,7 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
+from copycast.domain.destinations import DestinationPolicy
 from copycast.domain.engine_options import EngineOptionRejected, EngineOptions
 
 DEFAULT_CONFIG_PATH = "./config/copycast.toml"
@@ -179,6 +180,32 @@ class CacheSettings(BaseModel):
         return value
 
 
+class SecuritySettings(BaseModel):
+    """The guard on server-side fetches (``domain.destinations``).
+
+    Every fetch a Source drives (probe, Refresh, Artwork and Attachments, the
+    Engine's Source and media URLs) refuses loopback, private, link-local and other
+    non-public addresses. ``allow_private_hosts`` lists the exceptions: hostnames
+    (matched exactly; such a host may resolve to any address) and IP networks in
+    CIDR form (a bare address is one host). Default: none.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    allow_private_hosts: list[str] = Field(default_factory=list[str])
+
+    @field_validator("allow_private_hosts")
+    @classmethod
+    def _entries(cls, value: list[str]) -> list[str]:
+        entries = [entry.strip() for entry in value if entry.strip()]
+        DestinationPolicy.from_entries(entries)  # a ValueError names the bad entry
+        return entries
+
+    @property
+    def destination_policy(self) -> DestinationPolicy:
+        return DestinationPolicy.from_entries(self.allow_private_hosts)
+
+
 def config_path() -> Path:
     return Path(os.environ.get(CONFIG_ENV) or DEFAULT_CONFIG_PATH)
 
@@ -200,6 +227,7 @@ class Settings(BaseSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
 
     # Environment-only knobs (flat COPYCAST_<NAME>, never read from the TOML file).
     bind: str = Field(default="0.0.0.0", validation_alias="COPYCAST_BIND")

@@ -32,6 +32,7 @@ TITLES: dict[str, str] = {
     "candidates-ambiguous": "Several candidates found",
     "source-unsupported": "Source unsupported",
     "source-kind-change": "Source kind change refused",
+    "destination-not-allowed": "Destination not allowed",
     "invalid-selection": "Invalid selection",
     "engine-option-rejected": "Engine option rejected",
     "invalid-cookies": "Not a cookie file",

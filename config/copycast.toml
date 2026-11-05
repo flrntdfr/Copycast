@@ -29,3 +29,8 @@ url = "redis://localhost:6379/0"
 # [auth]                     # prefer COPYCAST__AUTH__PASSWORD in the environment (docs/adr/0011)
 # username = "copycast"
 # password = ""              # set (8+ characters) to switch authentication on
+
+# [security]                 # server-side fetches refuse loopback, private, link-local and CGNAT
+#                            # addresses (and redirects to them); list the exceptions here
+# allow_private_hosts = []   # hostnames or CIDRs, e.g. ["nas.lan", "192.168.1.0/24"];
+#                            # or COPYCAST__SECURITY__ALLOW_PRIVATE_HOSTS='["nas.lan"]'

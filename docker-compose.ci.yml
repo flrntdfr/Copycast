@@ -3,7 +3,8 @@
 #
 # Adds a `fixtures` service (plain http.server over tests/fixtures, reachable from the api and
 # worker containers as http://fixtures:8000) and runs the locally built `copycast:ci` image with
-# a localhost base URL so feed and media links resolve from the test runner. COPYCAST_IMAGE (set
+# a localhost base URL so feed and media links resolve from the test runner; `fixtures` is exempt
+# from the fetch guard ([security] allow_private_hosts). COPYCAST_IMAGE (set
 # by the Makefile's e2e targets) names that image; it is never pulled.
 
 services:
@@ -25,6 +26,9 @@ services:
     environment:
       COPYCAST__BASE_URL: http://localhost:8080
       COPYCAST_LOG_LEVEL: DEBUG
+      # The fixtures server lives on the compose network, a private address the fetch
+      # guard refuses unless exempted by name.
+      COPYCAST__SECURITY__ALLOW_PRIVATE_HOSTS: '["fixtures"]'
     depends_on:
       fixtures:
         condition: service_healthy
@@ -38,6 +42,9 @@ services:
     environment:
       COPYCAST__BASE_URL: http://localhost:8080
       COPYCAST_LOG_LEVEL: DEBUG
+      # The fixtures server lives on the compose network, a private address the fetch
+      # guard refuses unless exempted by name.
+      COPYCAST__SECURITY__ALLOW_PRIVATE_HOSTS: '["fixtures"]'
     depends_on:
       fixtures:
         condition: service_healthy

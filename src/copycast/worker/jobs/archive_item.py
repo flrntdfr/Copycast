@@ -67,6 +67,7 @@ from copycast.domain.enums import (
     ProgressPhase,
     SourceKind,
 )
+from copycast.domain.exceptions import DestinationNotAllowed
 from copycast.domain.listing import SourceListingItem
 from copycast.logging import get_logger
 from copycast.settings import StorageSettings
@@ -478,6 +479,11 @@ async def _fetch_and_store(
         if failure is exc:
             raise
         raise failure from exc
+    except DestinationNotAllowed as exc:
+        # The fetch guard refused the item's URL: no retry would change that.
+        refused = PermanentError(str(exc))
+        await _record_failure(ctx, target.feed_id, item_id, refused)
+        raise refused from exc
     except Exception as exc:
         wrapped = TransientError(f"{type(exc).__name__}: {exc}")
         await _record_failure(ctx, target.feed_id, item_id, wrapped)

@@ -50,6 +50,7 @@ from copycast.domain.enums import (
     RequestStatus,
     WantedReason,
 )
+from copycast.domain.exceptions import DestinationNotAllowed
 from copycast.domain.listing import SourceListing, SourceListingItem
 from copycast.logging import get_logger
 from copycast.worker.constants import LEAF_CAP
@@ -188,6 +189,10 @@ async def run(ctx: JobContext) -> JobOutcome:
     except EngineError as exc:
         await _record_failure(ctx, feed_id, request_id, exc)
         raise
+    except DestinationNotAllowed as exc:
+        refused = PermanentError(str(exc))
+        await _record_failure(ctx, feed_id, request_id, refused)
+        raise refused from exc
     except Exception as exc:
         wrapped = PermanentError(f"{type(exc).__name__}: {exc}")
         await _record_failure(ctx, feed_id, request_id, wrapped)
