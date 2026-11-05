@@ -60,8 +60,10 @@ class EngineSettings(BaseModel):
     @classmethod
     def _reject_owned(cls, value: dict[str, Any]) -> dict[str, Any]:
         # EngineOptionRejected is not a ValueError on purpose: pydantic would
-        # otherwise fold it into a generic ValidationError and lose the keys.
-        return EngineOptions.validate(value, scope="global")
+        # otherwise fold it into a generic ValidationError and lose the keys. The
+        # operator owns this file: only the engine-owned keys are refused here, unlike
+        # a Mirror's engine_options, which pass an allowlist.
+        return EngineOptions.validate_global(value)
 
 
 AUTH_PASSWORD_MIN_LEN = 8

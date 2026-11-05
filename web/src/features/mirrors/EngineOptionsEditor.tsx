@@ -32,7 +32,7 @@ export function EngineOptionsEditor({
         id={id}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder={'{\n  "format": "bestaudio[ext=m4a]/bestaudio"\n}'}
+        placeholder={'{\n  "format_sort": ["abr"],\n  "sleep_interval_requests": 1\n}'}
         spellCheck={false}
         disabled={disabled}
         aria-invalid={invalid}
@@ -49,7 +49,7 @@ export function EngineOptionsEditor({
             {rejectedKeys.map((key) => (
               <li key={key}>
                 <code className="font-mono">{key}</code>: not allowed
-                {scope ? ` for a ${scope}` : ""}; Copycast owns this option.
+                {scope ? ` for a ${scope}` : ""}.
               </li>
             ))}
           </ul>
@@ -57,7 +57,8 @@ export function EngineOptionsEditor({
         {!error && !rejectedKeys.length ? (
           <p className="text-muted-foreground">
             Raw yt-dlp options as a JSON object, layered over the server defaults for this Mirror
-            only. Options Copycast owns (output paths, format selection, post-processors) are
+            only. Only safe tuning is accepted (format_sort, rate, sleep and retry limits,
+            subtitleslangs, geo_bypass, age_limit, a few extractor_args); anything else is
             rejected.
           </p>
         ) : null}

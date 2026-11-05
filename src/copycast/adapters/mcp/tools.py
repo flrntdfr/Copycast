@@ -98,6 +98,16 @@ def _check_deleting_mode(backfill: BackfillRequest | None, tool: str) -> None:
         check_scope(KeyScope.full, f"{tool} (backfill.mode {backfill.mode.value})")
 
 
+def _check_engine_options(given: bool, tool: str) -> None:
+    """Raw yt-dlp params reach the worker as they are: setting or changing them is ``full`` only.
+
+    The allowlist (``domain.engine_options``) already keeps commands, paths and egress
+    out; the scope is the second fence, so a leaked ``write`` key cannot tune the Engine.
+    """
+    if given:
+        check_scope(KeyScope.full, f"{tool} (engine_options)")
+
+
 def with_scope(fn: ToolFn, name: str, scope: KeyScope) -> ToolFn:
     """Check the calling key's scope before the tool body runs (signature preserved)."""
 
@@ -162,9 +172,11 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         Also ``rolling`` with ``latest_n`` (only the newest N stay archived) and
         ``selection`` with ``selection`` such as ``"1-42, 180"`` (follow then defaults to
         false). Rolling and expiring modes delete on their own, so they need a ``full``
-        key. Several candidates -> pass ``candidate_token``.
+        key. Several candidates -> pass ``candidate_token``. ``engine_options`` (allowlisted
+        yt-dlp params) also need a ``full`` key.
         """
         _check_deleting_mode(mirror.backfill, "create_mirror")
+        _check_engine_options(bool(mirror.engine_options), "create_mirror")
         return await container.services.create_mirror(mirror, trigger=JobTrigger.mcp)
 
     async def list_feeds(kind: FeedKind | None = None) -> FeedList:
@@ -286,8 +298,10 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         Archive policy (``all``, ``new``, ``latest``, ``selection``), or turning
         ``sync_deletions`` off while on it, locks every Episode archived so far; a Mirror with
         ``sync_deletions`` is never locked automatically, and switching away unlocks nothing.
+        Setting or clearing ``engine_options`` (allowlisted yt-dlp params) needs a ``full`` key.
         """
         _check_deleting_mode(patch.backfill, "update_mirror")
+        _check_engine_options(patch.engine_options is not None, "update_mirror")
         return await container.services.update_mirror(feed_id, patch)
 
     # ------------------------------------------------------------------ buckets

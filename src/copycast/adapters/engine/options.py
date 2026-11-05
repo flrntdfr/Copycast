@@ -14,7 +14,10 @@ from typing import Any, Final, cast
 from copycast.application.ports import EngineLog
 from copycast.domain.engine_options import ENGINE_OWNED_OPTIONS, EngineOptions
 from copycast.domain.enums import FetchKind
+from copycast.logging import get_logger
 from copycast.settings import Settings
+
+log = get_logger(__name__)
 
 YTDLP_FORMAT: Final = "bestaudio[ext=m4a]/bestaudio/best"
 DIRECT_FORMAT: Final = "bestaudio/best"
@@ -133,18 +136,39 @@ def subtitle_languages(language: str | None) -> list[str]:
     return languages
 
 
+def stored_feed_options(feed_id: str, stored: Mapping[str, Any] | None) -> dict[str, Any]:
+    """A Feed's stored ``engine_options`` minus every key the per-Mirror allowlist refuses.
+
+    The API and MCP refuse those keys at create and update; a row written before
+    2.3.0, or restored from an older ``feed.json``, may still hold one (``netrc_cmd``
+    runs a shell command). It is dropped here with a warning, never handed to yt-dlp.
+    """
+    kept, refused = EngineOptions.sanitize_feed(stored)
+    if refused:
+        log.warning("engine_options.refused", feed_id=feed_id, keys=refused)
+    return kept
+
+
 def engine_options_for(
-    settings: Settings, feed_options: Mapping[str, Any] | None, *, language: str | None
+    settings: Settings,
+    feed_options: Mapping[str, Any] | None,
+    *,
+    feed_id: str,
+    language: str | None,
 ) -> dict[str, Any]:
     """config ``[engine.options]`` -> Feed options, with the languages defaulted.
 
-    ``BASE_OPTIONS`` are overlaid by the engine itself; a Feed's own
-    ``subtitleslangs`` wins over the ``[feed language, en]`` default, and its
-    ``language`` becomes the preferred YouTube metadata language unless the
-    Feed's options name one (the engine falls back to ``[engine] language``).
-    Shared by the worker's jobs and the light Refresh's shallow listing.
+    The one place a Feed's stored options join an engine call: they pass
+    :func:`stored_feed_options` first. ``BASE_OPTIONS`` are overlaid by the engine
+    itself; a Feed's own ``subtitleslangs`` wins over the ``[feed language, en]``
+    default, and its ``language`` becomes the preferred YouTube metadata language
+    unless the Feed's options name one (the engine falls back to ``[engine]
+    language``). Shared by the worker's jobs, the light Refresh's shallow listing and
+    an item's metadata fetch.
     """
-    merged = EngineOptions.merge(settings.engine.options, feed_options, None)
+    merged = EngineOptions.merge(
+        settings.engine.options, stored_feed_options(feed_id, feed_options), None
+    )
     merged.setdefault("subtitleslangs", subtitle_languages(language))
     return with_language(merged, language)
 
@@ -215,6 +239,7 @@ __all__ = [
     "fetch_params",
     "listing_params",
     "merge_options",
+    "stored_feed_options",
     "strip_owned",
     "subtitle_languages",
     "with_approximate_dates",

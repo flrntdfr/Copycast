@@ -5497,7 +5497,8 @@
           "engine_options": {
             "additionalProperties": true,
             "type": "object",
-            "title": "Engine Options"
+            "title": "Engine Options",
+            "description": "Raw yt-dlp params from an allowlist (format_sort, rate, sleep and retry tuning, subtitleslangs, geo_bypass*, age_limit, a few extractor_args); any other key is refused with 422 engine-option-rejected naming it"
           },
           "preferred_language": {
             "anyOf": [
@@ -5940,7 +5941,8 @@
                 "type": "null"
               }
             ],
-            "title": "Engine Options"
+            "title": "Engine Options",
+            "description": "Raw yt-dlp params from an allowlist (format_sort, rate, sleep and retry tuning, subtitleslangs, geo_bypass*, age_limit, a few extractor_args); any other key is refused with 422 engine-option-rejected naming it"
           },
           "preferred_language": {
             "anyOf": [

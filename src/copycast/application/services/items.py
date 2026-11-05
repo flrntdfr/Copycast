@@ -168,7 +168,7 @@ async def fetch_item_metadata(ctx: ServiceContext, feed_id: str, item_id: str) -
     if not url:
         raise Unsupported(f"item {item_id!r} has no Source page to ask")
     found = await asyncio.to_thread(
-        ctx.sources.inspect_video, url, options=options, language=language
+        ctx.sources.inspect_video, url, feed_id=feed_id, options=options, language=language
     )
     if found is None:
         raise Unsupported(f"the Source returned nothing for {url}")

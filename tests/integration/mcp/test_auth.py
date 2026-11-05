@@ -22,7 +22,7 @@ from mcp.shared.exceptions import MCPError
 from copycast.adapters.api.app import TaskScopedContext
 from copycast.settings import Settings, get_settings
 from tests.conftest import TEST_BASE_URL
-from tests.integration.mcp.conftest import structured
+from tests.integration.mcp.conftest import Source, structured
 from tests.support.paths import MCP_PATH, api
 
 pytestmark = pytest.mark.integration
@@ -138,6 +138,67 @@ async def test_unknown_or_revoked_keys_are_refused(
     with pytest.raises((MCPError, RuntimeError)):
         async with _Session(mcp_over_http(secret)) as mcp:
             await mcp.list_tools()
+
+
+async def test_engine_options_need_a_full_key(
+    client: httpx.AsyncClient,
+    operator_headers: dict[str, str],
+    mcp_over_http: Callable[[str | None], Client[Any]],
+    source: Source,
+) -> None:
+    """Raw yt-dlp params are a full-key action over MCP, on top of the allowlist (SEC-1)."""
+    write = await mint(client, operator_headers, "write")
+    full = await mint(client, operator_headers, "full")
+    url = source.write_rss("scoped", items=[1], artwork=False)
+    archive = {"mode": "all"}
+
+    async with _Session(mcp_over_http(write)) as mcp:
+        with pytest.raises(ToolError, match=r"create_mirror \(engine_options\) needs .* 'full'"):
+            await mcp.call_tool(
+                "create_mirror",
+                {
+                    "mirror": {
+                        "source_url": url,
+                        "backfill": archive,
+                        "engine_options": {"ratelimit": 5},
+                    }
+                },
+            )
+        # A write key still mirrors without them (an empty object sets nothing).
+        mirror = structured(
+            await mcp.call_tool(
+                "create_mirror",
+                {"mirror": {"source_url": url, "backfill": archive, "engine_options": {}}},
+            )
+        )
+        for options in ({"ratelimit": 5}, {}):
+            with pytest.raises(ToolError, match=r"update_mirror \(engine_options\) needs"):
+                await mcp.call_tool(
+                    "update_mirror",
+                    {"feed_id": mirror["id"], "patch": {"engine_options": options}},
+                )
+        # Its other fields stay write-key business.
+        renamed = structured(
+            await mcp.call_tool(
+                "update_mirror", {"feed_id": mirror["id"], "patch": {"title": "Mine"}}
+            )
+        )
+        assert renamed["title"] == "Mine" and renamed["engine_options"] == {}
+
+    async with _Session(mcp_over_http(full)) as mcp:
+        # The allowlist holds for a full key too.
+        with pytest.raises(ToolError, match="netrc_cmd"):
+            await mcp.call_tool(
+                "update_mirror",
+                {"feed_id": mirror["id"], "patch": {"engine_options": {"netrc_cmd": "id"}}},
+            )
+        updated = structured(
+            await mcp.call_tool(
+                "update_mirror",
+                {"feed_id": mirror["id"], "patch": {"engine_options": {"ratelimit": 5}}},
+            )
+        )
+        assert updated["engine_options"] == {"ratelimit": 5}
 
 
 async def test_tools_are_gated_by_the_key_scope(

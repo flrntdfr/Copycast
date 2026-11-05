@@ -199,6 +199,58 @@ async def test_engine_options_are_validated_per_feed(
     assert patched.json()["keys"] == ["format"]
 
 
+async def test_engine_options_are_an_allowlist(client: httpx.AsyncClient, source: Source) -> None:
+    """SEC-1: anything off the allowlist is refused, every key named, nothing stored."""
+    url = source.write_rss("allow", items=[1], artwork=False)
+    smuggled = {
+        "netrc_cmd": "touch /tmp/pwned",
+        "usenetrc": True,
+        "cookiefile": "/etc/passwd",
+        "http_headers": {"Ytdl-Request-Proxy": "http://attacker:3128"},
+        "Ratelimit": 5,
+        "ratelimit": "fast",
+        "extractor_args": {
+            "youtube": {"lang": ["de"], "innertube_host": ["attacker.example"]},
+            "youtube-ejs": {"repo": ["attacker/ejs"]},
+        },
+    }
+    refused = await client.post(
+        api("/mirrors"), json={"source_url": url, "engine_options": smuggled}
+    )
+    assert refused.status_code == 422
+    assert refused.headers["content-type"].startswith("application/problem+json")
+    assert problem_type(refused) == "urn:copycast:problem:engine-option-rejected"
+    assert refused.json()["scope"] == "feed"
+    assert refused.json()["keys"] == [
+        "Ratelimit",
+        "cookiefile",
+        "extractor_args.youtube-ejs",
+        "extractor_args.youtube.innertube_host",
+        "http_headers",
+        "netrc_cmd",
+        "ratelimit",
+        "usenetrc",
+    ]
+    assert (await client.get(api("/mirrors"))).json()["feeds"] == []
+
+    allowed = {
+        "ratelimit": 1_000_000,
+        "sleep_interval_requests": 1,
+        "format_sort": ["abr"],
+        "geo_bypass_country": "CH",
+        "extractor_args": {"youtube": {"player_client": ["ios"]}},
+    }
+    mirror = await create_mirror(client, url, engine_options=allowed)
+    assert mirror["engine_options"] == allowed
+    patched = await client.patch(
+        api(f"/mirrors/{mirror['id']}"),
+        json={"engine_options": {"ratelimit": 5, "netrc_cmd": "id"}},
+    )
+    assert patched.status_code == 422 and patched.json()["keys"] == ["netrc_cmd"]
+    read = await client.get(api(f"/feeds/{mirror['id']}"))
+    assert read.json()["engine_options"] == allowed, "a refused patch changes nothing"
+
+
 async def test_validation_problems(client: httpx.AsyncClient) -> None:
     empty = await client.post(api("/mirrors"), json={})
     assert empty.status_code == 422

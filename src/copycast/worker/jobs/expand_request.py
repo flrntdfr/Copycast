@@ -175,6 +175,7 @@ async def run(ctx: JobContext) -> JobOutcome:
         options = engine_options_for(
             ctx.container.settings,
             feed.engine_options,
+            feed_id=feed.id,
             language=load_defaults(ctx.container.layout).language,
         )
 

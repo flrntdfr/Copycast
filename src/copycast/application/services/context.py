@@ -761,7 +761,7 @@ class SourceGateway(Protocol):
     def search_videos(self, query: str, limit: int) -> list[VideoSearchResult]: ...
     def list_playlists(self) -> list[YouTubePlaylist]: ...
     def inspect_video(
-        self, url: str, *, options: Mapping[str, Any], language: str | None
+        self, url: str, *, feed_id: str, options: Mapping[str, Any], language: str | None
     ) -> SourceListingItem | None: ...
     def save_snapshot(self, feed_id: str, snapshot: SourceSnapshot) -> None: ...
     def fetch_rss(
@@ -776,6 +776,7 @@ class SourceGateway(Protocol):
         self,
         url: str,
         *,
+        feed_id: str,
         options: Mapping[str, Any],
         language: str | None,
         cancel: CancelToken,

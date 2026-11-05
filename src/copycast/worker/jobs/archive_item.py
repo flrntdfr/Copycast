@@ -598,6 +598,7 @@ def _target(
         options=engine_options_for(
             ctx.container.settings,
             feed.engine_options,
+            feed_id=feed.id,
             language=effective(
                 load_defaults(ctx.container.layout),
                 language=feed.preferred_language,
