@@ -12,8 +12,13 @@
 # ("auto"): SeaweedFS then sizes the count from the free disk at the first start, a ceiling
 # that stays even after space is freed, and its own metadata log runs out of volumes too.
 #
-# Anonymous requests are refused. The S3 port (8333) is only published inside the compose
-# network; Copycast proxies every byte it serves (docs/adr/0019).
+# Only the S3 gateway listens on the network, and it refuses anonymous requests. The master
+# (9333/19333), the volume server (8080/18080) and the filer (8888/18888) check no credential
+# (the filer lists and serves every object), so they bind to loopback and advertise 127.0.0.1
+# to each other: only this process reaches them. The gateway's gRPC port (18333) shares its
+# bind address and checks nothing either; docker-compose.yml keeps it on a network of its own
+# with the api and the worker, which hold the keys anyway. The Iceberg and Lance catalogs are
+# off and the master sends no telemetry. Copycast proxies every byte it serves (docs/adr/0019).
 set -eu
 
 : "${COPYCAST_S3_ACCESS_KEY:?set COPYCAST_S3_ACCESS_KEY}"
@@ -27,17 +32,18 @@ umask 077
 printf '{"identities":[{"name":"copycast","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}\n' \
   "$COPYCAST_S3_ACCESS_KEY" "$COPYCAST_S3_SECRET_KEY" > /etc/seaweedfs/s3.json
 
-weed server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data -ip.bind=0.0.0.0 \
+weed server -dir=/data -ip=127.0.0.1 -ip.bind=127.0.0.1 -master.telemetry=false \
+  -s3 -s3.config=/etc/seaweedfs/s3.json -s3.ip.bind=0.0.0.0 -s3.port.iceberg=0 -s3.port.lance=0 \
   -master.volumeSizeLimitMB="$VOLUME_SIZE_MB" -volume.max="$VOLUME_MAX" &
 server=$!
 trap 'kill -TERM "$server" 2>/dev/null; wait "$server"' TERM INT
 
 # The bucket: created once, through the master (the gateway refuses anonymous calls).
-until echo "s3.bucket.list" | weed shell -master=localhost:9333 >/tmp/buckets 2>/dev/null; do
+until echo "s3.bucket.list" | weed shell -master=127.0.0.1:9333 >/tmp/buckets 2>/dev/null; do
   sleep 1
 done
 if ! grep -qw "$BUCKET" /tmp/buckets; then
-  echo "s3.bucket.create -name $BUCKET" | weed shell -master=localhost:9333
+  echo "s3.bucket.create -name $BUCKET" | weed shell -master=127.0.0.1:9333
 fi
 touch /tmp/ready
 

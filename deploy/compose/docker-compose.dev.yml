@@ -24,8 +24,9 @@ services:
     environment:
       COPYCAST_S3_ACCESS_KEY: copycast
       COPYCAST_S3_SECRET_KEY: copycast
+    # The S3 gateway only, on this machine only (the entrypoint keeps the rest on loopback).
     ports:
-      - "${COPYCAST_DEV_S3_PORT:-8333}:8333"
+      - "127.0.0.1:${COPYCAST_DEV_S3_PORT:-8333}:8333"
     volumes:
       - ./seaweedfs/entrypoint.sh:/copycast/entrypoint.sh:ro
       - seaweedfs-dev:/data
