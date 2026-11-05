@@ -19,7 +19,7 @@ import pytest
 from copycast.domain.credentials import feed_media_key
 from copycast.settings import Settings, get_settings
 from copycast.worker.runner import Runner
-from tests.conftest import TEST_BASE_URL
+from tests.conftest import TEST_ALLOW_PRIVATE_HOSTS, TEST_BASE_URL
 from tests.integration.api.conftest import Source, archived_items, create_mirror
 
 pytestmark = pytest.mark.integration
@@ -43,6 +43,7 @@ def settings(store: Any, storage_config: dict[str, Any], scratch_dir: Path, db: 
         storage={**storage_config, "scratch_dir": scratch_dir},
         database_url=db,
         refresh={"interval_hours": 24, "fetch_cooldown_minutes": 15, "concurrency": 1},
+        security={"allow_private_hosts": TEST_ALLOW_PRIVATE_HOSTS},
         auth={"username": OPERATOR[0], "password": OPERATOR[1]},
     )
 

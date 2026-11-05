@@ -23,7 +23,7 @@ from copycast.app import Container, build_container
 from copycast.domain.credentials import artwork_mac, new_instance_secret
 from copycast.settings import Settings, get_settings
 from copycast.worker.runner import Runner
-from tests.conftest import TEST_BASE_URL
+from tests.conftest import TEST_ALLOW_PRIVATE_HOSTS, TEST_BASE_URL
 from tests.integration.api.conftest import Source, archived_items, create_mirror
 from tests.support.fake_engine import FakeEngine
 from tests.support.paths import FEED_URL
@@ -56,6 +56,7 @@ def settings(
         storage={**storage_config, "scratch_dir": scratch_dir},
         database_url=db,
         refresh={"interval_hours": 24, "fetch_cooldown_minutes": 15, "concurrency": 1},
+        security={"allow_private_hosts": TEST_ALLOW_PRIVATE_HOSTS},
         **extra,
     )
 
