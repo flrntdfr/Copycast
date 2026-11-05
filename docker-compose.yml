@@ -6,6 +6,12 @@
 #   direct     the api publishes port 8080 on this host (only for a trusted network)
 # The worker, Postgres, SeaweedFS (the Object store) and Valkey (the Feed cache) run under both.
 #
+# SeaweedFS listens on nothing but S3 over HTTP (port 8333, which checks the keys): its entrypoint
+# keeps master, volume, filer and the gateway's own gRPC on loopback, behind a relay. It also sits
+# alone with the api and the worker on the internal network "objects": no other compose container
+# reaches it, it reaches nothing outside, and it publishes no port. A one-off S3 client, a backup
+# sync say, joins <project>_objects, and <project>_default too to reach an off-site target.
+#
 # Every byte Copycast keeps lives in the Object store (docs/adr/0019); the worker downloads and
 # transcodes in its Scratch volume and uploads only finished files. Set COPYCAST_S3_SECRET_KEY
 # in .env before the first start.
@@ -51,6 +57,10 @@ services:
       TS_STATE_DIR: /var/lib/tailscale
       TS_SERVE_CONFIG: /config/serve.json
       TS_USERSPACE: "true"
+    # The api runs in this container's network namespace, so its networks are the api's. Recreate
+    # the api with this container, as a plain `docker compose up -d` does: `--force-recreate
+    # tailscale` alone leaves the api in the old, deleted namespace, with no network at all.
+    networks: [default, objects]
     volumes:
       - tailscale-state:/var/lib/tailscale
       - ./config/tailscale:/config:ro
@@ -86,6 +96,7 @@ services:
     <<: *app
     profiles: [direct]
     command: [api]
+    networks: [default, objects]
     ports:
       - "${COPYCAST_PORT:-8080}:8080"
     volumes:
@@ -102,6 +113,7 @@ services:
   worker:
     <<: *app
     command: [worker]
+    networks: [default, objects]
     # Downloads, transcodes and tags happen here; only finished files go to the Object store.
     volumes:
       - ./config:/config:ro
@@ -132,6 +144,9 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
     entrypoint: ["/bin/sh", "/copycast/entrypoint.sh"]
+    # Only S3 over HTTP leaves the container (the entrypoint keeps the rest on loopback). Never on
+    # "default" and never a published port all the same: only the key holders need the gateway.
+    networks: [objects]
     environment:
       COPYCAST_S3_ACCESS_KEY: ${COPYCAST_S3_ACCESS_KEY:-copycast}
       COPYCAST_S3_SECRET_KEY: ${COPYCAST_S3_SECRET_KEY:?set COPYCAST_S3_SECRET_KEY in .env}
@@ -158,6 +173,11 @@ services:
       timeout: 5s
       retries: 12
     restart: unless-stopped
+
+networks:
+  default:
+  objects:
+    internal: true
 
 volumes:
   pgdata:
