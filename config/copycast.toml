@@ -30,7 +30,12 @@ url = "redis://localhost:6379/0"
 # username = "copycast"
 # password = ""              # set (8+ characters) to switch authentication on
 
-# [security]                 # server-side fetches refuse loopback, private, link-local and CGNAT
-#                            # addresses (and redirects to them); list the exceptions here
-# allow_private_hosts = []   # hostnames or CIDRs, e.g. ["nas.lan", "192.168.1.0/24"];
+# [security]                 # the fetch guard (docs/adr/0023): server-side fetches refuse loopback,
+#                            # private, link-local, CGNAT and other non-public addresses (and
+#                            # redirects to them); list the exceptions here, e.g. a LAN Source
+# allow_private_hosts = []   # hostnames (exact; may then resolve anywhere) or CIDRs (a bare address
+#                            # is one host), e.g. ["nas.lan", "192.168.1.0/24"];
 #                            # or COPYCAST__SECURITY__ALLOW_PRIVATE_HOSTS='["nas.lan"]'
+
+# COPYCAST_FORWARDED_ALLOW_IPS (trusted proxies) and COPYCAST_ALLOWED_HOSTS (extra host names
+# for browsers) are environment-only: see docs/operations.md, "Environment-only variables".

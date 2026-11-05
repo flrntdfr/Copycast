@@ -1,6 +1,8 @@
 # 0002 The engine runs in process, pinned by the lockfile, nightly channel by default
 
-Status: accepted (v1); supersedes the v0 decision to download a yt-dlp binary at build time
+Status: accepted (v1); supersedes the v0 decision to download a yt-dlp binary at build time;
+the Engine's connections pass the fetch guard since ADR 0023; per-Mirror options are an
+allowlist since ADR 0024
 
 ## Context
 

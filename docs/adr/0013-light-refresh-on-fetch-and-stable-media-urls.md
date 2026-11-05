@@ -1,6 +1,7 @@
 # 0013 A feed fetch runs a Light Refresh inline; media URLs are fixed at listing time
 
-Status: accepted (v1.3); amends ADR 0012
+Status: accepted (v1.3); amends ADR 0012; the request log's client address is amended by
+ADR 0025 (trusted proxies only)
 
 ## Context
 

@@ -32,6 +32,10 @@ x-env: &env
   COPYCAST__STORAGE__SECRET_ACCESS_KEY: ${COPYCAST_S3_SECRET_KEY:?set COPYCAST_S3_SECRET_KEY in .env}
   COPYCAST__STORAGE__SCRATCH_DIR: /scratch
   COPYCAST__CACHE__URL: redis://valkey:6379/0
+  # Empty keeps the defaults: 127.0.0.1 is the only trusted proxy, and browsers may use the base
+  # URL's host name, an IP address or localhost (see .env.example).
+  COPYCAST_FORWARDED_ALLOW_IPS: ${COPYCAST_FORWARDED_ALLOW_IPS:-}
+  COPYCAST_ALLOWED_HOSTS: ${COPYCAST_ALLOWED_HOSTS:-}
 
 x-app: &app
   image: ${COPYCAST_IMAGE:-ghcr.io/flrntdfr/copycast:latest}

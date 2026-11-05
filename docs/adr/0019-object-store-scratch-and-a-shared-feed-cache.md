@@ -1,6 +1,7 @@
 # 0019 Every byte lives in an Object store; the worker transcodes in Scratch; feeds are cached shared
 
-Status: accepted (v2.0); amends ADR 0001, narrows ADR 0012's on-demand wait
+Status: accepted (v2.0); amends ADR 0001, narrows ADR 0012's on-demand wait; amended by
+ADR 0026 (SeaweedFS's internal APIs on loopback, its gateway on the `objects` network)
 
 ## Context
 

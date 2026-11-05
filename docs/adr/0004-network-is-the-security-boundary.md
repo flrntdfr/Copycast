@@ -1,6 +1,8 @@
 # 0004 No authentication: the network is the security boundary
 
-Status: accepted (v1); carries the v0 stance forward; narrowed by ADR 0011 for direct deployments
+Status: accepted (v1); carries the v0 stance forward; narrowed by ADR 0011 for direct deployments,
+by ADR 0023 (no Source-driven fetch reaches an internal address) and by ADR 0025 (cross-site
+writes and foreign Host names are refused)
 
 ## Context
 

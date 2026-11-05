@@ -1,7 +1,8 @@
 # 0011 Optional authentication for direct deployments
 
 Status: accepted; amended (artwork is public, see the end) (v1); narrows ADR 0004; enclosure
-URLs carry a media key since ADR 0020
+URLs carry a media key since ADR 0020; public artwork moved to opaque `/art/` URLs and every
+refusal under `/feeds` became one 401 in ADR 0022
 
 ## Context
 

@@ -1,6 +1,7 @@
 # 0020 A feed's media key in its enclosure URLs
 
-Status: accepted (2.0.2); amends ADR 0011, narrows ADR 0013
+Status: accepted (2.0.2); amends ADR 0011, narrows ADR 0013; Artwork's URL amended by ADR 0022
+(public under `/art/`, the bare path takes the pair)
 
 ## Context
 
