@@ -41,6 +41,7 @@ ENTRYPOINT = Path(__file__).parents[3] / "deploy" / "compose" / "seaweedfs" / "e
 BUCKET = "copycast-test"
 ACCESS_KEY, SECRET_KEY = "copycast", "copycast-test-secret"
 S3_PORT = 8333
+"""The relay's port, the only one beyond loopback; it carries S3 over HTTP to the gateway."""
 INTERNAL_PORTS = {
     9333: "master",
     19333: "master gRPC",
@@ -48,17 +49,16 @@ INTERNAL_PORTS = {
     18080: "volume server gRPC",
     8888: "filer",
     18888: "filer gRPC",
+    8334: "S3 gateway",
+    18334: "S3 gateway gRPC",
 }
-"""What SeaweedFS serves without a credential: loopback only."""
-NETWORK_PORTS = {S3_PORT, 18333}
-"""The S3 gateway and its gRPC port, which share one bind address (see the entrypoint)."""
+"""What SeaweedFS serves, the gateway's gRPC without a credential too: loopback only."""
+UNUSED_PORTS = (18333,)
+"""The gateway's default gRPC port while it listened on the network: nothing listens there."""
 
 
-@pytest.fixture(scope="session")
-def seaweedfs() -> Iterator[Any]:
-    """The SeaweedFS testcontainer, started by the compose entrypoint; skips without Docker."""
-    if os.environ.get("COPYCAST_TEST_S3_URL"):
-        pytest.skip("COPYCAST_TEST_S3_URL names an S3 server of its own")
+def _start_seaweedfs() -> Any:
+    """A SeaweedFS testcontainer run by the compose entrypoint, ready; skips without Docker."""
     try:
         from testcontainers.core.container import DockerContainer
     except ImportError:  # pragma: no cover - dev group always has it
@@ -80,14 +80,24 @@ def seaweedfs() -> Iterator[Any]:
         container.start()
     except Exception as exc:  # docker missing or daemon down
         pytest.skip(f"no S3 server available: {exc}")
+    deadline = time.monotonic() + 90
+    # Ready once the bootstrap created the bucket, the compose healthcheck's own test.
+    while container.exec(["test", "-f", "/tmp/ready"]).exit_code != 0:
+        if time.monotonic() > deadline:
+            logs = b"".join(container.get_logs()).decode(errors="replace")[-4000:]
+            container.stop()
+            pytest.fail(f"SeaweedFS never came up:\n{logs}")
+        time.sleep(0.5)
+    return container
+
+
+@pytest.fixture(scope="session")
+def seaweedfs() -> Iterator[Any]:
+    """The SeaweedFS testcontainer the tier shares."""
+    if os.environ.get("COPYCAST_TEST_S3_URL"):
+        pytest.skip("COPYCAST_TEST_S3_URL names an S3 server of its own")
+    container = _start_seaweedfs()
     try:
-        deadline = time.monotonic() + 90
-        # Ready once the bootstrap created the bucket, the compose healthcheck's own test.
-        while container.exec(["test", "-f", "/tmp/ready"]).exit_code != 0:
-            if time.monotonic() > deadline:
-                logs = b"".join(container.get_logs()).decode(errors="replace")[-4000:]
-                pytest.fail(f"SeaweedFS never came up:\n{logs}")
-            time.sleep(0.5)
         yield container
     finally:
         container.stop()
@@ -186,48 +196,96 @@ async def test_the_proxy_streams_ranges_from_s3(s3_store: ObjectStore) -> None:
 
 
 # What the entrypoint leaves on the network (SEC-2): the master, volume server and filer
-# answer anyone without a credential (the filer lists and serves every object), so only the
-# S3 gateway may listen beyond loopback.
+# answer anyone without a credential (the filer lists and serves every object), and the S3
+# gateway's gRPC port adds identities without one, so only the relay to S3 over HTTP may
+# listen beyond loopback.
 
 
-def _listeners(container: Any) -> set[tuple[str, int]]:
-    """``(address, port)`` of every TCP socket listening in the container."""
-    result = container.exec(["netstat", "-tln"])
+def _listeners(container: Any) -> dict[tuple[str, int], str]:
+    """``(address, port)`` of every TCP socket listening in the container, to its program."""
+    result = container.exec(["netstat", "-tlnp"])
     assert result.exit_code == 0, result.output
-    found: set[tuple[str, int]] = set()
+    found: dict[tuple[str, int], str] = {}
     for line in result.output.decode().splitlines():
         fields = line.split()
-        if fields and fields[0] in ("tcp", "tcp6") and len(fields) >= 4:
+        if fields and fields[0] in ("tcp", "tcp6") and len(fields) >= 7:
             address, _, port = fields[3].rpartition(":")
-            found.add((address, int(port)))
+            found[(address, int(port))] = fields[6].partition("/")[2]
     return found
 
 
-def test_only_the_s3_gateway_listens_beyond_loopback(seaweedfs: Any) -> None:
+def _network_address(container: Any) -> str:
+    result = container.exec(["sh", "-c", 'hostname -i | cut -d" " -f1'])
+    assert result.exit_code == 0, result.output
+    return result.output.decode().strip()
+
+
+def _probe(address: str) -> str:
+    """A shell script printing ``open <port>`` for each argument port that accepts on address."""
+    return f'for port in "$@"; do nc -z -w 2 {address} "$port" && echo "open $port"; done; true'
+
+
+def test_only_the_relay_listens_beyond_loopback(seaweedfs: Any) -> None:
     listeners = _listeners(seaweedfs)
     for port, name in INTERNAL_PORTS.items():
         assert ("127.0.0.1", port) in listeners, f"the {name} is not up on loopback"
     # 127.0.0.11 is Docker's resolver on a user network.
-    beyond = {(a, port) for a, port in listeners if not a.startswith("127.") and a != "::1"}
-    assert {port for _, port in beyond} == NETWORK_PORTS, beyond
+    beyond = {key: prog for key, prog in listeners.items() if not key[0].startswith("127.")}
+    beyond = {key: prog for key, prog in beyond.items() if key[0] != "::1"}
+    assert {port for _, port in beyond} == {S3_PORT}, beyond
+    assert set(beyond.values()) == {"nc"}, "the S3 port is not the relay's"
+    assert not {port for _, port in listeners if port in UNUSED_PORTS}, listeners
 
 
 def test_internal_ports_refuse_the_container_network(seaweedfs: Any) -> None:
     # A TCP connect to the container's own network address meets exactly the sockets another
     # container would; the same connect to loopback shows the probe itself works.
-    probe = (
-        'ip=$(hostname -i | cut -d" " -f1); for port in "$@"; do '
-        'nc -z -w 2 "$ip" "$port" && echo "open $port"; '
-        'nc -z -w 2 127.0.0.1 "$port" && echo "loopback $port"; '
-        "done; true"
+    ip = _network_address(seaweedfs)
+    ports = [str(port) for port in (*INTERNAL_PORTS, *UNUSED_PORTS)]
+    on_network = seaweedfs.exec(["sh", "-c", _probe(ip), "probe", *ports])
+    assert not on_network.output.decode().split(), on_network.output
+    on_loopback = seaweedfs.exec(["sh", "-c", _probe("127.0.0.1"), "probe", *ports])
+    assert set(on_loopback.output.decode().splitlines()) == {
+        f"open {port}" for port in INTERNAL_PORTS
+    }
+    gateway = seaweedfs.exec(["nc", "-z", "-w", "2", ip, str(S3_PORT)])
+    assert gateway.exit_code == 0, "the relay is not on the container network"
+
+
+def test_internal_ports_refuse_the_host_namespace(seaweedfs: Any) -> None:
+    # The host (or a network_mode: host container) routes to every Docker bridge, internal ones
+    # included, so it meets the container's network address too: only the relay may answer.
+    from testcontainers.core.container import DockerContainer
+
+    ip = _network_address(seaweedfs)
+    ports = [str(port) for port in (S3_PORT, *INTERNAL_PORTS, *UNUSED_PORTS)]
+    prober = DockerContainer(SEAWEEDFS_IMAGE).with_kwargs(
+        network_mode="host", entrypoint=["sleep", "120"]
     )
-    ports = [str(port) for port in INTERNAL_PORTS]
-    result = seaweedfs.exec(["sh", "-c", probe, "probe", *ports])
-    lines = set(result.output.decode().splitlines())
-    assert not {line for line in lines if line.startswith("open ")}, lines
-    assert {f"loopback {port}" for port in ports} <= lines, lines
-    gateway = seaweedfs.exec(["sh", "-c", f'nc -z -w 2 "$(hostname -i | cut -d" " -f1)" {S3_PORT}'])
-    assert gateway.exit_code == 0, "the S3 gateway is not on the container network"
+    prober.start()
+    try:
+        result = prober.exec(["sh", "-c", _probe(ip), "probe", *ports])
+    finally:
+        prober.stop()
+    found = set(result.output.decode().splitlines())
+    if f"open {S3_PORT}" not in found:
+        pytest.skip(f"the host namespace does not route to {ip} here")
+    assert found == {f"open {S3_PORT}"}, found
+
+
+def test_the_container_stops_when_the_relay_dies() -> None:
+    # Restart policies restart a container, not a process in it: a dead relay must end it.
+    if os.environ.get("COPYCAST_TEST_S3_URL"):
+        pytest.skip("COPYCAST_TEST_S3_URL names an S3 server of its own")
+    container = _start_seaweedfs()
+    try:
+        assert container.exec(["pkill", "-f", "nc -lk -p 8333"]).exit_code == 0
+        wrapped = container.get_wrapped_container()
+        assert wrapped.wait(timeout=30)["StatusCode"] == 1
+        logs = b"".join(container.get_logs()).decode(errors="replace")
+        assert "the S3 relay stopped" in logs
+    finally:
+        container.stop()
 
 
 def test_the_gateway_refuses_anonymous_requests(seaweedfs: Any) -> None:

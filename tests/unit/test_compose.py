@@ -1,9 +1,8 @@
 """The compose files keep SeaweedFS off every network but the one the key holders share (SEC-2).
 
-The entrypoint keeps master, volume and filer on loopback; the S3 gateway's gRPC port shares
-the gateway's bind address and checks no credential, so the network is what keeps it from
-any container that does not hold the keys already. ``tests/integration/storage/test_s3.py``
-checks the sockets themselves.
+The entrypoint is what keeps SeaweedFS's unauthenticated ports (master, volume, filer, the S3
+gateway's gRPC) on loopback, behind a relay that carries S3 over HTTP only; the network is
+defence in depth on top. ``tests/integration/storage/test_s3.py`` checks the sockets themselves.
 """
 
 from __future__ import annotations
@@ -55,3 +54,11 @@ def test_the_development_store_publishes_the_gateway_on_loopback_only() -> None:
     assert seaweedfs["ports"] and all(
         port.startswith("127.0.0.1:") and port.endswith(":8333") for port in seaweedfs["ports"]
     )
+
+
+def test_the_entrypoint_binds_nothing_but_the_relay_beyond_loopback() -> None:
+    entrypoint = (ROOT / "deploy/compose/seaweedfs/entrypoint.sh").read_text()
+    assert "0.0.0.0" not in entrypoint
+    for flag in ("-ip=127.0.0.1", "-ip.bind=127.0.0.1", "-s3.ip.bind=127.0.0.1"):
+        assert flag in entrypoint, flag
+    assert "nc -lk -p 8333 -e nc 127.0.0.1 8334" in entrypoint
