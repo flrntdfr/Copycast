@@ -3,10 +3,10 @@
 An Apple Podcasts or Spotify link is first resolved to the feed(s) behind it
 (``directories``). Scheme-less input is tried as ``https://`` then ``http://``. An RSS body is
 one candidate; an HTML page yields one candidate per advertised feed that
-verifies as RSS (at most five); anything else is listed by the engine and
-becomes a ``ytdlp`` candidate. A bare YouTube channel URL normalizes to its
-``/videos`` tab and skips the HTTP round trip (YouTube pages advertise an
-RSS feed without audio). Every candidate is cached for ten minutes under
+verifies as RSS (at most five; one the fetch guard refuses is skipped); anything
+else is listed by the engine and becomes a ``ytdlp`` candidate. A bare YouTube
+channel URL normalizes to its ``/videos`` tab and skips the HTTP round trip
+(YouTube pages advertise an RSS feed without audio). Every candidate is cached for ten minutes under
 its token and its normalized URL, together with the listing (and the parsed
 RSS page) so ``create_mirror`` can populate the Catalog without refetching.
 """
@@ -40,7 +40,7 @@ from copycast.application.ports import (
     NullEngineLog,
 )
 from copycast.domain.enums import SourceKind
-from copycast.domain.exceptions import Unsupported
+from copycast.domain.exceptions import DestinationNotAllowed, Unsupported
 from copycast.domain.listing import SourceListing
 from copycast.domain.urls import (
     normalize_source_url,
@@ -255,7 +255,9 @@ def _verify_links(
         try:
             fetched = fetch(link, max_bytes=MAX_FEED_BYTES, client=client, accept=FEED_ACCEPT)
             parsed = parse_feed(fetched.body, url=fetched.url)
-        except (SourceError, NotAFeed) as exc:
+        except (SourceError, NotAFeed, DestinationNotAllowed) as exc:
+            # A link the page or directory advertises is not the caller's input: a
+            # refused one (a stale ``localhost`` feed) is skipped like a broken one.
             failures.append(f"{link}: {exc}")
             continue
         feed = FeedFetch(

@@ -24,6 +24,7 @@ from urllib.parse import urlsplit, urlunsplit
 import pytest
 
 from copycast.settings import Settings, get_settings
+from tests.support.dns import fake_resolve
 from tests.support.fake_engine import FakeEngine
 from tests.support.origin import FIXTURES_DIR, Origin
 
@@ -84,6 +85,16 @@ def _fetch_guard_policy() -> Iterator[None]:
         yield
     finally:
         install(previous)
+
+
+@pytest.fixture(autouse=True)
+def _fake_dns(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fetch guard resolves names through ``tests.support.dns``, never the real resolver.
+
+    Tests marked ``network`` reach the internet and keep the real one.
+    """
+    if request.node.get_closest_marker("network") is None:
+        monkeypatch.setattr("copycast.adapters.sources.guard.resolve", fake_resolve)
 
 
 @pytest.fixture

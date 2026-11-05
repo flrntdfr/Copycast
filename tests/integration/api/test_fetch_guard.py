@@ -47,7 +47,7 @@ async def test_probing_a_loopback_address_answers_422(
     body = refused(await client.post(api("/probe"), json={"url": url}))
     detail = str(body["detail"])
     assert f"127.0.0.1:{source.origin.port} is not an allowed destination" in detail
-    assert "loopback" in detail and "security.allow_private_hosts" in detail
+    assert "non-public" in detail and "security.allow_private_hosts" in detail
     assert source.origin.requests == [], "the guard refused before connecting"
 
 

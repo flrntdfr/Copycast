@@ -66,7 +66,7 @@ async def test_a_refused_source_fails_the_refresh_once_and_keeps_the_mirror(
         row = await unit.jobs.require(job.id)
         assert row.status == JobStatus.failed.value, row.error
         assert row.error_kind == ErrorKind.permanent.value and row.attempt == 1
-        assert row.error and "not an allowed destination" in row.error and "loopback" in row.error
+        assert row.error and "not an allowed destination" in row.error and "non-public" in row.error
         feed = await unit.feeds.require(mirror.id)
         assert feed.last_error == row.error
         assert len(await unit.catalog.for_feed(mirror.id)) == 1, "the Catalog is untouched"

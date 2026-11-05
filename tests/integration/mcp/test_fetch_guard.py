@@ -34,7 +34,7 @@ async def test_probe_create_and_retarget_tools_refuse_a_loopback_source(
     with pytest.raises(ToolError) as probed:
         await mcp_client.call_tool("probe_source", {"url": url})
     assert "[destination-not-allowed]" in str(probed.value)
-    assert "loopback" in str(probed.value)
+    assert "non-public" in str(probed.value)
 
     with pytest.raises(ToolError) as created:
         await mcp_client.call_tool("create_mirror", {"mirror": {"source_url": url}})

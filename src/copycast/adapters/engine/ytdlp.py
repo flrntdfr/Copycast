@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import importlib
 import json
 import os
 import shutil
@@ -37,7 +38,8 @@ from yt_dlp.postprocessor import (
 from yt_dlp.utils import DownloadCancelled, PostProcessingError, replace_extension
 from yt_dlp.version import CHANNEL, RELEASE_GIT_HEAD, __version__
 
-from copycast.adapters.engine.errors import classify, upcoming_refusal
+from copycast.adapters.engine import netguard
+from copycast.adapters.engine.errors import classify, destination_refusal, upcoming_refusal
 from copycast.adapters.engine.options import fetch_params, listing_params, with_cookiefile
 from copycast.adapters.engine.synth import build, mime_for_ext
 from copycast.adapters.sources.guard import check_engine_url
@@ -182,15 +184,19 @@ class YtDlpEngine:
     with every call as ``cookiefile`` (a private Scratch copy) unless the
     options name one; yt-dlp's refreshed cookies are written back afterwards.
 
-    The fetch guard (``adapters.sources.guard.check_engine_url``) judges every URL
-    handed to yt-dlp before it runs: the Source URL of a listing, the item URL of a
-    fetch, and a direct fetch's enclosure (refused: ``DestinationNotAllowed``) and
-    Artwork (dropped). yt-dlp's own requests after that (its redirects, manifests,
-    format and thumbnail URLs an extractor finds) use its HTTP stack and are not
-    policed, and the check cannot pin the address yt-dlp then resolves.
+    The fetch guard judges every URL handed to yt-dlp before it runs
+    (``adapters.sources.guard.check_engine_url``): the Source URL of a listing, the
+    item URL of a fetch, and a direct fetch's enclosure (refused:
+    ``DestinationNotAllowed``) and Artwork (dropped); an Engine key such as
+    ``nrk:MSUI1234`` passes when one of yt-dlp's extractors claims it
+    (:func:`engine_claims`). Every connection yt-dlp then opens, for redirects,
+    manifests, formats and thumbnails alike, is judged again and pinned to the
+    checked address (``netguard``, installed by the constructor); a refused one fails
+    the listing or fetch with ``DestinationNotAllowed``.
     """
 
     def __init__(self, settings: Settings | None = None) -> None:
+        netguard.install()
         self._settings = settings
         self._cookies: StoredCookies | None = (
             StoredCookies(
@@ -213,16 +219,20 @@ class YtDlpEngine:
         limit: int | None = None,
     ) -> SourceListing:
         _check_cancel(cancel, f"listing of {url}")
-        check_engine_url(url)
+        check_engine_url(url, claims=engine_claims)
         errors = _LastErrorLog(log)
-        try:
-            with cookie_scope(self._cookies, options) as with_cookies:
-                params = listing_params(with_cookies, log=errors, limit=limit)
-                with yt_dlp.YoutubeDL(params) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    info = ydl.sanitize_info(info)
-        except Exception as exc:
-            raise classify(exc) from exc
+        with netguard.recording_refusals() as refused:
+            try:
+                with cookie_scope(self._cookies, options) as with_cookies:
+                    params = listing_params(with_cookies, log=errors, limit=limit)
+                    with yt_dlp.YoutubeDL(params) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                        info = ydl.sanitize_info(info)
+            except Exception as exc:
+                raise (destination_refusal(exc, refused) or classify(exc)) from exc
+        if info is None and refused:
+            # The extraction error yt-dlp only logged was a refused connection.
+            raise refused[0]
         if info is None:
             # ``ignoreerrors="only_download"`` turns an extraction error into a logged
             # line and no result; the line says why (a stream that has not started,
@@ -257,8 +267,12 @@ class YtDlpEngine:
         spec.temp_dir.mkdir(parents=True, exist_ok=True)
         state = _HookState()
         pp_hook = _postprocessor_hook(cancel, on_progress, state)
+        refused: list[DestinationNotAllowed] = []
         try:
-            with cookie_scope(self._cookies, options) as with_cookies:
+            with (
+                netguard.recording_refusals() as refused,
+                cookie_scope(self._cookies, options) as with_cookies,
+            ):
                 params = fetch_params_for(
                     spec,
                     with_cookies,
@@ -282,6 +296,9 @@ class YtDlpEngine:
                     live_status=state.not_ready,
                     retry_after=state.starts_in,
                 ) from exc
+            refusal = destination_refusal(exc, refused)
+            if refusal is not None:
+                raise refusal from exc
             classified = classify(exc)
             if spec.kind is FetchKind.ytdlp and isinstance(classified, PermanentError):
                 reason = upcoming_refusal(exc)
@@ -313,8 +330,10 @@ def guard_fetch_spec(spec: FetchSpec, log: EngineLog) -> FetchSpec:
 
     The item URL (and a direct fetch's enclosure) raise ``DestinationNotAllowed``;
     the Artwork yt-dlp would embed is only decoration, so the fetch goes on without it.
+    An Engine key from the Engine's own listing (``nrk:MSUI1234``) passes when an
+    extractor claims it; an enclosure or Artwork URL must be http(s).
     """
-    check_engine_url(spec.url)
+    check_engine_url(spec.url, claims=engine_claims if spec.kind is FetchKind.ytdlp else None)
     synth = spec.synth
     if synth is None:
         return spec
@@ -327,6 +346,17 @@ def guard_fetch_spec(spec: FetchSpec, log: EngineLog) -> FetchSpec:
             log.warning(f"artwork not embedded: {exc}")
             return replace(spec, synth=replace(synth, thumbnail_url=None))
     return spec
+
+
+@functools.cache
+def _extractors() -> tuple[Any, ...]:
+    extractor = cast(Any, importlib.import_module("yt_dlp.extractor"))
+    return tuple(ie for ie in extractor.gen_extractor_classes() if ie.ie_key() != "Generic")
+
+
+def engine_claims(url: str) -> bool:
+    """Whether one of yt-dlp's own extractors, the generic one aside, takes ``url``."""
+    return any(ie.suitable(url) for ie in _extractors())
 
 
 def fetch_params_for(
@@ -794,6 +824,7 @@ __all__ = [
     "collect_outputs",
     "cookie_scope",
     "discard_temp_leftovers",
+    "engine_claims",
     "engine_info",
     "fetch_params_for",
     "ffmpeg_version",

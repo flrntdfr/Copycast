@@ -10,8 +10,10 @@ from typing import Any
 import httpcore
 import httpx
 import pytest
+import structlog
 
 from copycast.adapters.sources.guard import (
+    REFUSED_REASON,
     GuardedBackend,
     GuardedTransport,
     check_engine_url,
@@ -125,7 +127,7 @@ def test_checked_addresses_refuses_when_any_answer_is_internal() -> None:
     with pytest.raises(DestinationNotAllowed) as refused:
         checked_addresses("mixed.example", 443, policy=DestinationPolicy(), resolver=resolve)
     assert refused.value.target == "mixed.example:443"
-    assert "private address" in refused.value.reason
+    assert "non-public address" in refused.value.reason
     assert "security.allow_private_hosts" in refused.value.reason
     assert "10.0.0.7" not in str(refused.value)
 
@@ -202,7 +204,7 @@ def test_check_url_refuses_internal_hosts(url: str) -> None:
 
 @pytest.mark.parametrize("url", ["http://127.1/", "http://2130706433/", "http://0x7f000001/"])
 def test_check_url_resolves_numeric_shorthands_like_the_fetch_would(url: str) -> None:
-    with pytest.raises(DestinationNotAllowed, match="loopback"):
+    with pytest.raises(DestinationNotAllowed, match="non-public"):
         check_url(url, policy=DestinationPolicy())
 
 
@@ -241,6 +243,62 @@ def test_check_engine_url_lets_search_keys_through_only() -> None:
         check_engine_url("http://127.0.0.1/x", policy=DestinationPolicy())
 
 
+@pytest.mark.parametrize("key", ["nrk:MSUI12345678", "srgssr:rts:audio:123", ":ytwatchlater"])
+def test_check_engine_url_lets_a_claimed_engine_key_through(key: str) -> None:
+    claimed: list[str] = []
+
+    def claims(url: str) -> bool:
+        claimed.append(url)
+        return True
+
+    check_engine_url(key, claims=claims, policy=DestinationPolicy())
+    assert claimed == [key]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:/etc/passwd",
+        "data:text/plain,x",
+        "ftp://10.0.0.1/x",
+        "gopher://127.0.0.1:6379/_INFO",
+        "nrk://127.0.0.1/x",
+        "http://127.0.0.1:8333/",
+    ],
+)
+def test_a_claim_never_lets_a_url_with_a_host_or_a_local_scheme_through(url: str) -> None:
+    with pytest.raises(DestinationNotAllowed):
+        check_engine_url(url, claims=lambda _: True, policy=DestinationPolicy())
+
+
+def test_an_unclaimed_engine_key_is_refused() -> None:
+    with pytest.raises(DestinationNotAllowed, match="only http and https"):
+        check_engine_url("seaweedfs:8333/copycast", claims=lambda _: False)
+
+
+def test_the_refusal_names_no_address_class_but_the_log_does() -> None:
+    """The caller learns the host is not public; the operator's log says which range and why."""
+    with (
+        structlog.testing.capture_logs() as events,
+        pytest.raises(DestinationNotAllowed) as refused,
+    ):
+        checked_addresses(
+            "postgres", 5432, policy=DestinationPolicy(), resolver=fixed(["172.18.0.2"])
+        )
+    message = str(refused.value)
+    assert "172.18" not in message and "private" not in message.replace("allow_private", "")
+    assert refused.value.reason == REFUSED_REASON
+    [event] = [e for e in events if e["event"] == "fetch.destination_refused"]
+    assert event["reason"] == "private" and event["address"] == "172.18.0.2"
+
+
+def test_the_suite_resolves_names_without_the_real_resolver() -> None:
+    """``tests.support.dns`` stands in for DNS: literals and localhost only."""
+    assert checked_addresses("127.1", 80, policy=DestinationPolicy.from_entries(["127.0.0.0/8"]))
+    with pytest.raises(OSError, match="fake DNS"):
+        checked_addresses("www.youtube.com", 443)
+
+
 # --------------------------------------------------------------------------- at connect time
 
 
@@ -264,7 +322,7 @@ def test_rebinding_cannot_turn_a_checked_name_into_an_internal_address() -> None
     backend = RecordingBackend(policy=DestinationPolicy, resolver=resolve)
     first = backend.connect_tcp("rebind.example", 80)
     assert isinstance(first, RecordingStream)
-    with pytest.raises(DestinationNotAllowed, match="loopback"):
+    with pytest.raises(DestinationNotAllowed, match="non-public"):
         backend.connect_tcp("rebind.example", 80)
     assert backend.opened == [(PUBLIC, 80)]
 
@@ -275,7 +333,7 @@ def test_rebinding_through_the_client_is_refused_on_the_new_connection() -> None
     with client_over(backend) as client:
         assert client.get("http://rebind.example/a").status_code == 200
     # A new client (new pool) must open a new connection, so it resolves again.
-    with client_over(backend) as client, pytest.raises(DestinationNotAllowed, match="link-local"):
+    with client_over(backend) as client, pytest.raises(DestinationNotAllowed, match="non-public"):
         client.get("http://rebind.example/b")
     assert backend.opened == [(PUBLIC, 80)]
 
@@ -328,7 +386,7 @@ def test_the_backend_reads_the_installed_policy_at_each_connection() -> None:
 
 @pytest.mark.usefixtures("no_exemptions")
 def test_fetch_refuses_loopback_before_connecting(origin: Origin) -> None:
-    with pytest.raises(DestinationNotAllowed, match=r"127\.0\.0\.1:\d+ .* loopback") as refused:
+    with pytest.raises(DestinationNotAllowed, match=r"127\.0\.0\.1:\d+ .* non-public") as refused:
         fetch(origin.url_for("/media/tiny.jpg"), max_bytes=1_000_000)
     assert not isinstance(refused.value, SourceError)
     assert origin.requests == []
@@ -348,7 +406,7 @@ def test_every_redirect_hop_is_checked(origin: Origin) -> None:
         target = origin.url_for("/media/tiny.jpg")
         origin.script("/start", status=302, headers={"Location": target})
         start = f"http://localhost:{origin.port}/start"
-        with pytest.raises(DestinationNotAllowed, match="loopback"):
+        with pytest.raises(DestinationNotAllowed, match="non-public"):
             fetch(start, max_bytes=1_000_000)
         assert [r.path for r in origin.requests] == ["/start"]
 

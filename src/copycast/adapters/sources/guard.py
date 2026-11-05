@@ -13,8 +13,14 @@ Redirects are followed by the client one hop at a time, and every hop to a new
 origin opens a new connection through the same backend, so each hop is checked.
 
 The Engine runs yt-dlp in process with its own HTTP stack: :func:`check_engine_url`
-judges the URLs Copycast hands it (see ``adapters.engine.ytdlp``), not the requests
-the Engine then makes on its own.
+judges the URLs Copycast hands it (see ``adapters.engine.ytdlp``), and
+``adapters.engine.netguard`` runs every connection yt-dlp then opens through
+:func:`checked_addresses` the same way.
+
+A refusal names the host and says it is not public; which kind of address it
+resolves to (loopback, private, link-local, ...) and the address itself go to the
+``fetch.destination_refused`` log event only, so an answer does not tell a caller
+what lives on the deployment's network.
 
 The policy is process-wide: :func:`install_policy` is called by the composition
 root with ``[security] allow_private_hosts``; until then nothing is exempt. The
@@ -45,6 +51,12 @@ ALLOWED_SCHEMES: Final = frozenset({"http", "https"})
 DEFAULT_PORTS: Final = {"http": 80, "https": 443}
 ENGINE_SEARCH_KEY: Final = re.compile(r"^ytsearch(?:date|all)?\d*:", re.IGNORECASE)
 """The Engine's search pseudo-URLs (``ytsearch10:query``) name no destination of their own."""
+LOCAL_SCHEMES: Final = frozenset({"file", "data"})
+"""Schemes that read local or inline content: never an Engine key, whoever claims them."""
+REFUSED_REASON: Final = (
+    "it resolves to a non-public address "
+    "(an operator can exempt it with security.allow_private_hosts)"
+)
 
 log = get_logger(__name__)
 
@@ -87,16 +99,17 @@ def checked_addresses(
     port: int,
     *,
     policy: DestinationPolicy | None = None,
-    resolver: Resolver = resolve,
+    resolver: Resolver | None = None,
 ) -> list[IPAddress]:
     """The addresses ``host`` resolves to, once every one passed the policy.
 
     Raises :class:`DestinationNotAllowed` when any of them is refused (one internal
     answer among public ones is enough), ``OSError`` when the name does not resolve.
-    A host the policy names is accepted whatever it resolves to.
+    A host the policy names is accepted whatever it resolves to. ``resolver``
+    defaults to this module's :func:`resolve`, looked up at each call.
     """
     rules = policy if policy is not None else current_policy()
-    addresses = resolver(host, port)
+    addresses = (resolver or resolve)(host, port)
     if not addresses:
         raise OSError(f"{host} resolves to no IP address")
     if rules.allows_host(host):
@@ -111,23 +124,20 @@ def checked_addresses(
                 address=str(address),
                 reason=reason,
             )
-            raise DestinationNotAllowed(
-                _target(host, port),
-                f"it resolves to a {reason} address "
-                "(an operator can exempt it with security.allow_private_hosts)",
-            )
+            raise DestinationNotAllowed(_target(host, port), REFUSED_REASON)
     return addresses
 
 
 def check_url(
-    url: str, *, policy: DestinationPolicy | None = None, resolver: Resolver = resolve
+    url: str, *, policy: DestinationPolicy | None = None, resolver: Resolver | None = None
 ) -> None:
     """Refuse ``url`` unless it is http(s) and its host resolves to allowed addresses only.
 
-    A name that does not resolve passes: there is nothing to judge, and the fetch
-    that follows fails to resolve it the same way. This is a check ahead of a fetch
-    made by someone else (the Engine), so it cannot pin the address that fetch
-    connects to; the httpx transport below does.
+    A name that does not resolve passes: there is nothing to judge here. This is a
+    check ahead of a fetch made by someone else (the Engine), so it cannot pin the
+    address that fetch connects to; the connection-time guards do (the httpx
+    transport below, ``adapters.engine.netguard`` for yt-dlp), and they judge a name
+    that resolves only later, or differently, all the same.
     """
     try:
         parts = urlsplit(url.strip())
@@ -153,12 +163,42 @@ def check_url(
 
 
 def check_engine_url(
-    url: str, *, policy: DestinationPolicy | None = None, resolver: Resolver = resolve
+    url: str,
+    *,
+    claims: Callable[[str], bool] | None = None,
+    policy: DestinationPolicy | None = None,
+    resolver: Resolver | None = None,
 ) -> None:
-    """:func:`check_url`, letting the Engine's own search keys (``ytsearchN:``) through."""
-    if ENGINE_SEARCH_KEY.match(url.strip()):
+    """:func:`check_url` for a URL; an Engine key passes when the Engine claims it.
+
+    The Engine names some things by keys of its own rather than URLs: searches
+    (``ytsearch10:query``, always let through), the ids its broadcaster listings hand
+    back as item URLs (``nrk:MSUI1234``, ``srgssr:rts:audio:123``, ``cbcplayer:…``)
+    and account feeds (``:ytwatchlater``). A key has no authority (``//host``) and is
+    not a local scheme (``file:``, ``data:``); it passes when ``claims`` says one of
+    the Engine's own extractors takes it. Whatever the Engine connects to for it is
+    judged at connection time (``adapters.engine.netguard``).
+    """
+    value = url.strip()
+    if ENGINE_SEARCH_KEY.match(value):
         return
-    check_url(url, policy=policy, resolver=resolver)
+    if claims is not None and _is_engine_key(value) and claims(value):
+        return
+    check_url(value, policy=policy, resolver=resolver)
+
+
+def _is_engine_key(value: str) -> bool:
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
+    scheme = parts.scheme.lower()
+    return (
+        scheme not in ALLOWED_SCHEMES
+        and scheme not in LOCAL_SCHEMES
+        and not parts.netloc
+        and "//" not in value
+    )
 
 
 class GuardedBackend(httpcore.SyncBackend):
@@ -172,7 +212,7 @@ class GuardedBackend(httpcore.SyncBackend):
         self,
         *,
         policy: Callable[[], DestinationPolicy] = current_policy,
-        resolver: Resolver = resolve,
+        resolver: Resolver | None = None,
     ) -> None:
         self._policy = policy
         self._resolver = resolver
@@ -253,6 +293,8 @@ class GuardedTransport(httpx.HTTPTransport):
 
 __all__ = [
     "ENGINE_SEARCH_KEY",
+    "LOCAL_SCHEMES",
+    "REFUSED_REASON",
     "GuardedBackend",
     "GuardedTransport",
     "Resolver",
