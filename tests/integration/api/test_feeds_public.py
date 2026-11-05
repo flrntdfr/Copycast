@@ -7,11 +7,15 @@ import gzip
 import threading
 import time
 from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from typing import Any
 
 import httpx
 import pytest
+from sqlalchemy import text
 
+from copycast.adapters.feeds.render import RENDER_FORMAT_SINCE
+from copycast.adapters.sources.rss import NS_ITUNES, NS_PODCAST
 from copycast.app import Container
 from copycast.application.services import light_refresh as light
 from copycast.domain.enums import JobKind, JobStatus, JobTrigger, ListingOrder
@@ -107,6 +111,36 @@ async def test_feed_xml_headers_and_conditionals(
     assert head.status_code == 200 and head.content == b""
     assert head.headers["etag"] == etag
     assert head.headers["content-length"] == response.headers["content-length"]
+
+
+async def test_if_modified_since_from_before_the_render_change_gets_the_new_body(
+    client: httpx.AsyncClient, container: Container
+) -> None:
+    """A Bucket unchanged since before 2.3.0: a client that revalidates with the old
+    Last-Modified alone (no ETag) gets a 200 with the block tags and /art/ artwork, not a
+    304 that keeps its pre-upgrade body; the new Last-Modified then answers 304."""
+    bucket = (await client.get(api("/buckets"))).json()["feeds"][0]
+    before = datetime(2025, 6, 1, 8, 30, tzinfo=UTC)
+    async with container.db_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE feeds SET updated_at = :at WHERE id = :id"),
+            {"at": before, "id": bucket["id"]},
+        )
+    old_last_modified = "Sun, 01 Jun 2025 08:30:00 GMT"
+    just_before = format_datetime(RENDER_FORMAT_SINCE - timedelta(seconds=1), usegmt=True)
+    for since in (old_last_modified, just_before):
+        response = await client.get(FEED_URL(bucket["id"]), headers={"If-Modified-Since": since})
+        assert response.status_code == 200, since
+        channel = parse(response.content).find("channel")
+        assert channel.findtext(f"{{{NS_ITUNES}}}block") == "Yes"
+        assert channel.findtext(f"{{{NS_PODCAST}}}block") == "yes"
+        assert "/assets/" not in channel.find(f"{{{NS_ITUNES}}}image").get("href")
+    assert response.headers["last-modified"] == format_datetime(RENDER_FORMAT_SINCE, usegmt=True)
+    assert channel.findtext("lastBuildDate") == response.headers["last-modified"]
+    current = await client.get(
+        FEED_URL(bucket["id"]), headers={"If-Modified-Since": response.headers["last-modified"]}
+    )
+    assert current.status_code == 304
 
 
 async def test_feed_xml_is_gzipped_once_per_revision_and_served_as_is(

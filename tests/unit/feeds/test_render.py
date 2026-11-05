@@ -7,9 +7,11 @@ Regenerate the golden files with ``make golden-regen`` (``COPYCAST_GOLDEN_REGEN=
 
 from __future__ import annotations
 
+import hashlib
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from lxml import etree
@@ -17,6 +19,7 @@ from lxml import etree
 from copycast.adapters.feeds.render import (
     CONTENT_TYPE,
     GENERATOR,
+    RENDER_FORMAT_SINCE,
     AssetView,
     FeedView,
     ItemView,
@@ -36,6 +39,7 @@ from copycast.adapters.sources.rss import (
     parse_fragment,
     tag,
 )
+from copycast.domain.credentials import artwork_mac
 from copycast.domain.enums import (
     ArchiveState,
     AssetFormat,
@@ -52,6 +56,7 @@ BASE_URL = "http://testserver"
 NOW = datetime(2024, 3, 1, 12, 0, tzinfo=UTC)
 GOLDEN_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "golden"
 FEED_ID = "0123456789abcdef"
+ART_SECRET = b"\x07" * 32
 
 
 def check_golden(name: str, rendered: RenderedFeed) -> None:
@@ -82,10 +87,22 @@ def transcript(
     )
 
 
+def art_id(item: str | None) -> str:
+    """A stand-in asset id for the artwork of ``item`` (``None``: the feed's)."""
+    return hashlib.sha256(f"artwork\n{item or ''}".encode()).hexdigest()[:16]
+
+
+def art_url(item: str | None, ext: str = "jpg") -> str:
+    """The public ``/art/`` URL the feed publishes for :func:`artwork` of ``item``."""
+    asset_id = art_id(item)
+    return f"{BASE_URL}/art/{asset_id}-{artwork_mac(ART_SECRET, asset_id)}.{ext}"
+
+
 def artwork(item: str | None, ext: str = "jpg") -> AssetView:
     stem = item or "feed"
     return AssetView(
         kind=AssetKind.artwork,
+        id=art_id(item),
         local_path=f"assets/{stem}.artwork.{ext}",
         mime=f"image/{'jpeg' if ext == 'jpg' else ext}",
     )
@@ -222,25 +239,22 @@ def test_rss_preserved(rich: ParsedFeed) -> None:
         },
     )
     items.append(item("i2", 2, "Episode 2", state=ArchiveState.available, published_at=NOW))
-    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
-    assert rendered.revision == 7 and rendered.last_modified == NOW
+    rendered = render_feed(feed, items, base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
+    assert rendered.revision == 7 and rendered.last_modified == RENDER_FORMAT_SINCE
     assert rendered.content_type == CONTENT_TYPE
     root, channel = channel_of(rendered)
     assert root.get("version") == "2.0"
     assert root.nsmap["itunes"] == NS_ITUNES and root.nsmap["podcast"] == NS_PODCAST
     assert channel.findtext("title") == "Copycast Test Podcast"
     assert channel.findtext("generator") == GENERATOR
-    assert channel.findtext("lastBuildDate") == rfc2822(NOW)
+    assert channel.findtext("lastBuildDate") == rfc2822(RENDER_FORMAT_SINCE)
     assert channel.find(tag(NS_ITUNES, "new-feed-url")) is None
     self_links = [
         link for link in channel.findall(tag(NS_ATOM, "link")) if link.get("rel") == "self"
     ]
     assert len(self_links) == 1 and self_links[0].get("href") == f"{BASE_URL}/feeds/{FEED_ID}.xml"
     image = channel.find(tag(NS_ITUNES, "image"))
-    assert (
-        image is not None
-        and image.get("href") == f"{BASE_URL}/feeds/{FEED_ID}/assets/feed.artwork.jpg"
-    )
+    assert image is not None and image.get("href") == art_url(None)
     assert channel.findtext("copyright") == "© 2024 Fixture Media"
     rendered_items = channel.findall("item")
     assert [i.findtext("guid") for i in rendered_items] == [
@@ -270,10 +284,7 @@ def test_rss_preserved(rich: ParsedFeed) -> None:
         t.get("url", "").startswith(f"{BASE_URL}/feeds/{FEED_ID}/assets/") for t in transcripts
     )
     five_image = five.find(tag(NS_ITUNES, "image"))
-    assert (
-        five_image is not None
-        and five_image.get("href") == f"{BASE_URL}/feeds/{FEED_ID}/assets/i6.artwork.jpg"
-    )
+    assert five_image is not None and five_image.get("href") == art_url("i6")
     assert five.find(tag(NS_PODCAST, "person")) is not None
     one = rendered_items[3]
     one_chapters = one.find(tag(NS_PODCAST, "chapters"))
@@ -348,7 +359,7 @@ def test_ytdlp_synthesized() -> None:
             published_at=datetime.fromtimestamp(1700000000, tz=UTC),
         ),
     ]
-    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    rendered = render_feed(feed, items, base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
     _, channel = channel_of(rendered)
     assert channel.findtext("title") == "Fixture Channel - Videos"
     assert channel.findtext("link") == "https://www.youtube.com/@fixturechannel/videos"
@@ -380,10 +391,7 @@ def test_ytdlp_synthesized() -> None:
     assert two.findtext("guid") == "urn:copycast:v2"
     assert two.find("link") is None
     three_image = rendered_items[1].find(tag(NS_ITUNES, "image"))
-    assert (
-        three_image is not None
-        and three_image.get("href") == f"{BASE_URL}/feeds/{FEED_ID}/assets/v3.artwork.jpg"
-    )
+    assert three_image is not None and three_image.get("href") == art_url("v3")
     check_golden("ytdlp_synthesized", rendered)
 
 
@@ -415,7 +423,7 @@ def test_bucket() -> None:
             source_number=1,
         ),
     ]
-    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    rendered = render_feed(feed, items, base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
     _, channel = channel_of(rendered)
     assert channel.findtext("title") == "Copycast"
     assert channel.findtext("link") == f"{BASE_URL}/"
@@ -454,7 +462,11 @@ def test_transcripts_mirrored_wins() -> None:
         ),
     )
     rendered = render_feed(
-        feed, [item("t1", 1, "T1", published_at=NOW, assets=assets)], base_url=BASE_URL, now=NOW
+        feed,
+        [item("t1", 1, "T1", published_at=NOW, assets=assets)],
+        base_url=BASE_URL,
+        artwork_secret=ART_SECRET,
+        now=NOW,
     )
     _, channel = channel_of(rendered)
     transcripts = channel.findall(f"item/{tag(NS_PODCAST, 'transcript')}")
@@ -476,7 +488,7 @@ def test_delisted_kept(rich: ParsedFeed) -> None:
         ["urn:fixture:episode:5", "urn:fixture:episode:4"],
         **{"urn:fixture:episode:4": {"listed": False}},
     )
-    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    rendered = render_feed(feed, items, base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
     _, channel = channel_of(rendered)
     assert [i.findtext("guid") for i in channel.findall("item")] == [
         "urn:fixture:episode:5",
@@ -500,7 +512,7 @@ def test_tombstone_excluded(rich: ParsedFeed) -> None:
         item("a", 10, "archiving", state=ArchiveState.archiving, published_at=NOW),
         item("f", 11, "failed", state=ArchiveState.failed, published_at=NOW),
     ]
-    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    rendered = render_feed(feed, items, base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
     _, channel = channel_of(rendered)
     assert [i.findtext("guid") for i in channel.findall("item")] == ["urn:fixture:episode:5"]
     check_golden("tombstone_excluded", rendered)
@@ -519,7 +531,7 @@ def test_enclosure_length_real(rich: ParsedFeed) -> None:
             }
         },
     )
-    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    rendered = render_feed(feed, items, base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
     _, channel = channel_of(rendered)
     enclosure = channel.find("item/enclosure")
     assert enclosure is not None
@@ -540,22 +552,19 @@ def test_artwork_local(rich: ParsedFeed) -> None:
             "urn:fixture:episode:trailer": {"assets": (artwork("i3", "webp"),)},
         },
     )
-    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    rendered = render_feed(feed, items, base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
     _, channel = channel_of(rendered)
     feed_image = channel.find(tag(NS_ITUNES, "image"))
-    assert (
-        feed_image is not None
-        and feed_image.get("href") == f"{BASE_URL}/feeds/{FEED_ID}/assets/feed.artwork.png"
-    )
+    assert feed_image is not None and feed_image.get("href") == art_url(None, "png")
     hrefs = [
         i.find(tag(NS_ITUNES, "image")).get("href")
         for i in channel.findall("item")
         if i.find(tag(NS_ITUNES, "image")) is not None
     ]  # type: ignore[union-attr]
     assert hrefs == [
-        f"{BASE_URL}/feeds/{FEED_ID}/assets/i6.artwork.jpg",
+        art_url("i6"),
         "https://podcast.example/artwork/4.jpg",
-        f"{BASE_URL}/feeds/{FEED_ID}/assets/i3.artwork.webp",
+        art_url("i3", "webp"),
     ]
     check_golden("artwork_local", rendered)
 
@@ -607,7 +616,7 @@ def test_automatic_feed_lists_unarchived_items_under_their_stable_url() -> None:
         ),
         item("dddddddddddddddd", 4, "No media", state=ArchiveState.available, archivable=False),
     ]
-    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    rendered = render_feed(feed, items, base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
     enclosures = etree.fromstring(rendered.body).findall(".//item/enclosure")
     # The archived one, the pending one and the Tombstone (downloaded again on request);
     # every URL ends with the row's public_ext and the type follows it until the file
@@ -642,6 +651,7 @@ def test_automatic_feed_lists_unarchived_items_under_their_stable_url() -> None:
             )
         ],
         base_url=BASE_URL,
+        artwork_secret=ART_SECRET,
         now=NOW,
     )
     (pending,) = etree.fromstring(rss.body).findall(".//item/enclosure")
@@ -652,7 +662,11 @@ def test_automatic_feed_lists_unarchived_items_under_their_stable_url() -> None:
     )
     # The same items under any other mode: only the archived one.
     plain = render_feed(
-        FeedView(id=FEED_ID, kind=FeedKind.mirror, title="x"), items, base_url=BASE_URL, now=NOW
+        FeedView(id=FEED_ID, kind=FeedKind.mirror, title="x"),
+        items,
+        base_url=BASE_URL,
+        artwork_secret=ART_SECRET,
+        now=NOW,
     )
     assert len(etree.fromstring(plain.body).findall(".//item")) == 1
 
@@ -666,7 +680,7 @@ def test_order_is_published_desc_nulls_last_then_ordinal_desc() -> None:
         item("d", 4, "d", published_at=NOW),
         item("e", 5, "e", published_at=None),
     ]
-    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    rendered = render_feed(feed, items, base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
     _, channel = channel_of(rendered)
     assert [i.findtext("title") for i in channel.findall("item")] == ["d", "c", "a", "e", "b"]
 
@@ -684,6 +698,7 @@ def test_synthesized_channel_falls_back_when_the_source_xml_is_unusable() -> Non
         feed,
         [item("x", 1, "x", published_at=NOW, source_item_xml="<not-an-item/>")],
         base_url=BASE_URL,
+        artwork_secret=ART_SECRET,
         now=NOW,
     )
     _, channel = channel_of(rendered)
@@ -696,7 +711,7 @@ def test_synthesized_channel_falls_back_when_the_source_xml_is_unusable() -> Non
         source_kind=SourceKind.rss,
         source_channel_xml="<<<",
     )
-    assert render_feed(garbage, [], base_url=BASE_URL, now=NOW).body
+    assert render_feed(garbage, [], base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW).body
 
 
 def test_channel_only_source_xml_and_conflicting_prefixes_are_handled() -> None:
@@ -714,11 +729,11 @@ def test_channel_only_source_xml_and_conflicting_prefixes_are_handled() -> None:
         source_channel_xml=channel_xml_text,
         last_modified=NOW,
     )
-    rendered = render_feed(feed, [], base_url=BASE_URL, now=NOW)
+    rendered = render_feed(feed, [], base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
     root, channel = channel_of(rendered)
     assert root.tag == "rss" and root.get("version") == "2.0"
     assert channel.findtext("generator") == GENERATOR
-    assert channel.findtext("lastBuildDate") == rfc2822(NOW)
+    assert channel.findtext("lastBuildDate") == rfc2822(RENDER_FORMAT_SINCE)
     self_links = channel.findall(tag(NS_ATOM, "link"))
     assert [link.get("href") for link in self_links] == [f"{BASE_URL}/feeds/f.xml"]
     assert channel.find("{urn:other}link").get("href") == "https://elsewhere"  # type: ignore[union-attr]
@@ -727,7 +742,11 @@ def test_channel_only_source_xml_and_conflicting_prefixes_are_handled() -> None:
 
 def test_body_is_utf8_xml_with_declaration(rich: ParsedFeed) -> None:
     rendered = render_feed(
-        rss_feed(rich), rss_items(rich, ["urn:fixture:episode:4"]), base_url=BASE_URL, now=NOW
+        rss_feed(rich),
+        rss_items(rich, ["urn:fixture:episode:4"]),
+        base_url=BASE_URL,
+        artwork_secret=ART_SECRET,
+        now=NOW,
     )
     assert rendered.body.startswith(b"<?xml version='1.0' encoding='UTF-8'?>")
     assert "—".encode() in rendered.body
@@ -772,7 +791,7 @@ def test_show_notes_point_at_the_mirrored_attachments() -> None:
             assets=(attachment, missing),
         )
     ]
-    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    rendered = render_feed(feed, items, base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
     description = etree.fromstring(rendered.body).findtext(".//item/description") or ""
     local = f"{BASE_URL}/feeds/{FEED_ID}/assets/aaaaaaaaaaaaaaaa.attachment.0123456789ab.jpg"
     assert local in description
@@ -810,10 +829,204 @@ def test_approximate_dates_are_said_in_the_show_notes() -> None:
         source_kind=SourceKind.ytdlp,
         backfill_mode=BackfillMode.automatic,
     )
-    rendered = render_feed(feed, items, base_url=BASE_URL, now=NOW)
+    rendered = render_feed(feed, items, base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
     descriptions = [
         e.findtext("description") or "" for e in etree.fromstring(rendered.body).findall(".//item")
     ]
     assert descriptions[0].startswith("Notes.")
     note = "Published about 3 weeks ago (approximate date from YouTube; exact once downloaded)."
     assert descriptions[1].startswith(f"{note}\n\nNotes.")
+
+
+# --------------------------------------------------------------------------- 2.3 hardening
+
+
+def _blocks(channel: Any) -> list[tuple[str | None, str | None]]:
+    return [
+        (etree.QName(child).namespace, child.text)
+        for child in channel
+        if isinstance(child.tag, str) and etree.QName(child).localname == "block"
+    ]
+
+
+def test_every_feed_asks_directories_not_to_list_it(rich: ParsedFeed) -> None:
+    """Synthesized and preserved channels alike carry one itunes:block and one podcast:block,
+    with the podcast namespace declared."""
+    synthesized = render_feed(
+        FeedView(id=FEED_ID, kind=FeedKind.mirror, title="Tube", source_kind=SourceKind.ytdlp),
+        [item("v1", 1, "v", published_at=NOW)],
+        base_url=BASE_URL,
+        artwork_secret=ART_SECRET,
+        now=NOW,
+    )
+    bucket = render_feed(
+        FeedView(id="copycast-abc234", kind=FeedKind.bucket, title="Copycast"),
+        [],
+        base_url=BASE_URL,
+        artwork_secret=ART_SECRET,
+        now=NOW,
+    )
+    preserved = render_feed(
+        rss_feed(rich), [], base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW
+    )
+    for rendered in (synthesized, bucket, preserved):
+        root, channel = channel_of(rendered)
+        assert root.nsmap["podcast"] == NS_PODCAST
+        assert _blocks(channel) == [(NS_ITUNES, "Yes"), (NS_PODCAST, "yes")]
+
+
+def test_last_modified_never_predates_the_render_format() -> None:
+    """A feed unchanged since before 2.3.0 still reports a Last-Modified from after it, so a
+    client revalidating with If-Modified-Since alone gets the new body (block tags, /art/)
+    once; a feed changed later keeps its own date, and lastBuildDate says the same."""
+    old = datetime(2025, 6, 1, 8, 30, tzinfo=UTC)
+    later = RENDER_FORMAT_SINCE + timedelta(days=3, seconds=7)
+    for last_modified, expected in (
+        (old, RENDER_FORMAT_SINCE),
+        (None, RENDER_FORMAT_SINCE),  # falls back to ``now``, itself before the floor here
+        (later, later),
+    ):
+        feed = FeedView(
+            id="copycast-abc234",
+            kind=FeedKind.bucket,
+            title="Copycast",
+            last_modified=last_modified,
+        )
+        rendered = render_feed(feed, [], base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
+        assert rendered.last_modified == expected
+        _, channel = channel_of(rendered)
+        assert channel.findtext("lastBuildDate") == rfc2822(expected)
+    assert datetime.now(UTC) >= RENDER_FORMAT_SINCE  # a Last-Modified is never in the future
+
+
+def test_a_sources_own_block_tags_are_replaced_never_duplicated() -> None:
+    """A Source that says ``No`` (or blocks under the legacy namespace URIs) gets Copycast's
+    blocks instead: one of each, never two."""
+    channel_xml_text = (
+        '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" '
+        'xmlns:podcast="https://podcastindex.org/namespace/1.0" '
+        'xmlns:old="https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/1.0.md" '
+        'xmlns:caps="http://www.itunes.com/DTDs/PodCast-1.0.dtd"><channel>'
+        "<title>Open</title><link>https://o.example/</link><description>d</description>"
+        "<itunes:block>No</itunes:block><podcast:block>no</podcast:block>"
+        '<podcast:block id="spotify">no</podcast:block><old:block>no</old:block>'
+        "<caps:block>No</caps:block><other>kept</other></channel></rss>"
+    )
+    feed = FeedView(
+        id="f",
+        kind=FeedKind.mirror,
+        title="Open",
+        source_kind=SourceKind.rss,
+        source_channel_xml=channel_xml_text,
+        last_modified=NOW,
+    )
+    rendered = render_feed(feed, [], base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
+    _, channel = channel_of(rendered)
+    assert _blocks(channel) == [(NS_ITUNES, "Yes"), (NS_PODCAST, "yes")]
+    assert channel.findtext("other") == "kept"
+
+
+def test_artwork_moves_to_art_and_nothing_else_moves(rich: ParsedFeed) -> None:
+    """Only image URLs change in 2.3: enclosures, chapters, transcripts and attachments keep
+    the exact URLs 2.2 published, with and without a media key, so no podcast app downloads
+    an Episode again. Artwork is the same /art/ URL in both auth modes."""
+    attachment = AssetView(
+        kind=AssetKind.attachment,
+        local_path="assets/i6.attachment.0123456789ab.pdf",
+        remote_url="https://podcast.example/notes.pdf",
+    )
+    assets = (
+        chapters("i6"),
+        transcript("en", AssetFormat.vtt, item="i6"),
+        attachment,
+        artwork("i6"),
+    )
+    key = "k" * 22
+    expected = {
+        None: f"{BASE_URL}/feeds/{FEED_ID}",
+        key: f"{BASE_URL}/feeds/{FEED_ID}/k/{key}",
+    }
+    images: set[str] = set()
+    for media_key, root_url in expected.items():
+        feed = FeedView(
+            id=FEED_ID,
+            kind=FeedKind.mirror,
+            title="Tube",
+            source_kind=SourceKind.ytdlp,
+            assets=(artwork(None),),
+            media_key=media_key,
+        )
+        rendered = render_feed(
+            feed,
+            [
+                item(
+                    "i6",
+                    6,
+                    "Six",
+                    published_at=NOW,
+                    media_ext="m4a",
+                    public_ext="mp3",
+                    description="see https://podcast.example/notes.pdf",
+                    assets=assets,
+                )
+            ],
+            base_url=BASE_URL,
+            artwork_secret=ART_SECRET,
+            now=NOW,
+        )
+        _, channel = channel_of(rendered)
+        (element,) = channel.findall("item")
+        enclosure = element.find("enclosure")
+        assert enclosure is not None and enclosure.get("url") == f"{root_url}/media/i6.mp3"
+        chapter = element.find(tag(NS_PODCAST, "chapters"))
+        assert chapter is not None
+        assert chapter.get("url") == f"{root_url}/assets/i6.chapters.json"
+        captions = element.find(tag(NS_PODCAST, "transcript"))
+        assert captions is not None
+        assert captions.get("url") == f"{root_url}/assets/i6.transcript.en.mirrored.vtt"
+        assert f"{root_url}/assets/i6.attachment.0123456789ab.pdf" in (
+            element.findtext("description") or ""
+        )
+        item_image = element.find(tag(NS_ITUNES, "image"))
+        feed_image = channel.find(tag(NS_ITUNES, "image"))
+        assert item_image is not None and feed_image is not None
+        assert item_image.get("href") == art_url("i6")
+        assert feed_image.get("href") == art_url(None)
+        images.update({item_image.get("href", ""), feed_image.get("href", "")})
+        # Neither the feed id nor the item id names the image any more.
+        assert f"{FEED_ID}/assets/feed.artwork" not in rendered.body.decode()
+        assert "i6.artwork" not in rendered.body.decode()
+    assert images == {art_url("i6"), art_url(None)}
+
+
+def test_the_artwork_token_depends_on_the_instance_secret() -> None:
+    feed = FeedView(
+        id=FEED_ID,
+        kind=FeedKind.mirror,
+        title="Tube",
+        source_kind=SourceKind.ytdlp,
+        assets=(artwork(None),),
+    )
+    one = render_feed(feed, [], base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
+    other = render_feed(feed, [], base_url=BASE_URL, artwork_secret=b"\x08" * 32, now=NOW)
+    image = channel_of(one)[1].find(tag(NS_ITUNES, "image"))
+    moved = channel_of(other)[1].find(tag(NS_ITUNES, "image"))
+    assert image is not None and moved is not None
+    assert image.get("href") == art_url(None) != moved.get("href")
+    assert str(moved.get("href")).startswith(f"{BASE_URL}/art/{art_id(None)}-")
+
+
+def test_artwork_without_an_asset_id_is_not_published_locally() -> None:
+    """The /art/ token is the asset id: a view without one falls back to the Source's image."""
+    nameless = AssetView(kind=AssetKind.artwork, local_path="assets/feed.artwork.jpg")
+    feed = FeedView(
+        id=FEED_ID,
+        kind=FeedKind.mirror,
+        title="Tube",
+        source_kind=SourceKind.ytdlp,
+        artwork_url="https://cdn.example/cover.jpg",
+        assets=(nameless,),
+    )
+    rendered = render_feed(feed, [], base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
+    image = channel_of(rendered)[1].find(tag(NS_ITUNES, "image"))
+    assert image is not None and image.get("href") == "https://cdn.example/cover.jpg"

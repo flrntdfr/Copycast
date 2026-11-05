@@ -9,6 +9,8 @@
     <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="http://testserver/feeds/0123456789abcdef.xml" rel="self" type="application/rss+xml"/>
     <generator>Copycast 2.2.1</generator>
     <lastBuildDate/>
+    <itunes:block xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Yes</itunes:block>
+    <podcast:block xmlns:podcast="https://podcastindex.org/namespace/1.0">yes</podcast:block>
     <item>
       <title>T1</title>
       <guid isPermaLink="false">urn:copycast:t1</guid>

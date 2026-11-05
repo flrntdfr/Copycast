@@ -252,7 +252,10 @@ class AssetRead(ReadModel):
     provenance: AssetProvenance = AssetProvenance.mirrored
     language: str | None = None
     format: AssetFormat | None = None
-    url: str | None = Field(default=None, description="Local URL once archived")
+    url: str | None = Field(
+        default=None,
+        description="Local URL once archived; Artwork's is its public /art/ URL (no credentials)",
+    )
     remote_url: str | None = None
     mime: str | None = None
     size_bytes: int | None = None

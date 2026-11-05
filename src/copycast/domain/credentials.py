@@ -5,6 +5,9 @@ plain SHA-256 digest (no salt or work factor is needed against brute force)
 while feed pairs stay in clear text: the UI shows them again for the next
 podcast client and ``copycast rebuild`` restores them from the descriptor. A
 feed's media key is derived from its password, so it needs no storage of its own.
+Public Artwork is published under an opaque token: the asset id plus a MAC under
+the instance secret (32 random bytes kept in Postgres), so nobody can compute the
+URL of a channel's or a video's artwork to learn that this server mirrors it.
 """
 
 from __future__ import annotations
@@ -24,6 +27,10 @@ FEED_PASSWORD_LEN: Final = 24
 FEED_MEDIA_KEY_LEN: Final = 22
 """Base32 characters of a feed's media key (110 bits)."""
 _MEDIA_KEY_CONTEXT: Final = b"copycast feed media key\x00"
+INSTANCE_SECRET_BYTES: Final = 32
+ARTWORK_MAC_LEN: Final = 26
+"""Base32 characters of an artwork token's MAC (130 bits)."""
+_ARTWORK_CONTEXT: Final = b"copycast artwork\x00"
 API_KEY_PREFIX: Final = "cck_"
 API_KEY_BYTES: Final = 30
 API_KEY_DISPLAY_LEN: Final = 12
@@ -61,6 +68,26 @@ def feed_media_key(feed_id: str, password: str) -> str:
         password.encode("utf-8"), _MEDIA_KEY_CONTEXT + feed_id.encode("utf-8"), hashlib.sha256
     )
     return base64.b32encode(mac.digest()).decode("ascii").lower()[:FEED_MEDIA_KEY_LEN]
+
+
+def new_instance_secret() -> bytes:
+    """The instance secret artwork tokens are keyed with: 32 random bytes."""
+    return secrets.token_bytes(INSTANCE_SECRET_BYTES)
+
+
+def artwork_mac(secret: bytes, asset_id: str) -> str:
+    """The MAC half of a public artwork URL (``/art/{asset_id}-{mac}.{ext}``).
+
+    The first 26 characters of the lowercase, unpadded base32 of
+    ``HMAC-SHA256(secret, b"copycast artwork\\x00" + asset_id)``.
+    """
+    mac = hmac.new(secret, _ARTWORK_CONTEXT + asset_id.encode("utf-8"), hashlib.sha256)
+    return base64.b32encode(mac.digest()).decode("ascii").lower()[:ARTWORK_MAC_LEN]
+
+
+def artwork_mac_ok(secret: bytes, asset_id: str, mac: str) -> bool:
+    """Whether ``mac`` is :func:`artwork_mac` of ``asset_id``, compared in constant time."""
+    return constant_time_equals(mac, artwork_mac(secret, asset_id))
 
 
 def new_api_key() -> str:
@@ -107,18 +134,23 @@ def required_scope(*, destructive: bool, read_only: bool) -> KeyScope:
 
 __all__ = [
     "API_KEY_PREFIX",
+    "ARTWORK_MAC_LEN",
     "FEED_ALPHABET",
     "FEED_MEDIA_KEY_LEN",
     "FEED_PASSWORD_LEN",
     "FEED_USERNAME_LEN",
+    "INSTANCE_SECRET_BYTES",
     "api_key_hash",
     "api_key_prefix",
+    "artwork_mac",
+    "artwork_mac_ok",
     "constant_time_equals",
     "feed_media_key",
     "looks_like_api_key",
     "new_api_key",
     "new_feed_password",
     "new_feed_username",
+    "new_instance_secret",
     "required_scope",
     "scope_allows",
     "scopes_granted",

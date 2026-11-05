@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
@@ -30,7 +30,7 @@ from copycast.application.models import (
 from copycast.application.ports import CancelToken, Engine
 from copycast.application.services.context import RssFetch, ServiceContext, SourceSnapshot
 from copycast.application.services.sources import WATCH_LATER_URL
-from copycast.domain.credentials import feed_media_key
+from copycast.domain.credentials import feed_media_key, new_instance_secret
 from copycast.domain.enums import (
     ArchiveState,
     AssetFormat,
@@ -60,6 +60,8 @@ def _load(module: str, attr: str) -> Any:
 
 
 PLAYLISTS_URL = "https://www.youtube.com/feed/playlists"
+ARTWORK_SECRET = "artwork"
+"""The ``instance_secrets`` row public artwork tokens are keyed with."""
 
 
 class _SearchLog:
@@ -287,11 +289,27 @@ class SourceGatewayAdapter:
 
 
 class PublicUrlsAdapter:
-    """``adapters.feeds.urls`` bound to ``base_url``; embeds feed pairs only while auth is on."""
+    """``adapters.feeds.urls`` bound to ``base_url``; embeds feed pairs only while auth is on.
 
-    def __init__(self, base_url: str, *, auth_enabled: bool = False) -> None:
+    ``artwork_secret`` reads the instance secret (once: the container caches it);
+    :meth:`prepare` must have run before :meth:`artwork_url`.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        auth_enabled: bool = False,
+        artwork_secret: Callable[[], Awaitable[bytes]] | None = None,
+    ) -> None:
         self._base_url = base_url
         self._auth_enabled = auth_enabled
+        self._load_secret = artwork_secret
+        self._secret: bytes | None = None
+
+    async def prepare(self) -> None:
+        if self._secret is None and self._load_secret is not None:
+            self._secret = await self._load_secret()
 
     def feed_url(
         self, feed_id: str, *, username: str | None = None, password: str | None = None
@@ -315,6 +333,13 @@ class PublicUrlsAdapter:
     def asset_url(self, feed_id: str, local_path: str) -> str:
         compose = _load("copycast.adapters.feeds.urls", "asset_url")
         url: str = compose(self._base_url, feed_id, local_path)
+        return url
+
+    def artwork_url(self, asset_id: str, local_path: str) -> str:
+        if self._secret is None:
+            raise RuntimeError("PublicUrlsAdapter.prepare() must run before artwork_url()")
+        compose = _load("copycast.adapters.feeds.urls", "artwork_url")
+        url: str = compose(self._base_url, asset_id, local_path, secret=self._secret)
         return url
 
     def feed_object_url(self, feed_id: str, path: str) -> str:
@@ -385,6 +410,7 @@ class FeedRendererAdapter:
     async def render(self, feed_id: str) -> RenderedFeedDocument | None:
         """Render the feed from Postgres only; ``None`` for an unknown feed."""
         render_module = importlib.import_module("copycast.adapters.feeds.render")
+        secret = await self._container.artwork_secret()
         async with self._container.uow_factory() as uow:
             feed = await uow.feeds.get(feed_id)
             if feed is None:
@@ -452,6 +478,7 @@ class FeedRendererAdapter:
             feed_view,
             item_views,
             base_url=self._container.settings.base_url,
+            artwork_secret=secret,
         )
         return RenderedFeedDocument(
             body=bytes(rendered.body),
@@ -464,6 +491,7 @@ class FeedRendererAdapter:
     def _asset_view(render_module: Any, asset: Any) -> Any:
         return render_module.AssetView(
             kind=AssetKind(asset.kind),
+            id=asset.id,
             local_path=asset.local_path,
             state=AssetState(asset.state),
             provenance=AssetProvenance(asset.provenance),
@@ -571,10 +599,30 @@ class Container:
         urls: PublicUrlsAdapter = self._cached(
             "urls",
             lambda: PublicUrlsAdapter(
-                self.settings.base_url, auth_enabled=self.settings.auth.enabled
+                self.settings.base_url,
+                auth_enabled=self.settings.auth.enabled,
+                artwork_secret=self.artwork_secret,
             ),
         )
         return urls
+
+    async def artwork_secret(self) -> bytes:
+        """The instance secret public artwork tokens are keyed with, read once per process.
+
+        Minted on first use (``INSERT ... ON CONFLICT DO NOTHING``, then read back, so racing
+        processes agree on one) and kept in Postgres only: ``copycast rebuild`` onto an
+        empty database mints a new one, so every ``/art/`` URL changes once. Only images
+        move; podcast apps refetch them and download no audio again. A running api keeps
+        the secret it read, so restart it after such a rebuild.
+        """
+        cached: bytes | None = self._memo.get("artwork_secret")
+        if cached is None:
+            async with self.uow_factory() as uow:
+                cached = bytes(
+                    await uow.instance_secrets.get_or_create(ARTWORK_SECRET, new_instance_secret)
+                )
+            self._memo["artwork_secret"] = cached
+        return cached
 
     @property
     def rows(self) -> RowFactoryAdapter:

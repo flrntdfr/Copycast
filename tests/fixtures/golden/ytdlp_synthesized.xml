@@ -11,6 +11,8 @@
     <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="http://testserver/feeds/0123456789abcdef.xml" rel="self" type="application/rss+xml"/>
     <generator>Copycast 2.2.1</generator>
     <lastBuildDate/>
+    <itunes:block xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Yes</itunes:block>
+    <podcast:block xmlns:podcast="https://podcastindex.org/namespace/1.0">yes</podcast:block>
     <item>
       <title>Fixture video four</title>
       <description>The newest upload.
@@ -39,7 +41,7 @@ https://www.youtube.com/watch?v=vid00000004</description>
       <itunes:episode xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">3</itunes:episode>
       <itunes:episodeType xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">full</itunes:episodeType>
       <itunes:author xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Fixture Channel</itunes:author>
-      <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/feeds/0123456789abcdef/assets/v3.artwork.jpg"/>
+      <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/art/a26be27a0da79771-xqugnlvc35cw3dkaj3n55pt7sy.jpg"/>
     </item>
     <item>
       <title>Fixture video two</title>

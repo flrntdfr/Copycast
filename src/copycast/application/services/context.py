@@ -791,7 +791,11 @@ class PublicUrls(Protocol):
 
     While authentication is on, ``feed_url`` carries the feed's own pair as
     ``user:pass@`` and ``feed_credentials`` exposes it; otherwise both stay bare.
+    ``artwork_url`` is the public ``/art/`` URL of an artwork asset in both modes;
+    it needs the instance secret, which ``prepare`` reads once per process.
     """
+
+    async def prepare(self) -> None: ...
 
     def feed_url(
         self, feed_id: str, *, username: str | None = None, password: str | None = None
@@ -799,6 +803,7 @@ class PublicUrls(Protocol):
     def feed_credentials(self, username: str, password: str) -> FeedCredentials | None: ...
     def media_url(self, feed_id: str, item_id: str, ext: str) -> str: ...
     def asset_url(self, feed_id: str, local_path: str) -> str: ...
+    def artwork_url(self, asset_id: str, local_path: str) -> str: ...
     def feed_object_url(self, feed_id: str, path: str) -> str: ...
 
 
