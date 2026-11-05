@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import Callable, Generator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Final, cast
@@ -40,6 +40,7 @@ from yt_dlp.version import CHANNEL, RELEASE_GIT_HEAD, __version__
 from copycast.adapters.engine.errors import classify, upcoming_refusal
 from copycast.adapters.engine.options import fetch_params, listing_params, with_cookiefile
 from copycast.adapters.engine.synth import build, mime_for_ext
+from copycast.adapters.sources.guard import check_engine_url
 from copycast.adapters.sources.listing import live_status_of, normalize
 from copycast.adapters.sources.youtube_feed import SourceError, enrich_from_youtube_feed
 from copycast.adapters.storage.atomic import write_atomic
@@ -59,6 +60,7 @@ from copycast.application.ports import (
     ProgressCallback,
 )
 from copycast.domain.enums import EnginePhase, FetchKind, LiveStatus
+from copycast.domain.exceptions import DestinationNotAllowed
 from copycast.domain.listing import SourceListing
 from copycast.domain.media import AAC_CONTAINERS, PODCAST_EXTS, TRANSCODE_EXT
 from copycast.settings import Settings
@@ -179,6 +181,13 @@ class YtDlpEngine:
     A cookie file stored in the Object store (``Layout.cookies_key``) rides along
     with every call as ``cookiefile`` (a private Scratch copy) unless the
     options name one; yt-dlp's refreshed cookies are written back afterwards.
+
+    The fetch guard (``adapters.sources.guard.check_engine_url``) judges every URL
+    handed to yt-dlp before it runs: the Source URL of a listing, the item URL of a
+    fetch, and a direct fetch's enclosure (refused: ``DestinationNotAllowed``) and
+    Artwork (dropped). yt-dlp's own requests after that (its redirects, manifests,
+    format and thumbnail URLs an extractor finds) use its HTTP stack and are not
+    policed, and the check cannot pin the address yt-dlp then resolves.
     """
 
     def __init__(self, settings: Settings | None = None) -> None:
@@ -204,6 +213,7 @@ class YtDlpEngine:
         limit: int | None = None,
     ) -> SourceListing:
         _check_cancel(cancel, f"listing of {url}")
+        check_engine_url(url)
         errors = _LastErrorLog(log)
         try:
             with cookie_scope(self._cookies, options) as with_cookies:
@@ -242,6 +252,7 @@ class YtDlpEngine:
         _check_cancel(cancel, f"fetch of {spec.item_id}")
         if spec.kind is FetchKind.direct and spec.synth is None:
             raise PermanentError(f"direct fetch of {spec.item_id} without a synthesized item")
+        spec = guard_fetch_spec(spec, log)
         spec.home_dir.mkdir(parents=True, exist_ok=True)
         spec.temp_dir.mkdir(parents=True, exist_ok=True)
         state = _HookState()
@@ -295,6 +306,27 @@ class YtDlpEngine:
 
 def build_engine(settings: Settings) -> YtDlpEngine:
     return YtDlpEngine(settings)
+
+
+def guard_fetch_spec(spec: FetchSpec, log: EngineLog) -> FetchSpec:
+    """``spec`` once the fetch guard accepted its URLs; a refused Artwork URL is dropped.
+
+    The item URL (and a direct fetch's enclosure) raise ``DestinationNotAllowed``;
+    the Artwork yt-dlp would embed is only decoration, so the fetch goes on without it.
+    """
+    check_engine_url(spec.url)
+    synth = spec.synth
+    if synth is None:
+        return spec
+    if synth.url != spec.url:
+        check_engine_url(synth.url)
+    if synth.thumbnail_url:
+        try:
+            check_engine_url(synth.thumbnail_url)
+        except DestinationNotAllowed as exc:
+            log.warning(f"artwork not embedded: {exc}")
+            return replace(spec, synth=replace(synth, thumbnail_url=None))
+    return spec
 
 
 def fetch_params_for(
@@ -766,6 +798,7 @@ __all__ = [
     "fetch_params_for",
     "ffmpeg_version",
     "fix_thumbnail_extensions",
+    "guard_fetch_spec",
     "has_embedded_artwork",
     "live_match_filter",
     "release_date",

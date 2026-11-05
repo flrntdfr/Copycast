@@ -94,6 +94,25 @@ class SourceKindChange(Unsupported):
         )
 
 
+class DestinationNotAllowed(DomainError):
+    """A server-side fetch would reach a refused address or scheme (422 destination-not-allowed).
+
+    Raised by the fetch guard before a connection is opened: a loopback, private,
+    link-local or otherwise non-public address (``domain.destinations``) that
+    ``[security] allow_private_hosts`` does not exempt, or a scheme other than
+    http(s). ``target`` is the host (and port), never the full URL, so credentials
+    in a URL are not echoed.
+    """
+
+    slug = "destination-not-allowed"
+    status = 422
+
+    def __init__(self, target: str, reason: str) -> None:
+        self.target = target
+        self.reason = reason
+        super().__init__(f"{target} is not an allowed destination: {reason}")
+
+
 class InvalidSelection(DomainError):
     """A selection expression could not be parsed or resolved (422 invalid-selection)."""
 

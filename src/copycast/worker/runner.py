@@ -51,6 +51,7 @@ from copycast.application.ports import (
 )
 from copycast.application.services.about import normalize_engine_version
 from copycast.domain.enums import ArchiveState, ErrorKind, JobKind, JobStatus
+from copycast.domain.exceptions import DestinationNotAllowed
 from copycast.logging import bind_context, get_logger, unbind_context
 from copycast.worker.constants import (
     BACKOFF_BASE_SECONDS,
@@ -435,7 +436,8 @@ class Runner:
                     live_status=failure.live_status.value,
                     until=until.isoformat(),
                 )
-            elif isinstance(failure, PermanentError):
+            elif isinstance(failure, PermanentError | DestinationNotAllowed):
+                # A refused destination stays refused: retrying it would only repeat the refusal.
                 final = await uow.jobs.finish(
                     job.id, JobStatus.failed, error=str(failure), error_kind=ErrorKind.permanent
                 )

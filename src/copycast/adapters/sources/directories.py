@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from copycast.adapters.sources.http import USER_AGENT, SourceError, SourceUnreachable
+from copycast.adapters.sources.http import SourceError, SourceUnreachable, get_client
 from copycast.adapters.sources.itunes_search import search_podcasts
 
 LOOKUP_URL: Final = "https://itunes.apple.com/lookup"
@@ -58,14 +58,9 @@ def is_directory_link(url: str) -> bool:
 
 
 def _get(url: str, client: httpx.Client | None, **params: str) -> httpx.Response:
+    http = client if client is not None else get_client()
     try:
-        if client is not None:
-            response = client.get(url, params=params or None, timeout=TIMEOUT_SECONDS)
-        else:
-            with httpx.Client(
-                headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT_SECONDS, follow_redirects=True
-            ) as own:
-                response = own.get(url, params=params or None)
+        response = http.get(url, params=params or None, timeout=TIMEOUT_SECONDS)
     except httpx.HTTPError as exc:
         raise SourceUnreachable(f"{url}: {exc}") from exc
     if response.status_code >= 400:

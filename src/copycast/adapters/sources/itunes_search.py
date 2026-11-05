@@ -11,9 +11,9 @@ import httpx
 
 from copycast.adapters.sources.cache import TtlCache
 from copycast.adapters.sources.http import (
-    USER_AGENT,
     SourceRejected,
     SourceUnreachable,
+    get_client,
 )
 from copycast.application.models import PodcastSearchResult
 
@@ -55,14 +55,9 @@ def search_podcasts(
     if not key[0]:
         return []
     params = {"media": "podcast", "entity": "podcast", "limit": str(limit), "term": key[0]}
+    http = client if client is not None else get_client()
     try:
-        if client is not None:
-            response = client.get(SEARCH_URL, params=params, timeout=TIMEOUT_SECONDS)
-        else:
-            with httpx.Client(
-                headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT_SECONDS, follow_redirects=True
-            ) as own:
-                response = own.get(SEARCH_URL, params=params)
+        response = http.get(SEARCH_URL, params=params, timeout=TIMEOUT_SECONDS)
     except httpx.HTTPError as exc:
         raise SourceUnreachable(f"iTunes Search: {exc}") from exc
     if response.status_code >= 500:

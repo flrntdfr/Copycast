@@ -202,3 +202,44 @@ def test_auth_settings_are_validated(
 ) -> None:
     with pytest.raises(SettingsError, match=message):
         get_settings(storage={"scratch_dir": tmp_path}, **overrides)
+
+
+def test_security_exempts_nothing_by_default(tmp_path: Path) -> None:
+    settings = get_settings(storage={"scratch_dir": tmp_path})
+    assert settings.security.allow_private_hosts == []
+    policy = settings.security.destination_policy
+    assert policy.allowed_hosts == frozenset() and policy.allowed_networks == ()
+
+
+def test_security_allow_private_hosts_from_toml_and_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "copycast.toml"
+    config.write_text(
+        '[security]\nallow_private_hosts = ["nas.lan", "192.168.1.0/24"]\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("COPYCAST_CONFIG", str(config))
+    from_file = get_settings(storage={"scratch_dir": tmp_path})
+    assert from_file.security.allow_private_hosts == ["nas.lan", "192.168.1.0/24"]
+    monkeypatch.setenv(
+        "COPYCAST__SECURITY__ALLOW_PRIVATE_HOSTS", '["fixtures", " 10.0.0.0/8 ", ""]'
+    )
+    from_env = get_settings(storage={"scratch_dir": tmp_path})
+    assert from_env.security.allow_private_hosts == ["fixtures", "10.0.0.0/8"]
+    policy = from_env.security.destination_policy
+    assert policy.allows_host("fixtures")
+    assert [str(n) for n in policy.allowed_networks] == ["10.0.0.0/8"]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"security": {"allow_private_hosts": ["http://nas.lan"]}},
+        {"security": {"allow_private_hosts": ["not a host"]}},
+        {"security": {"allow_private_hosts": "nas.lan"}},
+        {"security": {"allow_everything": True}},
+    ],
+)
+def test_bad_security_settings_are_one_line(overrides: dict[str, object]) -> None:
+    with pytest.raises(SettingsError, match=r"^invalid configuration: security"):
+        get_settings(**overrides)

@@ -4,7 +4,8 @@
 database engine and sessionmaker, the Object store layout and Scratch, the unit-of-work factory,
 the gateways the application services talk to (Source probing and search, the
 public URLs, new ORM rows) and the services themselves, for the api process,
-the worker and the tests. Adapter collaborators are resolved lazily on first
+the worker and the tests. Building one installs ``[security]`` as the process's
+fetch guard policy (``adapters.sources.guard``). Adapter collaborators are resolved lazily on first
 access through importlib so a container can be built before every adapter
 package is imported.
 """
@@ -499,6 +500,11 @@ class Container:
         self._memo: dict[str, Any] = {}
         if engine is not None:
             self._memo["engine"] = engine
+        # The fetch guard is process-wide (one shared httpx client, the Engine's checks):
+        # the process's container gives it ``[security] allow_private_hosts``.
+        _load("copycast.adapters.sources.guard", "install_policy")(
+            settings.security.destination_policy
+        )
 
     def _cached(self, name: str, build: Callable[[], Any]) -> Any:
         if name not in self._memo:

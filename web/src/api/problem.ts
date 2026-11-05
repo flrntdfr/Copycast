@@ -10,6 +10,7 @@ export type ProblemSlug =
   | "candidates-ambiguous"
   | "source-unsupported"
   | "source-kind-change"
+  | "destination-not-allowed"
   | "invalid-selection"
   | "engine-option-rejected"
   | "conflict"

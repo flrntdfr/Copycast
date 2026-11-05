@@ -4,6 +4,9 @@ Timeouts are 20 s to connect and 120 s to read; redirects are followed;
 every body is streamed and cut off at the caller's cap so a hostile Source
 cannot exhaust memory. Errors are reported as :class:`SourceError` subclasses
 the callers translate (probe -> ``Unsupported``, refresh -> ``last_error``).
+Every client goes through the fetch guard (``adapters.sources.guard``): a
+request, or a redirect hop, that would reach a refused address raises
+``DestinationNotAllowed``, which is not a ``SourceError`` and is never retried.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from typing import Final
 
 import httpx
 
+from copycast.adapters.sources.guard import GuardedTransport
 from copycast.version import APP_VERSION
 
 USER_AGENT: Final = f"Copycast/{APP_VERSION} (+https://github.com/flrntdfr/copycast)"
@@ -89,12 +93,13 @@ def default_timeout() -> httpx.Timeout:
 
 
 def create_client(*, timeout: httpx.Timeout | None = None) -> httpx.Client:
-    """A new client with Copycast's user agent, timeouts and redirect policy."""
+    """A new client with Copycast's user agent, timeouts, redirect policy and fetch guard."""
     return httpx.Client(
         headers={"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"},
         timeout=timeout or default_timeout(),
         follow_redirects=True,
         max_redirects=MAX_REDIRECTS,
+        transport=GuardedTransport(),
     )
 
 
@@ -136,7 +141,8 @@ def fetch(
     ``etag``/``last_modified`` become ``If-None-Match``/``If-Modified-Since``;
     a 304 returns ``Fetched(not_modified=True)``. Bodies longer than
     ``max_bytes`` raise :class:`BodyTooLarge`; 4xx raise :class:`SourceRejected`;
-    5xx and transport errors raise :class:`SourceUnreachable`. ``timeout`` caps
+    5xx and transport errors raise :class:`SourceUnreachable`; a refused destination
+    raises ``DestinationNotAllowed`` (see ``adapters.sources.guard``). ``timeout`` caps
     every phase of this one request (connect, read, write, pool) in seconds
     instead of the client's defaults: a caller that cannot wait long (the light
     Refresh) gets its thread back soon after its own deadline.
