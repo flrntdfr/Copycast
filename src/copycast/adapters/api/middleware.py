@@ -125,15 +125,35 @@ def client_ip_of(scope: Scope) -> str | None:
     return str(client[0]) if client else None
 
 
+LOGGED_VALUE_MAX = 2048
+"""The longest path, query or header value an access log line carries, in characters; the
+rest is cut (a request line can be tens of kilobytes, nobody reads that in a log)."""
+TRUNCATED_MARK = "…"
+
+
+def capped(value: str | None) -> str | None:
+    """``value`` cut to :data:`LOGGED_VALUE_MAX` characters, marked when it was cut."""
+    if value is None or len(value) <= LOGGED_VALUE_MAX:
+        return value
+    return value[:LOGGED_VALUE_MAX] + TRUNCATED_MARK
+
+
 def logged_path(path: str) -> str:
     """The path as logged: a media key (``/feeds/{id}/k/{key}/``) or an upload token
-    (``/uploads/{id}/{token}``) is a credential (:func:`copycast.logging.redact_text`)."""
-    return redact_text(path)
+    (``/uploads/{id}/{token}``) is a credential (:func:`copycast.logging.redact_text`),
+    redacted before the path is cut to :data:`LOGGED_VALUE_MAX` (a cut must never leave
+    half a secret the rule no longer recognises)."""
+    return capped(redact_text(path)) or ""
 
 
 def _redacted_query(scope: Scope) -> str | None:
     raw: bytes = scope.get("query_string") or b""
-    return redact_text(raw.decode("utf-8", "replace")) or None
+    return capped(redact_text(raw.decode("utf-8", "replace"))) or None
+
+
+def _logged_header(headers: Headers, name: str) -> str | None:
+    value = headers.get(name)
+    return None if value is None else capped(redact_text(value))
 
 
 def _int_or_none(value: str | None) -> int | None:
@@ -190,9 +210,9 @@ class AccessLogMiddleware:
                 bytes=body_bytes,
                 content_length=content_length,
                 client_ip=client_ip_of(scope),
-                forwarded_for=request_headers.get(FORWARDED_FOR_HEADER),
-                user_agent=request_headers.get("user-agent"),
-                range=request_headers.get("range"),
+                forwarded_for=_logged_header(request_headers, FORWARDED_FOR_HEADER),
+                user_agent=_logged_header(request_headers, "user-agent"),
+                range=_logged_header(request_headers, "range"),
                 request_id=request_id,
                 completed=completed,
             )
@@ -220,6 +240,7 @@ class AccessLogMiddleware:
 __all__ = [
     "ACCESS_LOG_EVENT",
     "ACCESS_LOG_SKIP_PREFIX",
+    "LOGGED_VALUE_MAX",
     "NO_STORE_TYPES",
     "REQUEST_ID_HEADER",
     "REQUEST_ID_MAX_LEN",
@@ -228,6 +249,7 @@ __all__ = [
     "NoRobotsMiddleware",
     "NoStoreJsonMiddleware",
     "RequestContextMiddleware",
+    "capped",
     "client_ip_of",
     "ensure_request_id",
     "logged_path",

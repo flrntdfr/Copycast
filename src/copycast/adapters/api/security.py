@@ -4,16 +4,18 @@
 another site. Browsers attach a cached Basic pair (and cookies) to cross-site requests,
 and with authentication off any page the operator visits could POST to a tailnet
 Copycast; the guard runs whether authentication is on or off, ahead of it and of every
-route (``/api``, ``/uploads``, ``/mcp`` alike). It also refuses any browser request (one
-with ``Sec-Fetch-Site`` or ``Origin``, whatever its method) addressed to a host name that
-is not Copycast's: a page whose name the attacker rebinds to Copycast's address is
-same-origin with itself, so only its ``Host`` gives it away (DNS rebinding).
+route (``/api``, ``/uploads``, ``/mcp`` alike). It also refuses any request, whatever its
+method and headers, addressed to a host name that is not Copycast's: a page whose name the
+attacker rebinds to Copycast's address is same-origin with itself, so only its ``Host``
+gives it away (DNS rebinding). Over plain http a browser sends no Fetch Metadata and a
+same-origin GET no ``Origin``, so the check cannot wait for either; only ``/healthz``
+(container and Kubernetes probes) is left out.
 
 :class:`SecurityHeadersMiddleware` sets ``nosniff`` and ``Referrer-Policy`` on every
 response, and on everything but ``/feeds/`` and ``/art/`` (what podcast apps fetch) a
 Content-Security-Policy, ``X-Frame-Options``, ``Cross-Origin-Opener-Policy`` and, when
-``base_url`` is https, ``Strict-Transport-Security``. Podcast responses other than audio
-and video get ``Content-Security-Policy: sandbox``, which podcast apps ignore: a mirrored
+``base_url`` is https, ``Strict-Transport-Security``. Podcast responses other than audio,
+video and PDF get ``Content-Security-Policy: sandbox``, which podcast apps ignore: a mirrored
 HTML transcript (or a feed's XML) opened in a browser runs no script on Copycast's
 origin. A header a route already set wins.
 """
@@ -40,6 +42,8 @@ UNKNOWN_HOST_SLUG = "unknown-host"
 ANY_HOST = "*"
 """The ``COPYCAST_ALLOWED_HOSTS`` entry that turns the host check off."""
 DEFAULT_PORTS = {"http": 80, "https": 443}
+HOST_UNCHECKED_PATH = "/healthz"
+"""Probes address the api by whatever name or address they have; its answers carry nothing."""
 
 log = get_logger(__name__)
 
@@ -101,16 +105,21 @@ def is_unbindable_host(name: str) -> bool:
     return True
 
 
-def foreign_host_refusal(headers: Headers, allowed: frozenset[str]) -> str | None:
-    """Why this browser request is refused for its ``Host``, or ``None`` when it may proceed.
+def is_host_unchecked(path: str) -> bool:
+    return path == HOST_UNCHECKED_PATH or path.startswith(f"{HOST_UNCHECKED_PATH}/")
 
-    Only requests carrying ``Sec-Fetch-Site`` or ``Origin`` are checked: other clients
-    (curl, podcast apps, MCP clients, probes) cannot be rebound. ``allowed`` holds
-    ``base_url``'s host name and ``COPYCAST_ALLOWED_HOSTS``.
+
+def foreign_host_refusal(headers: Headers, allowed: frozenset[str], path: str) -> str | None:
+    """Why this request is refused for its ``Host``, or ``None`` when it may proceed.
+
+    Every request is checked but those to ``/healthz``. A rebound page over plain http
+    sends no ``Sec-Fetch-Site`` (browsers send Fetch Metadata to trustworthy origins only)
+    and its same-origin GETs no ``Origin``, so neither header can decide who is checked.
+    Clients that are no browser pass as long as they use ``base_url``'s name, an IP
+    literal, ``localhost`` or a name of ``COPYCAST_ALLOWED_HOSTS`` (``allowed`` holds the
+    first and the last).
     """
-    if ANY_HOST in allowed:
-        return None
-    if headers.get("sec-fetch-site") is None and headers.get("origin") is None:
+    if ANY_HOST in allowed or is_host_unchecked(path):
         return None
     raw = headers.get("host") or ""
     name = host_name(raw)
@@ -177,7 +186,7 @@ def refusal_response(path: str, *, slug: str, detail: str) -> JSONResponse:
 
 
 class CrossSiteGuardMiddleware:
-    """Refuse a browser request to a host name that is not Copycast's, and an unsafe method
+    """Refuse a request to a host name that is not Copycast's, and an unsafe method
     a browser sent from another site (403 problem+json)."""
 
     def __init__(self, app: ASGIApp, *, base_url: str, allowed_hosts: Iterable[str] = ()) -> None:
@@ -196,15 +205,15 @@ class CrossSiteGuardMiddleware:
             return
         method = str(scope.get("method", "GET"))
         headers = Headers(scope=scope)
+        path = str(scope.get("path", ""))
         slug, detail = UNKNOWN_HOST_SLUG, UNKNOWN_HOST_DETAIL
-        reason = foreign_host_refusal(headers, self.allowed_hosts)
+        reason = foreign_host_refusal(headers, self.allowed_hosts, path)
         if reason is None:
             slug, detail = CROSS_SITE_SLUG, CROSS_SITE_DETAIL
             reason = cross_site_refusal(method, headers, scope, self.trusted)
         if reason is None:
             await self.app(scope, receive, send)
             return
-        path = str(scope.get("path", ""))
         log.warning("http.cross_site_refused", method=method, path=redact_text(path), reason=reason)
         await refusal_response(path, slug=slug, detail=detail)(scope, receive, send)
 
@@ -221,8 +230,10 @@ PODCAST_PREFIXES = ("/feeds/", "/art/")
 PODCAST_POLICY = "sandbox"
 """A mirrored HTML transcript or SVG, or a feed's XML, opened in a browser is a document of
 an opaque origin with scripts, forms and popups off. Audio and video are left alone (the
-browser's own player document)."""
-UNSANDBOXED_TYPES = ("audio/", "video/")
+browser's own player document), and so are PDF Attachments: a sandboxed document may load no
+plugin, and Chromium's PDF viewer is one, so it would show a blank page. The viewer runs a
+PDF's own scripts, if at all, in its own sandbox, never on Copycast's origin."""
+UNSANDBOXED_TYPES = ("audio/", "video/", "application/pdf")
 HSTS_VALUE = "max-age=31536000"
 
 

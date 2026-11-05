@@ -46,6 +46,8 @@ _NOISY_LOGGERS: dict[str, int] = {
 
 
 REDACTED = "***"
+MAX_SCHEME = 32
+"""The longest URL scheme the userinfo rule recognises (registered schemes are far shorter)."""
 
 _SEGMENT = r"[^/\s?#\"'<>]+"
 _TOKEN = r"[A-Za-z0-9._~+/-]"
@@ -97,8 +99,12 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]],
     ),
     # The userinfo of any URL (a feed's user:pass@, a database or cache URL): everything up
     # to the last @ of the authority, as urlsplit and httpx read it (a password may hold an
-    # @ or a ').
-    (re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/?#\"<>]+@"), rf"\g<1>{REDACTED}@"),
+    # @ or a '). The scheme is bounded: unbounded, every word boundary of a long run such
+    # as "a.a.a.…" rescanned the rest of it (quadratic, seconds for one request path).
+    (
+        re.compile(rf"(?i)\b([a-z][a-z0-9+.-]{{0,{MAX_SCHEME - 1}}}://)[^\s/?#\"<>]+@"),
+        rf"\g<1>{REDACTED}@",
+    ),
     # A feed's media key (/feeds/{id}/k/{key}/, ADR 0020).
     (re.compile(rf"(/feeds/{_SEGMENT}/k/){_SEGMENT}"), rf"\g<1>{REDACTED}"),
     # The one-time token of an upload URL (/uploads/{id}/{token}), whatever punctuation

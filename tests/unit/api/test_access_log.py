@@ -18,6 +18,7 @@ from starlette.types import Message, Receive, Scope, Send
 
 from copycast.adapters.api.middleware import (
     ACCESS_LOG_EVENT,
+    LOGGED_VALUE_MAX,
     REQUEST_ID_MAX_LEN,
     AccessLogMiddleware,
     RequestContextMiddleware,
@@ -131,6 +132,24 @@ async def test_plain_response_logs_one_line(
     serialized = repr(event).lower()
     assert "authorization" not in serialized and "y29wewnhc3q" not in serialized
     assert "copycast:" not in serialized and "hunter2" not in serialized
+
+
+async def test_long_paths_queries_and_headers_are_cut_after_redaction(
+    client: httpx.AsyncClient, captured: list[EventDict]
+) -> None:
+    dotted = "a." * 20_000
+    secret = "https://user:hunter2@host.example/"
+    response = await client.get(
+        f"/{dotted}",
+        params={"u": f"{dotted}{secret}"},
+        headers={"User-Agent": dotted, "X-Forwarded-For": dotted, "Range": f"bytes={dotted}"},
+    )
+    assert response.status_code == 404
+    (event,) = requests_in(captured)
+    for field in ("path", "query", "user_agent", "forwarded_for", "range"):
+        assert len(event[field]) == LOGGED_VALUE_MAX + 1, field
+        assert event[field].endswith("…"), field
+    assert "hunter2" not in repr(event)
 
 
 async def test_query_is_none_when_empty(

@@ -19,6 +19,16 @@ yt-dlp's built-in request handlers connect in two ways, and both are covered:
   pools whose connections resolve through the guard (behind an HTTP proxy the
   peer judged is the proxy).
 
+Behind a proxy (``proxy`` in ``[engine.options]``, or ``HTTP(S)_PROXY`` from the
+environment, which yt-dlp reads when ``proxy`` is unset) the TCP peer is the proxy,
+so the proxy is judged as the peer and every destination is judged on its own
+before anything is sent: each request and redirect hop of the requests and urllib
+handlers through an HTTP proxy (:func:`judge_proxied_url`), and every SOCKS
+connection of all three (``create_socks_proxy_socket`` rebound). The proxy resolves
+the name itself, so the destination's address cannot be pinned: a name that
+resolves here is judged by what it resolves to here, and one that does not resolve
+here passes (the proxy's own network decides what it reaches).
+
 A handler that connects any other way (curl_cffi impersonation, or one a later
 yt-dlp adds) is unregistered, and ``tests/unit/engine/test_netguard.py`` fails
 when the set changes. Processes yt-dlp may start to download (ffmpeg as the
@@ -36,6 +46,7 @@ from __future__ import annotations
 import contextlib
 import socket
 import threading
+import urllib.parse
 from collections.abc import Generator
 from contextvars import ContextVar
 from importlib import import_module
@@ -52,6 +63,8 @@ from copycast.domain.exceptions import DestinationNotAllowed
 GUARDED_HANDLERS: Final = frozenset({"Urllib", "Requests", "Websockets"})
 """The ``RH_KEY`` of every yt-dlp request handler whose connections pass the guard."""
 
+SOCKS_SCHEMES: Final = ("socks4", "socks4a", "socks5", "socks5h")
+DEFAULT_PORTS: Final = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 _UNSET: Final = object()
 """No timeout given: yt-dlp's own default (the socket module's) applies."""
 _refusals: ContextVar[list[DestinationNotAllowed] | None] = ContextVar(
@@ -119,6 +132,44 @@ def guarded_create_connection(
     raise failure
 
 
+def judge_destination(host: str, port: int) -> None:
+    """Refuse a destination a proxy is about to reach on the Engine's behalf.
+
+    A name that does not resolve here passes: only the proxy resolves it, and nothing on
+    this side could pin what it connects to.
+    """
+    try:
+        validated(host, port)
+    except GuardRefusal:
+        raise
+    except OSError:
+        return
+
+
+def judge_proxied_url(url: str) -> None:
+    """:func:`judge_destination` for the host and port of ``url``."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return  # the handler refuses it as no URL
+    if parts.hostname:
+        judge_destination(parts.hostname, port or DEFAULT_PORTS.get(parts.scheme.lower(), 80))
+
+
+def is_socks(proxy: str) -> bool:
+    return urllib.parse.urlsplit(proxy).scheme.lower() in SOCKS_SCHEMES
+
+
+def guarded_create_socks_proxy_socket(dest_addr: tuple[str, int], *args: Any) -> Any:
+    """yt-dlp's ``create_socks_proxy_socket``: the destination judged before the proxy
+    hears of it (the proxy itself was judged as the peer by
+    :func:`guarded_create_connection`)."""
+    host, port = dest_addr
+    judge_destination(str(host), int(port))
+    return _yt_dlp_module("_helper").create_socks_proxy_socket(dest_addr, *args)
+
+
 class GuardedHTTPConnection(HTTPConnection):
     """urllib3's connection, connecting only to the addresses the guard validated."""
 
@@ -177,9 +228,13 @@ def install() -> None:
             module = _optional_module(name)
             if module is not None:
                 module.create_connection = guarded_create_connection
+                module.create_socks_proxy_socket = guarded_create_socks_proxy_socket
         requests_module = _optional_module("_requests")
         if requests_module is not None:
             _guard_requests_adapter(requests_module.RequestsHTTPAdapter)
+        urllib_module = _optional_module("_urllib")
+        if urllib_module is not None:
+            _guard_urllib_proxy_handler(urllib_module.ProxyHandler)
         _installed = True
 
 
@@ -198,8 +253,46 @@ def _guard_requests_adapter(adapter: Any) -> None:
             manager.pool_classes_by_scheme = GUARDED_POOLS
         return manager
 
+    get_connection = adapter.get_connection_with_tls_context
+
+    def guarded_get_connection(
+        self: Any, request: Any, verify: Any, proxies: Any = None, cert: Any = None
+    ) -> Any:
+        # requests asks for a connection once per request and per redirect hop.
+        proxy = _select_proxy(request.url, proxies)
+        if proxy and not is_socks(proxy):
+            try:
+                judge_proxied_url(request.url)
+            except GuardRefusal as exc:
+                requests_exceptions = import_module("requests.exceptions")
+                raise requests_exceptions.ConnectionError(str(exc), request=request) from exc
+        return get_connection(self, request, verify, proxies=proxies, cert=cert)
+
     adapter.init_poolmanager = guarded_init_poolmanager
     adapter.proxy_manager_for = guarded_proxy_manager_for
+    adapter.get_connection_with_tls_context = guarded_get_connection
+
+
+def _guard_urllib_proxy_handler(handler: Any) -> None:
+    proxy_open = handler.proxy_open
+
+    def guarded_proxy_open(self: Any, req: Any) -> Any:
+        # urllib opens every request and redirect hop through this handler first.
+        url = req.get_full_url()
+        proxy = _select_proxy(url, self.proxies)
+        if proxy and not is_socks(proxy):
+            judge_proxied_url(url)
+        return proxy_open(self, req)
+
+    handler.proxy_open = guarded_proxy_open
+
+
+def _select_proxy(url: str, proxies: Any) -> str | None:
+    """The proxy yt-dlp uses for ``url`` (``no_proxy`` and scheme rules applied)."""
+    if not proxies:
+        return None
+    networking = import_module("yt_dlp.utils.networking")
+    return cast("str | None", networking.select_proxy(url, proxies))
 
 
 def _yt_dlp_module(name: str) -> Any:
@@ -221,7 +314,10 @@ __all__ = [
     "GuardedHTTPConnection",
     "GuardedHTTPSConnection",
     "guarded_create_connection",
+    "guarded_create_socks_proxy_socket",
     "install",
+    "judge_destination",
+    "judge_proxied_url",
     "recording_refusals",
     "validated",
 ]

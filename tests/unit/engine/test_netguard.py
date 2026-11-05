@@ -19,6 +19,9 @@ from copycast.adapters.engine.netguard import (
     GuardedHTTPConnection,
     GuardRefusal,
     guarded_create_connection,
+    guarded_create_socks_proxy_socket,
+    judge_destination,
+    judge_proxied_url,
     recording_refusals,
 )
 from copycast.adapters.sources.guard import install_policy
@@ -100,6 +103,76 @@ def test_the_handlers_connect_through_the_guard() -> None:
     assert adapter.proxy_manager_for("http://proxy.example:3128").pool_classes_by_scheme is (
         netguard.GUARDED_POOLS
     )
+
+
+def test_proxied_destinations_are_judged_by_every_handler() -> None:
+    for name in ("_urllib", "_requests", "_websockets"):
+        assert import_module(f"yt_dlp.networking.{name}").create_socks_proxy_socket is (
+            guarded_create_socks_proxy_socket
+        )
+    adapter = import_module("yt_dlp.networking._requests").RequestsHTTPAdapter
+    assert adapter.get_connection_with_tls_context.__name__ == "guarded_get_connection"
+    handler = import_module("yt_dlp.networking._urllib").ProxyHandler
+    assert handler.proxy_open.__name__ == "guarded_proxy_open"
+
+
+@pytest.mark.usefixtures("no_exemptions")
+def test_a_socks_destination_is_judged_before_the_proxy_hears_of_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[tuple[str, int]] = []
+
+    def create_socks_proxy_socket(dest_addr: tuple[str, int], *args: Any) -> str:
+        opened.append(dest_addr)
+        return "socket"
+
+    monkeypatch.setattr(
+        import_module("yt_dlp.networking._helper"),
+        "create_socks_proxy_socket",
+        create_socks_proxy_socket,
+    )
+    with pytest.raises(GuardRefusal):
+        guarded_create_socks_proxy_socket(("169.254.169.254", 80), {}, None, 5.0, None)
+    with pytest.raises(GuardRefusal):
+        guarded_create_socks_proxy_socket(("localhost", 6379), {}, None, 5.0, None)
+    assert opened == []
+    # A public literal, and a name only the proxy can resolve (socks5h), go through.
+    assert guarded_create_socks_proxy_socket((PUBLIC, 443), {}, None, 5.0, None) == "socket"
+    assert guarded_create_socks_proxy_socket(("x.onion", 80), {}, None, 5.0, None) == "socket"
+    assert opened == [(PUBLIC, 443), ("x.onion", 80)]
+
+
+@pytest.mark.usefixtures("no_exemptions")
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://169.254.169.254/latest/meta-data/",
+        "https://127.0.0.1:8443/",
+        "http://[::1]/",
+        "http://localhost:6379/",
+        "ws://10.0.0.1/",
+    ],
+)
+def test_a_proxied_url_to_an_internal_host_is_refused(url: str) -> None:
+    with recording_refusals() as refused, pytest.raises(GuardRefusal):
+        judge_proxied_url(url)
+    assert len(refused) == 1
+
+
+@pytest.mark.usefixtures("no_exemptions")
+@pytest.mark.parametrize(
+    "url", [f"http://{PUBLIC}/", f"https://{PUBLIC}:8443/x", "http://unresolvable.example/", "x"]
+)
+def test_a_proxied_url_to_a_public_or_unknown_host_passes(url: str) -> None:
+    judge_proxied_url(url)
+
+
+def test_an_exempt_destination_passes_behind_a_proxy() -> None:
+    previous = install_policy(DestinationPolicy.from_entries(["10.0.0.0/8"]))
+    try:
+        judge_destination("10.1.2.3", 80)
+    finally:
+        install_policy(previous)
 
 
 def test_install_is_idempotent() -> None:

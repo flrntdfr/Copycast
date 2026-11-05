@@ -30,12 +30,16 @@ from copycast.adapters.sources.http import (
     fetch,
 )
 from copycast.domain.enums import ListingOrder
+from copycast.domain.exceptions import DestinationNotAllowed
 from copycast.domain.listing import SourceListing, SourceListingItem
+from copycast.logging import get_logger
 
 if TYPE_CHECKING:
     from lxml.etree import XmlElement as Element
 else:  # lxml exposes no public element type at runtime
     Element = object
+
+log = get_logger(__name__)
 
 NS_ITUNES: Final = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 NS_PODCAST: Final = "https://podcastindex.org/namespace/1.0"
@@ -302,7 +306,9 @@ def fetch_feed(
 
     A 304 yields ``not_modified=True`` with no body. Later pages extend the
     first page's items (deduplicated, positions continuing); the stored body
-    and channel come from the first page only. ``timeout`` caps the first
+    and channel come from the first page only. A later page that is too large,
+    no feed, or refused by the fetch guard ends the walk; only the first page,
+    the Source itself, can fail the fetch with a refusal. ``timeout`` caps the first
     page's request (see :func:`fetch`).
     """
     first = fetch(
@@ -339,6 +345,11 @@ def _follow_pages(
             page = fetch(next_url, max_bytes=MAX_FEED_BYTES, client=client, accept=FEED_ACCEPT)
             page_parsed = parse_feed(page.body, url=page.url)
         except (BodyTooLarge, NotAFeed):
+            break
+        except DestinationNotAllowed as exc:
+            # A page the Source advertises is not the operator's input: refused, it is
+            # skipped like an unusable one and the pages before it stand (ADR 0023).
+            log.warning("rss.next_page_refused", url=next_url, reason=str(exc))
             break
         pages += 1
         for item in page_parsed.listing.items:

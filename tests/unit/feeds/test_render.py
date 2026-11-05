@@ -926,6 +926,41 @@ def test_a_sources_own_block_tags_are_replaced_never_duplicated() -> None:
     assert channel.findtext("other") == "kept"
 
 
+@pytest.mark.parametrize(
+    ("itunes", "podcast"),
+    [
+        ("http://www.itunes.com/DTDs/PodCast-1.0.dtd", "https://podcastindex.org/namespace/1.0/"),
+        ("https://www.itunes.com/dtds/podcast-1.0.dtd", "http://podcastindex.org/namespace/1.0"),
+        (
+            "HTTP://WWW.ITUNES.COM/DTDS/PODCAST-1.0.DTD/",
+            "https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/1.0.md/",
+        ),
+    ],
+)
+def test_a_sources_block_and_new_feed_url_go_in_any_spelling(itunes: str, podcast: str) -> None:
+    channel_xml_text = (
+        f'<rss version="2.0" xmlns:itunes="{itunes}" xmlns:podcast="{podcast}"><channel>'
+        "<title>Open</title><link>https://o.example/</link><description>d</description>"
+        "<itunes:block>no</itunes:block><podcast:block>no</podcast:block>"
+        "<itunes:new-feed-url>https://elsewhere.example/feed</itunes:new-feed-url>"
+        "<itunes:author>kept</itunes:author></channel></rss>"
+    )
+    feed = FeedView(
+        id="f",
+        kind=FeedKind.mirror,
+        title="Open",
+        source_kind=SourceKind.rss,
+        source_channel_xml=channel_xml_text,
+        last_modified=NOW,
+    )
+    rendered = render_feed(feed, [], base_url=BASE_URL, artwork_secret=ART_SECRET, now=NOW)
+    _, channel = channel_of(rendered)
+    assert _blocks(channel) == [(NS_ITUNES, "Yes"), (NS_PODCAST, "yes")]
+    names = [etree.QName(child).localname for child in channel if isinstance(child.tag, str)]
+    assert "new-feed-url" not in names
+    assert names.count("block") == 2 and "author" in names
+
+
 def test_artwork_moves_to_art_and_nothing_else_moves(rich: ParsedFeed) -> None:
     """Only image URLs change in 2.3: enclosures, chapters, transcripts and attachments keep
     the exact URLs 2.2 published, with and without a media key, so no podcast app downloads

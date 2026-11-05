@@ -76,19 +76,33 @@ _DROPPED_CHANNEL_CHILDREN: Final = frozenset(
         (None, "item"),
         (None, "generator"),
         (None, "lastBuildDate"),
-        (NS_ITUNES, "new-feed-url"),
     }
 )
-_BLOCK_NAMESPACES: Final = frozenset(
+_ITUNES_SPELLINGS: Final = frozenset({"www.itunes.com/dtds/podcast-1.0.dtd"})
+_PODCAST_SPELLINGS: Final = frozenset(
     {
-        NS_ITUNES,
-        "http://www.itunes.com/DTDs/PodCast-1.0.dtd",
-        NS_PODCAST,
-        "https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/1.0.md",
+        "podcastindex.org/namespace/1.0",
+        "github.com/podcastindex-org/podcast-namespace/blob/main/docs/1.0.md",
     }
 )
-"""Where a Source's own ``<…:block>`` may live (the spellings in the wild): it is dropped,
-and Copycast's own blocks replace it, never duplicated."""
+
+
+def _spelling(namespace: str | None) -> str:
+    """A namespace URI as the spellings in the wild agree on it: case, scheme and a trailing
+    slash ignored (``http://www.itunes.com/DTDs/PodCast-1.0.dtd``, ``…/namespace/1.0/``)."""
+    text = (namespace or "").strip().lower()
+    text = text.split("://", 1)[1] if "://" in text else text
+    return text.rstrip("/")
+
+
+def _is_dropped_tag(namespace: str | None, localname: str) -> bool:
+    """A Source's own ``<…:block>`` or ``<itunes:new-feed-url>``, in any spelling of its
+    namespace: Copycast's own blocks replace the first, never duplicated, and the second
+    would move subscribed apps off the Mirror."""
+    spelling = _spelling(namespace)
+    if localname == "block":
+        return spelling in _ITUNES_SPELLINGS or spelling in _PODCAST_SPELLINGS
+    return localname == "new-feed-url" and spelling in _ITUNES_SPELLINGS
 
 
 # --------------------------------------------------------------------------- read model
@@ -313,9 +327,7 @@ def _preserved_channel(
             continue
         qname = etree.QName(child)
         key = (qname.namespace, qname.localname)
-        if key in _DROPPED_CHANNEL_CHILDREN:
-            continue
-        if qname.localname == "block" and qname.namespace in _BLOCK_NAMESPACES:
+        if key in _DROPPED_CHANNEL_CHILDREN or _is_dropped_tag(qname.namespace, qname.localname):
             continue
         if key == (NS_ATOM, "link") and (child.get("rel") or "").strip().lower() == "self":
             continue

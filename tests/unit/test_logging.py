@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import time
 from collections.abc import Callable, Iterator
 from typing import Any, Literal
 
@@ -12,6 +13,7 @@ import pytest
 import structlog
 
 from copycast.logging import (
+    MAX_SCHEME,
     REDACTED,
     configure_logging,
     get_logger,
@@ -123,6 +125,31 @@ def test_redact_text_masks_every_known_secret(text: str, expected: str) -> None:
 )
 def test_redact_text_leaves_what_is_no_secret(text: str) -> None:
     assert redact_text(text) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "a." * 50_000,  # every word boundary starts a scheme candidate
+        "/" + "a." * 30_000,  # a request path as uvicorn accepts it
+        "a+" * 50_000,
+        "a://" * 25_000,
+        "x" * 100_000 + "://" + "y" * 100,
+    ],
+)
+def test_redact_text_is_linear_on_long_scheme_like_runs(text: str) -> None:
+    """The userinfo rule once rescanned the whole run from every word boundary: 100 KB of
+    'a.' took seconds, and an unauthenticated request path froze the api's event loop."""
+    started = time.perf_counter()
+    redact_text(text)
+    assert time.perf_counter() - started < 0.05
+
+
+def test_userinfo_is_redacted_after_a_long_dotted_run() -> None:
+    text = "a." * 10_000 + " https://user:hunter2@host.example/x"
+    assert redact_text(text).endswith(f" https://{REDACTED}@host.example/x")
+    scheme = "s" * MAX_SCHEME
+    assert redact_text(f"{scheme}://u:p@h/") == f"{scheme}://{REDACTED}@h/"
 
 
 def test_redact_value_walks_containers_and_masks_sensitive_keys() -> None:

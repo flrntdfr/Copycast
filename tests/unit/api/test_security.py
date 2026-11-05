@@ -52,6 +52,8 @@ def _app(
             return Response(b"ID3", media_type="audio/mpeg")
         if request.url.path.endswith(".mp4"):
             return Response(b"", media_type="video/mp4")
+        if request.url.path.endswith(".pdf"):
+            return Response(b"%PDF-1.7", media_type="application/pdf")
         if request.url.path.endswith(".html"):
             return Response(b"<script>alert(1)</script>", media_type="text/html")
         return PlainTextResponse("ok")
@@ -278,12 +280,42 @@ async def test_a_browser_request_without_a_usable_host_is_refused(
     assert_refused(response, UNKNOWN_HOST_SLUG)
 
 
-async def test_non_browser_clients_are_not_host_checked(
-    client: httpx.AsyncClient, reached: list[str]
+@pytest.mark.parametrize("host", REBOUND)
+@pytest.mark.parametrize("method", ["GET", "HEAD", "POST"])
+async def test_a_request_without_fetch_metadata_to_a_rebound_name_is_refused(
+    client: httpx.AsyncClient, reached: list[str], host: str, method: str
 ) -> None:
-    # curl or an MCP client on a Docker network name: no Fetch Metadata, no Origin.
-    assert (await client.post("/mcp", headers={"Host": "copycast-api:8080"})).status_code == 200
+    """Over plain http a browser sends no Sec-Fetch-Site, and a same-origin fetch() GET no
+    Origin: a rebound page reading /api/feeds arrives with neither header."""
+    for path in ("/api/feeds", "/api/feeds/x/items", "/mcp", "/uploads/a/b", "/feeds/x.xml", "/"):
+        response = await client.request(method, path, headers={"Host": host})
+        assert response.status_code == 403, (method, path)
+        if method != "HEAD":
+            assert_refused(response, UNKNOWN_HOST_SLUG)
+    assert reached == []
+
+
+async def test_a_client_on_another_name_must_be_listed(reached: list[str]) -> None:
+    # curl or an MCP client on a Docker network name: listed, it passes; unlisted, refused.
+    for allowed, status in ((("copycast-api",), 200), ((), 403)):
+        transport = httpx.ASGITransport(app=_app(reached=reached, allowed_hosts=allowed))
+        async with httpx.AsyncClient(transport=transport, base_url="http://x") as http:
+            response = await http.post("/mcp", headers={"Host": "copycast-api:8080"})
+        assert response.status_code == status
     assert reached == ["POST"]
+
+
+@pytest.mark.parametrize("path", ["/healthz", "/healthz/live", "/healthz/ready"])
+async def test_probes_are_not_host_checked(
+    client: httpx.AsyncClient, reached: list[str], path: str
+) -> None:
+    assert (await client.get(path, headers={"Host": "evil.example"})).status_code == 200
+    assert reached == ["GET"]
+
+
+async def test_only_healthz_itself_is_left_out(client: httpx.AsyncClient) -> None:
+    response = await client.get("/healthzx", headers={"Host": "evil.example"})
+    assert_refused(response, UNKNOWN_HOST_SLUG)
 
 
 async def test_a_rebound_origin_is_not_the_requests_own() -> None:
@@ -430,8 +462,15 @@ async def test_podcast_documents_are_sandboxed(client: httpx.AsyncClient, path: 
     assert (await client.get(path)).headers["content-security-policy"] == PODCAST_POLICY
 
 
-@pytest.mark.parametrize("path", ["/feeds/abc/media/0123.mp3", "/feeds/abc/k/key/media/0123.mp4"])
-async def test_audio_and_video_are_not_sandboxed(client: httpx.AsyncClient, path: str) -> None:
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/feeds/abc/media/0123.mp3",
+        "/feeds/abc/k/key/media/0123.mp4",
+        "/feeds/abc/k/key/assets/i1.attachment.0123456789ab.pdf",  # Chromium's viewer is a plugin
+    ],
+)
+async def test_audio_video_and_pdf_are_not_sandboxed(client: httpx.AsyncClient, path: str) -> None:
     assert "content-security-policy" not in (await client.get(path)).headers
 
 

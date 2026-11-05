@@ -36,8 +36,6 @@ test.describe("Security headers", () => {
     expect(headers["referrer-policy"]).toBe("no-referrer");
     expect(headers["x-frame-options"]).toBe("DENY");
     expect(headers["cross-origin-opener-policy"]).toBe("same-origin");
-    // The no-flash theme script is inline and allowed by its hash: it ran before React did.
-    await expect(page.locator("html")).toHaveCSS("color-scheme", /light|dark/);
 
     for (const [path, heading] of [
       ["/about", "About"],
@@ -56,9 +54,31 @@ test.describe("Security headers", () => {
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: /switch theme/ }).click();
 
+    // Podcast paths get no page policy, only the sandbox (opened in a browser, an image or
+    // a mirrored document runs nothing on Copycast's origin).
     const feeds = await request.get("/feeds/copycast-artwork.png");
-    expect(feeds.headers()["content-security-policy"]).toBeUndefined();
+    expect(feeds.status()).toBe(200);
+    expect(feeds.headers()["content-security-policy"]).toBe("sandbox");
     expect(feeds.headers()["x-content-type-options"]).toBe("nosniff");
+    expect(feeds.headers()["x-frame-options"]).toBeUndefined();
+    expect(feeds.headers()["cross-origin-opener-policy"]).toBeUndefined();
+  });
+
+  test("the inline theme script runs under its hash", async ({ page }) => {
+    // With the bundle blocked only the inline script can set the class and the inline
+    // color-scheme (app.css and src/lib/theme.ts would satisfy a looser check).
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem("copycast.theme", "dark");
+      } catch {
+        // storage unavailable: the assertions below fail and say so
+      }
+    });
+    await page.route("**/assets/*.js", (route) => route.abort());
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveClass(/(^|\s)dark(\s|$)/);
+    const scheme = await page.evaluate(() => document.documentElement.style.colorScheme);
+    expect(scheme).toBe("dark");
   });
 
   test("another site cannot write; the UI itself can", async ({ request }) => {

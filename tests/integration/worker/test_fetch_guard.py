@@ -114,3 +114,30 @@ async def test_a_refused_request_fails_with_the_reason(
     assert detail.error and "not an allowed destination" in detail.error
     assert detail.job is not None and detail.job.status is JobStatus.failed
     assert source.origin.requests == [] and engine.records.listings == []
+
+
+async def test_a_refused_next_page_leaves_the_first_full_refresh_with_page_one(
+    container: Container, source: Source, runner: Runner
+) -> None:
+    """The first full Refresh follows rel="next"; a refused page must not fail it, or every
+    later Refresh would follow it again and fail the same way."""
+    url = source.write_rss("paged-refused", items=[2, 1], artwork=False)
+    path = source.root / "rss" / "paged-refused.xml"
+    next_link = '<atom:link href="http://10.1.2.3/page2.xml" rel="next"/>'
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("<itunes:author>", f"{next_link}<itunes:author>"),
+        encoding="utf-8",
+    )
+    mirror = await create_mirror(container, url, mode=BackfillMode.selection)
+    await runner.run_until_idle()
+    job = await container.services.request_refresh(mirror.id)
+    assert job is not None
+    await runner.run_until_idle()
+
+    async with uow(container) as unit:
+        row = await unit.jobs.require(job.id)
+        assert row.status == JobStatus.succeeded.value, row.error
+        feed = await unit.feeds.require(mirror.id)
+        assert feed.last_error is None
+        assert feed.last_refresh_success_at is not None
+        assert len(await unit.catalog.for_feed(mirror.id)) == 2

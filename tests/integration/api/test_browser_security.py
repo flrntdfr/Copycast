@@ -31,10 +31,10 @@ def basic(username: str, password: str) -> dict[str, str]:
     return {"Authorization": f"Basic {token}"}
 
 
-def app_client(settings: Settings) -> httpx.AsyncClient:
+def app_client(settings: Settings, base_url: str = TEST_BASE_URL) -> httpx.AsyncClient:
     """The app without its lifespan: enough for requests refused before any route runs."""
     app = create_app(settings, build_container(settings, engine=FakeEngine()))
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=TEST_BASE_URL)
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=base_url)
 
 
 def with_auth(settings: Settings, **overrides: Any) -> Settings:
@@ -78,8 +78,10 @@ async def test_a_rebound_host_name_is_refused_on_every_path(
     configured = with_auth(settings) if auth_on else settings
     rebound = {"Host": "evil.example:8080", "Sec-Fetch-Site": "same-origin"}
     with_origin = {"Host": "evil.example:8080", "Origin": "http://evil.example:8080"}
+    # Over plain http a browser sends no Fetch Metadata, and a same-origin GET no Origin.
+    plain_http = {"Host": "evil.example:8080"}
     async with app_client(configured) as client:
-        for headers in (rebound, with_origin, {**rebound, **basic(*OPERATOR)}):
+        for headers in (rebound, with_origin, plain_http, {**rebound, **basic(*OPERATOR)}):
             for response in (
                 await client.get(api("/feeds"), headers=headers),
                 await client.post(api("/buckets"), json={"name": "x"}, headers=headers),
@@ -100,6 +102,12 @@ async def test_an_allowed_host_name_passes_the_host_check(
             api("/feeds"), headers={"Host": "copycast:8080", "Sec-Fetch-Site": "none"}
         )
     assert response.status_code == 401  # past the guard, at authentication
+
+
+async def test_probes_are_not_host_checked(settings: Settings) -> None:
+    async with app_client(with_auth(settings), base_url="http://10-42-0-17.pod:8080") as client:
+        assert (await client.get("/healthz/live")).status_code == 200
+        assert_refused(await client.get(api("/about")), UNKNOWN_HOST_SLUG)
 
 
 async def test_without_fetch_metadata_a_foreign_origin_is_refused(settings: Settings) -> None:
@@ -137,7 +145,8 @@ async def test_same_origin_and_non_browser_writes_reach_the_routes(
 
 
 async def test_headers_on_the_api_feeds_and_robots(settings: Settings) -> None:
-    async with app_client(with_auth(settings, base_url="https://copycast.example")) as client:
+    configured = with_auth(settings, base_url="https://copycast.example")
+    async with app_client(configured, base_url="https://copycast.example") as client:
         api_response = await client.get(api("/openapi.json"), headers=basic(*OPERATOR))
         assert api_response.status_code == 200
         assert api_response.headers["content-security-policy"] == spa_policy(
