@@ -6,7 +6,6 @@ responses (SSE, media) and background tasks keep their exact semantics.
 
 from __future__ import annotations
 
-import re
 import time
 import uuid
 from typing import Any
@@ -14,7 +13,7 @@ from typing import Any
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from copycast.logging import bind_context, get_logger, unbind_context
+from copycast.logging import bind_context, get_logger, redact_text, unbind_context
 
 REQUEST_ID_HEADER = "x-request-id"
 REQUEST_ID_MAX_LEN = 64
@@ -115,27 +114,26 @@ ACCESS_LOG_SKIP_PREFIX = "/healthz/"
 FORWARDED_FOR_HEADER = "x-forwarded-for"
 
 
-def client_ip_of(scope: Scope, headers: Headers) -> str | None:
-    """The first hop of ``X-Forwarded-For`` when a proxy set it, else the socket peer."""
-    first_hop = headers.get(FORWARDED_FOR_HEADER, "").partition(",")[0].strip()
-    if first_hop:
-        return first_hop
+def client_ip_of(scope: Scope) -> str | None:
+    """The client's address as uvicorn resolved it: the socket peer, or the hop a trusted
+    proxy named in ``X-Forwarded-For`` (``COPYCAST_FORWARDED_ALLOW_IPS``).
+
+    The header itself is never believed here: any client can send one, so only the raw
+    ``forwarded_for`` field of the log line carries what it claimed.
+    """
     client = scope.get("client")
     return str(client[0]) if client else None
 
 
-FEED_KEY_RE = re.compile(r"^(/feeds/[^/]+/k/)[^/]+(?=/)")
-REDACTED_KEY = "***"
-
-
 def logged_path(path: str) -> str:
-    """The path as logged: a feed's media key (``/feeds/{id}/k/{key}/``) is a credential."""
-    return FEED_KEY_RE.sub(rf"\g<1>{REDACTED_KEY}", path, count=1)
+    """The path as logged: a media key (``/feeds/{id}/k/{key}/``) or an upload token
+    (``/uploads/{id}/{token}``) is a credential (:func:`copycast.logging.redact_text`)."""
+    return redact_text(path)
 
 
-def _query_of(scope: Scope) -> str | None:
+def _redacted_query(scope: Scope) -> str | None:
     raw: bytes = scope.get("query_string") or b""
-    return raw.decode("utf-8", "replace") or None
+    return redact_text(raw.decode("utf-8", "replace")) or None
 
 
 def _int_or_none(value: str | None) -> int | None:
@@ -152,12 +150,14 @@ class AccessLogMiddleware:
 
     Outermost of the stack, so ``status``, ``bytes`` and ``X-Request-ID`` are what the
     client received after every other layer (gzip included). Never logs ``Authorization``
-    or a username. An unhandled exception never produces a response through this layer
-    (``ServerErrorMiddleware`` answers 500 on the raw socket and re-raises), so it is
-    logged as ``status=500, bytes=0, completed=False`` with the request id minted for it
-    (the one line an operator most wants to match with the traceback); a request that
-    ends without its final body (client gone, task cancelled) is logged with
-    ``completed=False`` too.
+    or a username; the path and query go through the redaction of ``copycast.logging``.
+    ``client_ip`` is the address uvicorn resolved (trusted proxies only), ``forwarded_for``
+    the raw header as the client sent it. An unhandled exception never produces a response
+    through this layer (``ServerErrorMiddleware`` answers 500 on the raw socket and
+    re-raises), so it is logged as ``status=500, bytes=0, completed=False`` with the
+    request id minted for it (the one line an operator most wants to match with the
+    traceback); a request that ends without its final body (client gone, task cancelled)
+    is logged with ``completed=False`` too.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -184,12 +184,12 @@ class AccessLogMiddleware:
                 ACCESS_LOG_EVENT,
                 method=scope["method"],
                 path=logged_path(scope["path"]),
-                query=_query_of(scope),
+                query=_redacted_query(scope),
                 status=500 if status is None else status,
                 duration_ms=round((time.perf_counter() - started) * 1000, 1),
                 bytes=body_bytes,
                 content_length=content_length,
-                client_ip=client_ip_of(scope, request_headers),
+                client_ip=client_ip_of(scope),
                 forwarded_for=request_headers.get(FORWARDED_FOR_HEADER),
                 user_agent=request_headers.get("user-agent"),
                 range=request_headers.get("range"),
@@ -230,4 +230,5 @@ __all__ = [
     "RequestContextMiddleware",
     "client_ip_of",
     "ensure_request_id",
+    "logged_path",
 ]

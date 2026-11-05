@@ -38,6 +38,7 @@ from copycast.adapters.api.problems import install_exception_handlers, relabel_p
 from copycast.adapters.api.routes import create_api_router
 from copycast.adapters.api.routes import public as public_routes
 from copycast.adapters.api.routes import uploads as upload_routes
+from copycast.adapters.api.security import CrossSiteGuardMiddleware, SecurityHeadersMiddleware
 from copycast.adapters.api.spa import mount_spa
 from copycast.adapters.api.watchdog import LoopWatchdog
 from copycast.adapters.mcp.server import create_mcp
@@ -209,8 +210,16 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
     install_exception_handlers(app)
     # Innermost: runs right before routing, inside the request-id and gzip layers.
     app.add_middleware(OperatorAuthMiddleware, auth=settings.auth)
+    # Ahead of authentication and every route, whether auth is on or off.
+    app.add_middleware(
+        CrossSiteGuardMiddleware,
+        base_url=settings.base_url,
+        allowed_hosts=settings.allowed_host_names,
+    )
     app.add_middleware(NoStoreJsonMiddleware)
     app.add_middleware(NoRobotsMiddleware)
+    # Outside the guard and auth, so their 403 and 401 carry the headers too.
+    app.add_middleware(SecurityHeadersMiddleware, base_url=settings.base_url)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
         GZipMiddleware, minimum_size=GZIP_MINIMUM_SIZE, exclude_content_types=GZIP_EXCLUDED_TYPES
