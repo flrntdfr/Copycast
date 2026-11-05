@@ -44,8 +44,14 @@ and a refused embedded-Artwork URL is dropped instead of failing the archive. Th
 `adapters.engine.netguard`, installed by the Engine, puts the same check on every TCP
 connection yt-dlp opens. It rebinds `create_connection` in yt-dlp's urllib and websockets
 handlers (SOCKS proxies included) and gives the requests handler's urllib3 pool managers
-guarded pools. Each connection resolves once and connects to the checked literal. A configured
-proxy is judged as the peer. Any other request handler (curl_cffi impersonation) is
+guarded pools. Each connection resolves once and connects to the checked literal. A proxy
+(`proxy` in `[engine.options]`, or `HTTP(S)_PROXY` from the environment, which yt-dlp reads
+when `proxy` is unset) is judged as the peer, and every destination sent through it is judged
+on its own before the proxy hears of it: each request and redirect hop through an HTTP proxy
+(the requests handler's connection lookup, urllib's proxy handler) and every SOCKS connection
+(`create_socks_proxy_socket`, rebound in all three handlers). The proxy resolves the name, so
+that address cannot be pinned: a name is judged by what it resolves to in the worker, and one
+that does not resolve there passes. Any other request handler (curl_cffi impersonation) is
 unregistered, and a unit test fails when a yt-dlp bump adds a handler module.
 
 **Exceptions** are the operator's: `[security] allow_private_hosts`
@@ -74,10 +80,13 @@ infrastructure and talk to configured endpoints.
   service name) must be listed in `allow_private_hosts`, or probes answer 422 and Refreshes
   fail. `make dev` against a local test server needs `localhost` listed. The e2e compose
   file exempts its `fixtures` service by name.
-- Server-side httpx fetches no longer use `HTTP_PROXY` / `HTTPS_PROXY` from the
-  environment: httpx ignores them once a transport is given, and a proxy would connect on
-  the guard's behalf anyway. yt-dlp still honours `proxy` from `[engine.options]`. A proxy on
-  a private address must be listed in `allow_private_hosts`.
+- Copycast's own httpx fetches no longer use `HTTP_PROXY` / `HTTPS_PROXY` from the
+  environment and have no proxy setting: httpx ignores them once a transport is given, and a
+  proxy would connect on the guard's behalf anyway. yt-dlp still honours `proxy` from
+  `[engine.options]`, and, when that is unset, `HTTP_PROXY` / `HTTPS_PROXY` from the
+  worker's environment. Either proxy on a private address must be listed in
+  `allow_private_hosts`. Behind it, destinations are judged by the worker's own resolver,
+  which cannot see what the proxy resolves.
 - Outside the guard: processes yt-dlp starts itself (ffmpeg as the downloader of a stream it
   cannot fetch natively, rtmpdump) connect on their own. A refusal in a concurrent fragment
   thread is still blocked, but may be reported as a transient error rather than as

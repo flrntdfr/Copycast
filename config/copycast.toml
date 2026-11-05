@@ -37,5 +37,7 @@ url = "redis://localhost:6379/0"
 #                            # is one host), e.g. ["nas.lan", "192.168.1.0/24"];
 #                            # or COPYCAST__SECURITY__ALLOW_PRIVATE_HOSTS='["nas.lan"]'
 
-# COPYCAST_FORWARDED_ALLOW_IPS (trusted proxies) and COPYCAST_ALLOWED_HOSTS (extra host names
-# for browsers) are environment-only: see docs/operations.md, "Environment-only variables".
+# COPYCAST_FORWARDED_ALLOW_IPS (trusted proxies) is environment-only: written here it is
+# ignored, without an error. COPYCAST_ALLOWED_HOSTS (extra host names browsers and clients
+# may use) belongs in the environment too, though this file can set it like the other flat
+# knobs. See docs/operations.md, "Environment-only variables".

@@ -50,8 +50,9 @@ on, the operator pair or a `write` API key.
 the stored options through the same allowlist (`adapters.engine.options.stored_feed_options`)
 and logs `engine_options.refused feed_id=… keys=[…]` at warning level for what it drops.
 `MirrorRead` and `feed.json` show the filtered options only, so a `read` key no longer sees a
-credential an old row may hold. The next save of the Mirror's options writes the filtered
-dict.
+credential an old row may hold. Because the Settings dialog is filled from that filtered
+set, saving it unchanged sends no options and leaves the row alone; any edit of the options
+there, or a `PATCH /api/mirrors/{id}` with the allowed set or `{}`, writes the filtered dict.
 
 **MCP scope.** `create_mirror` with non-empty `engine_options`, and `update_mirror` with any
 `engine_options` (`{}` included), need a `full` API key. The plan makes per-Mirror options
@@ -62,10 +63,13 @@ what protects that path.
 ## Consequences
 
 - After the upgrade, a feed row that still holds a refused key logs a warning on every
-  engine call until the Mirror's options are edited, and saving that Mirror's options in the
-  UI answers 422 naming the old keys until they are removed. This is intended: the operator
-  sees what the row holds. `SELECT id, engine_options FROM feeds WHERE engine_options <> '{}'`
-  lists the candidates.
+  engine call until its options are rewritten. The UI and the API never show the refused
+  keys, so the dialog offers nothing to remove, and a row that holds only refused keys shows
+  `{}`, which the dialog does not send again. The operator clears such a row with
+  `PATCH /api/mirrors/{id}` and `{"engine_options": {}}` (curl sends no `Origin`, so the
+  cross-site guard lets it through) or with
+  `UPDATE feeds SET engine_options = '{}' WHERE id = …`.
+  `SELECT id, engine_options FROM feeds WHERE engine_options <> '{}'` lists the candidates.
 - A manual PO token, cookies, a proxy or `http_headers` per Mirror are gone. The first three
   move to `[engine.options]`. Headers would need a header-name allowlist of their own.
 - `retries`, `fragment_retries`, `socket_timeout`, `writeautomaticsub` and `subtitlesformat`

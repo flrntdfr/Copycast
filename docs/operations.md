@@ -139,8 +139,8 @@ needs a `full` key.
 |---|---|---|
 | `COPYCAST_CONFIG` | `./config/copycast.toml` (`/config/copycast.toml` in the image) | TOML file to read |
 | `COPYCAST_BIND` / `COPYCAST_PORT` | `0.0.0.0` / `8080` | api listen address and port |
-| `COPYCAST_FORWARDED_ALLOW_IPS` | unset (uvicorn's `FORWARDED_ALLOW_IPS`, else `127.0.0.1`) | the proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` the api believes: comma-separated IPs or CIDR networks, or `*`. Set it to the proxy's network behind Traefik or any proxy that is not on loopback (the Tailscale sidecar is). Refused from the TOML file; a bad entry exits 2 |
-| `COPYCAST_ALLOWED_HOSTS` | unset | host names besides `base_url`'s that a browser may reach Copycast by (a MagicDNS short name, a LAN alias), comma-separated, or `*` to turn the check off; IP addresses and `localhost` always pass ("Fetch guard and browser defences" below) |
+| `COPYCAST_FORWARDED_ALLOW_IPS` | unset (uvicorn's `FORWARDED_ALLOW_IPS`, else `127.0.0.1`) | the proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` the api believes: comma-separated IPs or CIDR networks, or `*`. Set it to the proxy's network behind Traefik or any proxy that is not on loopback (the Tailscale sidecar is). Ignored, without a word, when it is written in the TOML file; a bad entry exits 2 |
+| `COPYCAST_ALLOWED_HOSTS` | unset | host names besides `base_url`'s that a browser or a client may reach Copycast by (a MagicDNS short name, a LAN alias, a compose or Kubernetes service name), comma-separated, or `*` to turn the check off; IP addresses and `localhost` always pass ("Fetch guard and browser defences" below). Unlike the variable above, the TOML file can set it too, like the other flat knobs |
 | `COPYCAST_WORKER_PORT` | `8081` | worker health endpoint port |
 | `COPYCAST_WEB_DIR` | unset (`/app/web` in the image) | directory of the built web UI; unset disables the UI |
 | `COPYCAST_LOG_FORMAT` | `console` (`json` in the image) | `console` or `json` |
@@ -159,8 +159,10 @@ Compose-only (interpolated by `docker compose`, see `.env.example`): `COMPOSE_PR
 1024 MiB by default; they grow as written, so these only cap the store and the disk stays the
 limit. Never `0`, "auto": SeaweedFS then fixes the count from the free disk at the first
 start, and writes stop once those volumes are full even after space is freed).
-`COPYCAST_FORWARDED_ALLOW_IPS` and `COPYCAST_ALLOWED_HOSTS` are passed from `.env` to both
-processes as they are.
+The repository's `docker-compose.yml` passes `COPYCAST_FORWARDED_ALLOW_IPS` and
+`COPYCAST_ALLOWED_HOSTS` from `.env` to both processes as they are. A compose file of your own
+does so only if its `environment:` names them or an `env_file:` loads them ("Upgrading to
+2.3.0").
 
 ## Authentication
 
@@ -315,8 +317,8 @@ Feed cache are not Sources and never pass through it.
   them. In the environment it is a JSON list:
   `COPYCAST__SECURITY__ALLOW_PRIVATE_HOSTS='["nas.lan","192.168.1.0/24"]'`. A bad entry exits
   2 with one line. List a NAS, a self-hosted podcast server or a compose service you mirror
-  from; for `make dev` against a local test server, `["localhost"]`. A proxy configured in
-  `[engine.options]` is judged as the peer the Engine connects to, so a proxy on a private
+  from; for `make dev` against a local test server, `["localhost"]`. The Engine's proxy
+  ("Proxies" below) is judged as the peer the Engine connects to, so a proxy on a private
   address must be listed too.
 - **What a refusal looks like.** The probe, `create_mirror` and a retarget answer
   `422 destination-not-allowed` ("… is not an allowed destination: it resolves to a
@@ -325,23 +327,34 @@ Feed cache are not Sources and never pass through it.
   line. In the worker a refused Refresh, archive or Request expansion fails once, for good
   (no retry), and the Mirror keeps serving what it has. A refused Artwork or Attachment fails
   only that asset. A Request with an internal URL is accepted and fails at expansion.
-- **Proxies.** Server-side fetches no longer use `HTTP_PROXY` / `HTTPS_PROXY` from the
-  environment. The Engine still uses `proxy` from `[engine.options]`.
+- **Proxies.** Copycast's own fetches (RSS, the probe, Atom, Artwork, Attachments) ignore
+  `HTTP_PROXY` / `HTTPS_PROXY` and have no proxy setting at all: they always connect
+  directly. The Engine uses `proxy` from `[engine.options]` or, when that is unset,
+  `HTTP_PROXY` / `HTTPS_PROXY` from the worker's environment (yt-dlp reads them itself). That
+  proxy is judged as the peer, and every destination the Engine sends through it, each
+  redirect hop included, is judged on its own before the proxy hears of it (HTTP and SOCKS
+  proxies alike). The proxy resolves the name itself, so the address cannot be pinned: a name
+  that resolves in the worker is judged by what it resolves to there, and one that does not
+  resolve there passes, leaving it to the proxy's own network.
 - **Not covered:** a process yt-dlp starts itself (ffmpeg as the downloader of a stream it
   cannot fetch natively) connects outside the guard.
 
 **Cross-site requests and host names.** Whether authentication is on or off, the api refuses:
 
-- a browser request (one with `Sec-Fetch-Site` or `Origin`, any method) whose `Host` is not
-  `base_url`'s host, a name in `COPYCAST_ALLOWED_HOSTS`, an IP address or `localhost`:
-  `403 unknown-host`. This stops DNS rebinding. Add the names you browse to Copycast by;
+- any request but `/healthz` (any method, any client) whose `Host` is not `base_url`'s host, a
+  name in `COPYCAST_ALLOWED_HOSTS`, an IP address or `localhost`: `403 unknown-host`. This
+  stops DNS rebinding. Over plain http a browser sends no `Sec-Fetch-Site` and a same-origin
+  `GET` no `Origin`, so the check cannot tell a browser apart and applies to every client.
+  Add the names you browse to Copycast by, and the service names clients on a compose or
+  Kubernetes network use;
 - an unsafe method (anything but `GET`, `HEAD`, `OPTIONS`) whose `Sec-Fetch-Site` is neither
   `same-origin` nor `none`, or, without that header, whose `Origin` is neither `base_url`'s
   origin nor the request's own: `403 cross-site-request`. This applies to `/api`, `/uploads`,
   `/mcp` and `/feeds` alike.
 
 Clients that send neither header (curl, podcast apps, Claude Code and other desktop or CLI
-MCP clients, probes) are never affected. A browser-based MCP client on another origin, such as
+MCP clients, probes) are never refused as cross-site; like browsers, they must address
+Copycast by one of its names. A browser-based MCP client on another origin, such as
 MCP Inspector in a browser tab, is refused on `/mcp`. Each refusal logs `http.cross_site_refused`
 with the method, the path and the reason
 ([ADR 0025](adr/0025-the-browser-boundary.md)).
@@ -353,7 +366,7 @@ with the method, the path and the reason
 | every response | `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` |
 | the web UI, `/api`, `/uploads`, `/mcp`, `/healthz` (everything but `/feeds/` and `/art/`) | `Content-Security-Policy` (below), `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`, and `Strict-Transport-Security: max-age=31536000` when `base_url` is https |
 | `/api/docs` | as above, with a policy that lets Swagger UI load from `https://cdn.jsdelivr.net` and boot inline |
-| `/feeds/`, `/art/`, except audio and video | `Content-Security-Policy: sandbox`: a mirrored HTML transcript, an SVG or a feed's XML opened in a browser runs no script on Copycast's origin; podcast apps ignore it |
+| `/feeds/`, `/art/`, except audio, video and PDF | `Content-Security-Policy: sandbox`: a mirrored HTML transcript, an SVG or a feed's XML opened in a browser runs no script on Copycast's origin; podcast apps ignore it. PDF Attachments are left out because a sandboxed document cannot load Chromium's PDF viewer |
 
 The web UI's policy, with `base_url` `https://copycast.example`:
 
@@ -375,7 +388,7 @@ sets itself wins.
 | Status | Slug | When |
 |---|---|---|
 | 403 | `cross-site-request` | an unsafe browser request from another site |
-| 403 | `unknown-host` | a browser request to a host name that is not this Copycast's |
+| 403 | `unknown-host` | a request (anywhere but `/healthz`) to a host name that is not this Copycast's |
 | 422 | `destination-not-allowed` | a Source URL, or a link it leads to, that the fetch guard refuses |
 | 422 | `engine-option-rejected` | a Mirror's `engine_options` key off the allowlist; `keys` names each one, `scope` is `feed` (the slug is older; before 2.3.0 it refused only a deny-list) |
 
@@ -405,8 +418,12 @@ adds the `instance_secrets` table. Nothing else in Postgres or the Object store 
    with "… is not an allowed destination". List those hosts in
    `[security] allow_private_hosts` before the upgrade, or afterwards from the
    `fetch.destination_refused` log lines.
-2. **Environment proxies.** Server-side fetches ignore `HTTP_PROXY` and `HTTPS_PROXY` now. The
-   Engine still uses `proxy` from `[engine.options]`.
+2. **Environment proxies.** Copycast's own fetches ignore `HTTP_PROXY` and `HTTPS_PROXY`
+   now and connect directly; there is no setting that gives them a proxy. The Engine still
+   uses `proxy` from `[engine.options]`, or else those variables from the worker's
+   environment. Either proxy, on a private address, must be listed in
+   `[security] allow_private_hosts`, and destinations behind it are judged as well
+   ("Fetch guard and browser defences" above).
 3. **Per-Mirror engine options.** List the Mirrors that have any:
 
    ```bash
@@ -416,17 +433,41 @@ adds the `instance_secrets` table. Nothing else in Postgres or the Object store 
 
    A key off the allowlist (above, "Configuration") is ignored from now on, and each engine
    call for that feed logs `engine_options.refused feed_id=… keys=[…]`. Move cookies, a proxy
-   or a PO token to `[engine.options]`, then remove the keys in the Mirror's Settings dialog:
-   saving it answers 422 naming them until they are gone.
+   or a PO token to `[engine.options]`, then clear the row. The Settings dialog and the API
+   show only the allowed keys, so the dialog has nothing to remove, and saving it unchanged
+   sends no options and leaves the row as it is (editing any option there does rewrite the
+   row with the allowed set). Send the allowed set, or `{}`, yourself:
+
+   ```bash
+   curl -u copycast:"$COPYCAST_AUTH_PASSWORD" -X PATCH -H 'Content-Type: application/json' \
+     -d '{"engine_options": {}}' https://copycast.example/api/mirrors/<id>
+   ```
+
+   (curl sends no `Origin`, so the cross-site guard lets it through), or in Postgres:
+   `UPDATE feeds SET engine_options = '{}' WHERE id = '<id>'`.
 4. **Behind a reverse proxy**, set `COPYCAST_FORWARDED_ALLOW_IPS` to the proxy's network,
    for example `docker network inspect <network> -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}'`
    for the Traefik network the api shares. Without it the request log shows the proxy's
    address as `client_ip`. The Tailscale profile needs nothing: its sidecar proxies from
    loopback. On Kubernetes, uncomment the variable in `api-deployment.yaml` with the pod CIDR.
-5. **Other host names.** If browsers reach the UI by a name other than `base_url`'s, list it
-   in `COPYCAST_ALLOWED_HOSTS`, or those browsers get `403 unknown-host`.
+5. **Other host names.** If browsers reach the UI, or clients reach the api, by a name other
+   than `base_url`'s (a MagicDNS short name, a LAN alias, a compose or Kubernetes service name
+   such as `copycast-api`), list it in `COPYCAST_ALLOWED_HOSTS`, or they get
+   `403 unknown-host`. IP addresses, `localhost` and `/healthz` always pass.
 6. **Browser-based MCP clients** on another origin are refused (`403 cross-site-request`).
    Claude Code and other desktop or CLI clients are not affected.
+7. **A compose file of your own** (production's, say) reaches the containers only with the
+   variables its services name. Add both new ones to the `environment:` of the api (or
+   `api-direct`) and of the worker, next to the others:
+
+   ```yaml
+   COPYCAST_FORWARDED_ALLOW_IPS: ${COPYCAST_FORWARDED_ALLOW_IPS:-}
+   COPYCAST_ALLOWED_HOSTS: ${COPYCAST_ALLOWED_HOSTS:-}
+   ```
+
+   or load `.env` with `env_file:`. Otherwise setting them in `.env` does nothing and nothing
+   says so. Check with `docker compose exec api env | grep -E 'COPYCAST_(FORWARDED|ALLOWED)'`
+   (`api-direct` for the direct profile).
 
 **SeaweedFS in a compose file of your own.** The repository's `docker-compose.yml` already has
 these changes. A production compose file kept elsewhere needs them by hand (adapt the service

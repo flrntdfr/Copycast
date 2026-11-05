@@ -206,7 +206,7 @@ The check every Source-driven server-side fetch passes, Copycast's httpx client 
 _Avoid_: SSRF filter, firewall, allowlist (for the guard itself; its exceptions are `allow_private_hosts`)
 
 **Cross-site request**:
-A request with an unsafe method that a browser sends on behalf of another site (`Sec-Fetch-Site` other than `same-origin`/`none`, or a foreign `Origin`), refused with `403 cross-site-request` whether authentication is on or off. A browser request addressed to a host name that is not Copycast's is refused alike, as `403 unknown-host` (DNS rebinding; `COPYCAST_ALLOWED_HOSTS`). Clients that send neither header are never affected (ADR 0025).
+A request with an unsafe method that a browser sends on behalf of another site (`Sec-Fetch-Site` other than `same-origin`/`none`, or a foreign `Origin`), refused with `403 cross-site-request` whether authentication is on or off. Any request but `/healthz` addressed to a host name that is not Copycast's is refused alike, as `403 unknown-host` (DNS rebinding, which over plain http sends neither header; `COPYCAST_ALLOWED_HOSTS`). Clients that send neither header are never refused as cross-site (ADR 0025).
 _Avoid_: CSRF token (there is none), CORS (Copycast sends no CORS headers), origin check
 
 ## Conventions for agents
