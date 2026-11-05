@@ -35,8 +35,9 @@ EXPECTED_TABLES = {
     "worker_heartbeat",
     "engine_versions",
     "api_keys",
+    "instance_secrets",
 }
-HEAD = "0015"
+HEAD = "0016"
 
 
 def _table_names(conn: Connection) -> set[str]:
@@ -346,5 +347,21 @@ async def test_0015_locks_what_archive_mirrors_archived(db_engine: AsyncEngine) 
             )
         ).scalar_one()
     assert kept is True
+    await ensure_schema(db_engine)
+    assert await schema_is_current(db_engine)
+
+
+async def test_0016_creates_instance_secrets_and_its_downgrade_drops_it(
+    db_engine: AsyncEngine,
+) -> None:
+    """The table starts empty (the api mints the secret on first start); the downgrade drops
+    it, so the next upgrade starts over with a new secret."""
+    async with db_engine.connect() as conn:
+        assert "instance_secrets" in await conn.run_sync(_table_names)
+        count = (await conn.execute(text("SELECT count(*) FROM instance_secrets"))).scalar_one()
+    assert count == 0
+    await downgrade_schema(db_engine, "0015")
+    async with db_engine.connect() as conn:
+        assert "instance_secrets" not in await conn.run_sync(_table_names)
     await ensure_schema(db_engine)
     assert await schema_is_current(db_engine)

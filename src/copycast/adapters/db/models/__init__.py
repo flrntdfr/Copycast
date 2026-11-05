@@ -9,6 +9,7 @@ from copycast.adapters.db.models.feeds import Feed
 from copycast.adapters.db.models.jobs import ACTIVE_STATUSES, Job, JobLogLine
 from copycast.adapters.db.models.keys import ApiKey
 from copycast.adapters.db.models.requests import Request, RequestItem
+from copycast.adapters.db.models.secrets import InstanceSecret
 from copycast.adapters.db.models.telemetry import EngineVersion, RefreshRun, WorkerHeartbeat
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "CatalogItem",
     "EngineVersion",
     "Feed",
+    "InstanceSecret",
     "Job",
     "JobLogLine",
     "RefreshRun",

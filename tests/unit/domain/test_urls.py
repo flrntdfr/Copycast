@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from copycast.domain.urls import (
+    artwork_ext,
     has_scheme,
     normalize_source_url,
     normalize_youtube_channel,
@@ -151,3 +152,16 @@ def test_youtube_tab() -> None:
     assert youtube_tab("https://www.youtube.com/@h/shorts/") == "shorts"
     assert youtube_tab("https://www.youtube.com/@h") is None
     assert youtube_tab("https://vimeo.com/@h/videos") is None
+
+
+@pytest.mark.parametrize(
+    ("local_path", "ext"),
+    [
+        ("assets/feed.artwork.jpg", "jpg"),
+        ("assets/0123456789abcdef.artwork.WEBP", "webp"),
+        ("feed.artwork.png", "png"),
+        ("assets/odd", "bin"),
+    ],
+)
+def test_artwork_ext_is_the_stored_files_lowercased(local_path: str, ext: str) -> None:
+    assert artwork_ext(local_path) == ext

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -111,7 +112,8 @@ async def test_feed_routes_take_the_feed_pair_or_the_operator_pair(
     assert (await client.get(FEED_URL(other["id"]), headers=feed_headers)).status_code == 401
     assert (await client.get(api("/feeds"), headers=feed_headers)).status_code == 401
     wrong = await client.get(feed_path, headers=basic(pair["username"], "nope"))
-    assert wrong.status_code == 401 and "wrong" in str(problem(wrong)["detail"])
+    # The same answer as a missing pair: a 401 never says what was wrong.
+    assert wrong.status_code == 401 and problem(wrong)["detail"] == problem(missing)["detail"]
     unknown = await client.get(FEED_URL("no-such-feed"), headers=feed_headers)
     assert unknown.status_code == 401
 
@@ -144,7 +146,7 @@ async def test_feed_routes_take_the_feed_pair_or_the_operator_pair(
     # A wrong key, another feed's key, or the key as a query opens nothing.
     wrong_key = await client.get(f"/feeds/{mirror['id']}/k/{'a' * 22}/media/{item_id}.{ext}")
     assert wrong_key.status_code == 401 and problem(wrong_key)["detail"] == (
-        "wrong media key for this feed"
+        "this feed requires its username and password"
     )
     assert (
         await client.get(f"/feeds/{other['id']}/k/{key}/media/{item_id}.{ext}")
@@ -166,13 +168,36 @@ async def test_artwork_logo_and_robots_are_public(
     mirror = await create_mirror(client, url)
     archived = await archived_items(client, runner, mirror["id"])
     client.headers.pop("Authorization")
-    # Podcast apps fetch images bare: feed and Episode artwork answer without credentials.
-    assert (await client.get(f"/feeds/{mirror['id']}/assets/feed.artwork.jpg")).status_code == 200
+    pair = mirror["feed_credentials"]
+    feed_headers = basic(pair["username"], pair["password"])
+    document = (await client.get(FEED_URL(mirror["id"]), headers=feed_headers)).text
+    # Podcast apps fetch images bare: the feed publishes its artwork and the Episode's under
+    # /art/, which answers without credentials; the old computable path is gone from it.
+    art_urls = re.findall(r'href="(http://testserver/art/[^"]+)"', document)
     item_art = next(a for a in archived[0]["assets"] if a["kind"] == "artwork")
-    assert (await client.get(item_art["url"])).status_code == 200
+    assert item_art["url"] in art_urls and len(set(art_urls)) == 2, art_urls
+    assert ".artwork." not in document
+    for art_url in art_urls:
+        image = await client.get(art_url)
+        assert image.status_code == 200, art_url
+        assert image.headers["content-type"] == "image/jpeg"
+        assert image.headers["cache-control"] == "public, max-age=86400"
+        assert image.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
+        assert (await client.head(art_url)).status_code == 200
+    # The old artwork path takes the feed's pair or media key like any other asset.
+    old_path = f"/feeds/{mirror['id']}/assets/feed.artwork.jpg"
+    refused = await client.get(old_path)
+    assert refused.status_code == 401 and refused.headers["www-authenticate"] == CHALLENGE
+    assert (await client.get(old_path, headers=feed_headers)).status_code == 200
+    key = feed_media_key(mirror["id"], pair["password"])
+    keyed = f"/feeds/{mirror['id']}/k/{key}/assets/feed.artwork.jpg"
+    assert (await client.get(keyed)).status_code == 200
     # Other assets keep the feed's pair.
     chapters = next(a for a in archived[0]["assets"] if a["kind"] == "chapters")
     assert (await client.get(chapters["url"])).status_code == 401
+    # Directories are asked not to list the feed.
+    assert "<itunes:block>Yes</itunes:block>" in document
+    assert "<podcast:block>yes</podcast:block>" in document
     # The logo a Bucket feed shows, and robots.txt, are open too.
     logo = await client.get("/feeds/copycast-artwork.png")
     assert logo.status_code == 200 and logo.headers["content-type"] == "image/png"

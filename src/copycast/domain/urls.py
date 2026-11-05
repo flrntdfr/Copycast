@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import re
+from posixpath import basename, splitext
 from typing import Final
 from urllib.parse import parse_qs, urlsplit
 
 COPYCAST_ARTWORK_PATH: Final = "/feeds/copycast-artwork.png"
 """Where the API serves the Copycast logo, the artwork of a Bucket feed without its own."""
+ART_PATH_PREFIX: Final = "/art"
+"""``/art/{asset_id}-{mac}.{ext}``: public Artwork under an opaque token (no credentials)."""
 
 TRACKING_PARAMS: Final = frozenset(
     {"fbclid", "gclid", "mc_cid", "mc_eid", "igshid", "ref", "ref_src"}
@@ -18,6 +21,12 @@ _YOUTUBE_CHANNEL_PATH: Final = re.compile(r"^/(?:@[^/]+|channel/[^/]+|c/[^/]+|us
 _YOUTUBE_TAB: Final = re.compile(
     r"^/(?:@[^/]+|channel/[^/]+|c/[^/]+|user/[^/]+)/(videos|shorts|streams|live|podcasts|playlists|releases)/?$"
 )
+
+
+def artwork_ext(local_path: str) -> str:
+    """The extension a public artwork URL carries: the stored file's, lowercased (``jpg``
+    for ``assets/feed.artwork.jpg``), ``bin`` when it has none."""
+    return splitext(basename(local_path))[1].lstrip(".").lower() or "bin"
 
 
 def _is_tracking(name: str) -> bool:

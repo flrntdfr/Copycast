@@ -5,6 +5,9 @@ from __future__ import annotations
 from posixpath import basename
 from urllib.parse import quote, urlsplit, urlunsplit
 
+from copycast.domain.credentials import artwork_mac
+from copycast.domain.urls import ART_PATH_PREFIX, artwork_ext
+
 FEEDS_PREFIX = "/feeds"
 OBJECTS_PREFIX = "/api/feeds"
 """``/api/feeds/{id}/objects/...``: the operator's download of a Feed's stored objects."""
@@ -61,6 +64,16 @@ def asset_url(base_url: str, feed_id: str, local_path: str, *, key: str | None =
     return f"{_files(base_url, feed_id, key)}/assets/{quote(name, safe='')}"
 
 
+def artwork_url(base_url: str, asset_id: str, local_path: str, *, secret: bytes) -> str:
+    """``{base_url}/art/{asset_id}-{mac}.{ext}``: the one public URL of an artwork asset.
+
+    The same in both auth modes; the MAC (``domain.credentials.artwork_mac``) makes it
+    unguessable, unlike the feed and item ids it no longer carries.
+    """
+    token = f"{asset_id}-{artwork_mac(secret, asset_id)}"
+    return f"{_base(base_url)}{ART_PATH_PREFIX}/{quote(token, safe='')}.{artwork_ext(local_path)}"
+
+
 def feed_object_url(base_url: str, feed_id: str, path: str) -> str:
     """``{base_url}/api/feeds/{id}/objects/{path}``: the operator download of one stored object
     (``path`` is relative to ``feeds/{id}/``; each of its segments is quoted)."""
@@ -72,6 +85,7 @@ __all__ = [
     "FEEDS_PREFIX",
     "KEY_SEGMENT",
     "OBJECTS_PREFIX",
+    "artwork_url",
     "asset_url",
     "feed_object_url",
     "feed_url",

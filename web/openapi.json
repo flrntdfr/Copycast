@@ -3686,7 +3686,7 @@
               }
             ],
             "title": "Url",
-            "description": "Local URL once archived"
+            "description": "Local URL once archived; Artwork's is its public /art/ URL (no credentials)"
           },
           "remote_url": {
             "anyOf": [

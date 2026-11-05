@@ -5,7 +5,9 @@ The input is a small read model (:class:`FeedView`, :class:`ItemView`,
 function that golden tests exercise without Postgres. A Mirror whose Source
 was RSS reproduces the original ``<channel>`` and ``<item>`` XML with only
 the enclosure, mirrored assets and Copycast's own channel tags replaced;
-every other feed is synthesized.
+every other feed is synthesized. Every feed asks directories not to list it
+(``itunes:block`` and ``podcast:block``), and its Artwork is published under
+``/art/`` (an opaque token, public), its other assets under the feed.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from typing import TYPE_CHECKING, Final
 
 from lxml import etree
 
-from copycast.adapters.feeds.urls import asset_url, feed_url, media_url
+from copycast.adapters.feeds.urls import artwork_url, asset_url, feed_url, media_url
 from copycast.adapters.sources.rss import (
     NS_ATOM,
     NS_CONTENT,
@@ -71,6 +73,16 @@ _DROPPED_CHANNEL_CHILDREN: Final = frozenset(
         (NS_ITUNES, "new-feed-url"),
     }
 )
+_BLOCK_NAMESPACES: Final = frozenset(
+    {
+        NS_ITUNES,
+        "http://www.itunes.com/DTDs/PodCast-1.0.dtd",
+        NS_PODCAST,
+        "https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/1.0.md",
+    }
+)
+"""Where a Source's own ``<…:block>`` may live (the spellings in the wild): it is dropped,
+and Copycast's own blocks replace it, never duplicated."""
 
 
 # --------------------------------------------------------------------------- read model
@@ -81,6 +93,9 @@ class AssetView:
     """One ``assets`` row; only ``archived`` rows with a ``local_path`` are served."""
 
     kind: AssetKind
+    id: str | None = None
+    """The row's id: Artwork is published under it (``/art/{id}-{mac}.{ext}``), so an
+    artwork view without one is not served."""
     local_path: str | None = None
     state: AssetState = AssetState.archived
     provenance: AssetProvenance = AssetProvenance.mirrored
@@ -160,7 +175,7 @@ class FeedView:
     media_key: str | None = None
     """Set while auth is on: enclosures, chapters, transcripts and attachments are published
     under ``/feeds/{id}/k/{key}/`` for players that never answer a Basic challenge.
-    Artwork keeps its bare URL (it is public)."""
+    Artwork is published under ``/art/`` in both modes (it is public)."""
 
     @property
     def automatic(self) -> bool:
@@ -183,9 +198,12 @@ def render_feed(
     items: Sequence[ItemView],
     *,
     base_url: str,
+    artwork_secret: bytes,
     now: datetime | None = None,
 ) -> RenderedFeed:
     """The feed document for ``feed`` and its archived ``items``.
+
+    ``artwork_secret`` is the instance secret the public artwork tokens are keyed with.
 
     Items are ordered ``published_at DESC NULLS LAST, ordinal DESC``;
     tombstoned and never-archived items are excluded, Delisted ones kept. An
@@ -199,7 +217,9 @@ def render_feed(
         key=_order_key,
     )
     self_url = feed_url(base_url, feed.id)
-    feed_artwork = _local_url(base_url, feed.id, _pick_artwork(feed.assets)) or feed.artwork_url
+    feed_artwork = (
+        _artwork_url(base_url, _pick_artwork(feed.assets), artwork_secret) or feed.artwork_url
+    )
     if feed_artwork is None and feed.kind is FeedKind.bucket:
         feed_artwork = base_url.rstrip("/") + COPYCAST_ARTWORK_PATH
 
@@ -221,9 +241,9 @@ def render_feed(
         _set_title(channel, feed.title)
 
     for item in renderable:
-        element = _preserved_item(feed, item, base_url) if preserved else None
+        element = _preserved_item(feed, item, base_url, artwork_secret) if preserved else None
         if element is None:
-            element = _synthesized_item(feed, item, base_url, feed_artwork, current)
+            element = _synthesized_item(feed, item, base_url, artwork_secret, current)
         channel.append(element)
 
     etree.cleanup_namespaces(root)
@@ -285,6 +305,8 @@ def _preserved_channel(
         key = (qname.namespace, qname.localname)
         if key in _DROPPED_CHANNEL_CHILDREN:
             continue
+        if qname.localname == "block" and qname.namespace in _BLOCK_NAMESPACES:
+            continue
         if key == (NS_ATOM, "link") and (child.get("rel") or "").strip().lower() == "self":
             continue
         channel.append(_copy(child))
@@ -325,18 +347,22 @@ def _synthesized_channel(
 
 
 def _append_copycast_tags(channel: Element, self_url: str, last_modified: datetime) -> None:
+    """Copycast's channel tags: the self link, generator, build date, and the directory
+    blocks (a personal archive is nothing for Apple Podcasts or Podcast Index to list)."""
     link = etree.SubElement(channel, tag(NS_ATOM, "link"))
     link.set("href", self_url)
     link.set("rel", "self")
     link.set("type", "application/rss+xml")
     _sub(channel, "generator", GENERATOR)
     _sub(channel, "lastBuildDate", rfc2822(last_modified))
+    _sub(channel, tag(NS_ITUNES, "block"), "Yes")
+    _sub(channel, tag(NS_PODCAST, "block"), "yes")
 
 
 # --------------------------------------------------------------------------- items
 
 
-def _preserved_item(feed: FeedView, item: ItemView, base_url: str) -> Element | None:
+def _preserved_item(feed: FeedView, item: ItemView, base_url: str, secret: bytes) -> Element | None:
     if not item.source_item_xml:
         return None
     try:
@@ -367,7 +393,7 @@ def _preserved_item(feed: FeedView, item: ItemView, base_url: str) -> Element | 
             [_transcript_element(base_url, feed.id, t, key=feed.media_key) for t in transcripts],
             (NS_PODCAST, "transcript"),
         )
-    artwork = _local_url(base_url, feed.id, _pick_artwork(item.assets))
+    artwork = _artwork_url(base_url, _pick_artwork(item.assets), secret)
     if artwork:
         _set_artwork(element, artwork, create=True)
     return element
@@ -451,7 +477,7 @@ def _enclosure(base_url: str, feed: FeedView, item: ItemView) -> Element:
 
 
 def _synthesized_item(
-    feed: FeedView, item: ItemView, base_url: str, feed_artwork: str | None, now: datetime
+    feed: FeedView, item: ItemView, base_url: str, secret: bytes, now: datetime
 ) -> Element:
     element = etree.Element("item")
     _sub(element, "title", item.title)
@@ -481,7 +507,7 @@ def _synthesized_item(
     author = item.author or feed.author
     if author:
         _sub(element, tag(NS_ITUNES, "author"), author)
-    artwork = _local_url(base_url, feed.id, _pick_artwork(item.assets)) or item.artwork_url
+    artwork = _artwork_url(base_url, _pick_artwork(item.assets), secret) or item.artwork_url
     if artwork:
         etree.SubElement(element, tag(NS_ITUNES, "image")).set("href", artwork)
     chapters = _pick_chapters(item.assets)
@@ -504,7 +530,8 @@ def _provenance_rank(asset: AssetView) -> int:
 
 
 def _pick_artwork(assets: Iterable[AssetView]) -> AssetView | None:
-    candidates = sorted(_served(assets, AssetKind.artwork), key=_provenance_rank)
+    served = (asset for asset in _served(assets, AssetKind.artwork) if asset.id)
+    candidates = sorted(served, key=_provenance_rank)
     return candidates[0] if candidates else None
 
 
@@ -528,6 +555,12 @@ def _local_url(
     if asset is None or not asset.local_path:
         return None
     return asset_url(base_url, feed_id, asset.local_path, key=key)
+
+
+def _artwork_url(base_url: str, asset: AssetView | None, secret: bytes) -> str | None:
+    if asset is None or not asset.local_path or not asset.id:
+        return None
+    return artwork_url(base_url, asset.id, asset.local_path, secret=secret)
 
 
 def _chapters_element(

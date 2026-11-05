@@ -8,7 +8,10 @@ so a revision is rendered once across the fleet. A render takes a short
 ``SET NX`` lock there; a replica that loses the race waits a moment for the
 winner's body instead of rendering the same revision again. The shared level
 is an accelerator only: any error there is logged and the request renders
-from Postgres as if it were absent.
+from Postgres as if it were absent. Its keys also carry a namespace, a digest
+of the instance secret the rendered artwork URLs are keyed with: a database
+rebuilt from scratch mints a new secret, and must not be served the old
+installation's bodies at a revision number they happen to share.
 
 Every entry also carries its body gzipped once, off the event loop, when the
 revision is rendered (or found in the shared level): the feed route answers a
@@ -37,6 +40,7 @@ log = get_logger(__name__)
 SHARED_PREFIX = f"copycast:feed:{APP_VERSION}:"
 """Per release: a new version may render differently at the same revision."""
 LOCK_PREFIX = "copycast:render:"
+NAMESPACE_CONTEXT = b"copycast feed cache\x00"
 LOCK_SECONDS = 15
 RENDER_WAIT_SECONDS = 2.0
 RENDER_WAIT_STEP = 0.05
@@ -134,6 +138,8 @@ class SharedFeedCache:
     def __init__(self, client: Any, *, ttl_seconds: int) -> None:
         self._client = client
         self._ttl = ttl_seconds
+        self.namespace = ""
+        """Set once by the api lifespan (:meth:`FeedCache.set_namespace`)."""
         self._last_error_log = 0.0
         self.hits = 0
         self.misses = 0
@@ -159,9 +165,13 @@ class SharedFeedCache:
             self._last_error_log = now
             log.warning("feed_cache.shared_error", op=what, error=str(exc)[:200])
 
+    def _key(self, prefix: str, feed_id: str, revision: int) -> str:
+        scope = f"{self.namespace}:" if self.namespace else ""
+        return f"{prefix}{scope}{feed_id}:{revision}"
+
     async def get(self, feed_id: str, revision: int) -> CachedFeed | None:
         try:
-            raw: bytes | None = await self._client.get(f"{SHARED_PREFIX}{feed_id}:{revision}")
+            raw: bytes | None = await self._client.get(self._key(SHARED_PREFIX, feed_id, revision))
         except Exception as exc:
             self._failed("get", exc)
             return None
@@ -173,7 +183,7 @@ class SharedFeedCache:
         return entry
 
     async def put(self, feed_id: str, entry: CachedFeed) -> None:
-        key = f"{SHARED_PREFIX}{feed_id}:{entry.revision}"
+        key = self._key(SHARED_PREFIX, feed_id, entry.revision)
         try:
             await self._client.set(key, _encode(entry), ex=self._ttl)
         except Exception as exc:
@@ -183,7 +193,7 @@ class SharedFeedCache:
         """``True`` when this replica should render (it won the lock, or the cache is down)."""
         try:
             won = await self._client.set(
-                f"{LOCK_PREFIX}{feed_id}:{revision}", b"1", nx=True, ex=LOCK_SECONDS
+                self._key(LOCK_PREFIX, feed_id, revision), b"1", nx=True, ex=LOCK_SECONDS
             )
         except Exception as exc:
             self._failed("lock", exc)
@@ -227,6 +237,12 @@ class FeedCache:
             revision=revision, body=body, last_modified=last_modified, content_type=content_type
         )
         return self._keep(feed_id, entry)
+
+    def set_namespace(self, secret: bytes) -> None:
+        """Scope the shared level to the instance secret (its digest, never the secret)."""
+        if self.shared is not None:
+            digest = hashlib.sha256(NAMESPACE_CONTEXT + secret).hexdigest()
+            self.shared.namespace = digest[:16]
 
     def invalidate(self, feed_id: str) -> None:
         self._entries.pop(feed_id, None)

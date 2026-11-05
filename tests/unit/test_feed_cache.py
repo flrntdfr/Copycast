@@ -178,3 +178,27 @@ async def test_every_entry_carries_its_body_gzipped_once() -> None:
     assert cache.put(
         "f2", revision=1, body=body, last_modified=STAMP, content_type="x"
     ).gzip_body == (entry.gzip_body)
+
+
+async def test_the_shared_level_is_scoped_to_the_instance_secret() -> None:
+    """A database rebuilt from scratch mints a new artwork secret: its replicas must not be
+    served the old installation's bodies (old /art/ URLs) at a revision they share."""
+    valkey = FakeValkey()
+    old = FeedCache(shared=SharedFeedCache(valkey, ttl_seconds=600))
+    old.set_namespace(b"\x01" * 32)
+    new = FeedCache(shared=SharedFeedCache(valkey, ttl_seconds=600))
+    new.set_namespace(b"\x02" * 32)
+    same = FeedCache(shared=SharedFeedCache(valkey, ttl_seconds=600))
+    same.set_namespace(b"\x01" * 32)
+    calls: list[int] = []
+    await old.fetch("f1", 2, _renderer(2, b"<rss>old</rss>", calls))
+    served = await new.fetch("f1", 2, _renderer(2, b"<rss>new</rss>", calls))
+    assert served is not None and served.body == b"<rss>new</rss>" and calls == [2, 2]
+    shared = await same.fetch("f1", 2, _renderer(2, b"<rss>never</rss>", calls))
+    assert shared is not None and shared.body == b"<rss>old</rss>" and calls == [2, 2]
+    keys = [key for key in valkey.data if key.startswith(SHARED_PREFIX)]
+    assert len(keys) == 2 and all(key.endswith(":f1:2") for key in keys)
+    # The namespace is a digest: the secret itself never reaches Valkey.
+    assert all("\x01" not in key and "0101" not in key for key in keys)
+    # Without a shared level there is nothing to scope.
+    FeedCache().set_namespace(b"\x01" * 32)
