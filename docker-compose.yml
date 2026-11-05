@@ -6,9 +6,10 @@
 #   direct     the api publishes port 8080 on this host (only for a trusted network)
 # The worker, Postgres, SeaweedFS (the Object store) and Valkey (the Feed cache) run under both.
 #
-# SeaweedFS listens on nothing but S3 over HTTP (port 8333, which checks the keys): its entrypoint
-# keeps master, volume, filer and the gateway's own gRPC on loopback, behind a relay. It also sits
-# alone with the api and the worker on the internal network "objects": no other compose container
+# SeaweedFS keeps master, volume and filer on loopback; only its S3 gateway listens, on 8333 (S3
+# over HTTP, which checks the keys) and 18333 (its gRPC, which in 4.48 accepts IAM changes without
+# a credential and cannot be bound apart from 8333). So it sits alone with the api and the worker,
+# which hold the keys already, on the internal network "objects": no other compose container
 # reaches it, it reaches nothing outside, and it publishes no port. A one-off S3 client, a backup
 # sync say, joins <project>_objects, and <project>_default too to reach an off-site target.
 #
@@ -144,8 +145,8 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
     entrypoint: ["/bin/sh", "/copycast/entrypoint.sh"]
-    # Only S3 over HTTP leaves the container (the entrypoint keeps the rest on loopback). Never on
-    # "default" and never a published port all the same: only the key holders need the gateway.
+    # Never on "default" and never a published port: the gateway's gRPC port (18333) accepts
+    # identities without a credential, so only the containers holding the keys may reach it.
     networks: [objects]
     environment:
       COPYCAST_S3_ACCESS_KEY: ${COPYCAST_S3_ACCESS_KEY:-copycast}
