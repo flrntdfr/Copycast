@@ -35,6 +35,7 @@ from copycast.application.services.context import (
     RequestRow,
     UnitOfWorkPort,
 )
+from copycast.domain.engine_options import EngineOptions
 from copycast.domain.enums import (
     ArchiveState,
     AssetFormat,
@@ -117,7 +118,9 @@ def mirror_read(
             latest_n=feed.backfill_latest_n,
             retention_days=feed.retention_days,
         ),
-        engine_options=dict(feed.engine_options or {}),
+        # A row written before 2.3.0 may hold refused keys (credentials among them):
+        # never shown, as never used (``adapters.engine.options.stored_feed_options``).
+        engine_options=EngineOptions.sanitize_feed(feed.engine_options)[0],
         last_refresh_attempt_at=feed.last_refresh_attempt_at,
         last_refresh_success_at=feed.last_refresh_success_at,
         last_light_refresh_at=feed.last_light_refresh_at,

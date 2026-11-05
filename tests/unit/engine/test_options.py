@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import structlog
+
 from copycast.adapters.engine.options import (
     BASE_OPTIONS,
     DIRECT_FORMAT,
     LISTING_OPTIONS,
     POSTPROCESSORS,
     YTDLP_FORMAT,
+    engine_options_for,
     fetch_params,
     listing_params,
     merge_options,
+    stored_feed_options,
     strip_owned,
     subtitle_languages,
     with_approximate_dates,
@@ -18,6 +22,7 @@ from copycast.adapters.engine.options import (
 from copycast.application.ports import NullEngineLog
 from copycast.domain.engine_options import ENGINE_OWNED_OPTIONS
 from copycast.domain.enums import FetchKind
+from copycast.settings import get_settings
 
 
 def test_base_options_match_the_plan() -> None:
@@ -56,15 +61,105 @@ def test_listing_params_limit_makes_the_listing_shallow() -> None:
 
 
 def test_engine_options_for_layers_config_and_feed_in_the_engine_adapter() -> None:
-    from copycast.adapters.engine.options import engine_options_for
-    from copycast.settings import get_settings
-
     settings = get_settings(engine={"options": {"ratelimit": 100, "subtitleslangs": ["fr"]}})
-    merged = engine_options_for(settings, {"ratelimit": 5}, language="de-CH")
+    merged = engine_options_for(settings, {"ratelimit": 5}, feed_id="f1", language="de-CH")
     assert merged["ratelimit"] == 5 and merged["subtitleslangs"] == ["fr"]
     assert merged["extractor_args"] == {"youtube": {"lang": ["de-CH"]}}
-    defaulted = engine_options_for(get_settings(), None, language=None)
+    defaulted = engine_options_for(get_settings(), None, feed_id="f1", language=None)
     assert defaulted["subtitleslangs"] == ["en", "-live_chat"] and "extractor_args" not in defaulted
+
+
+def test_allowlisted_feed_options_reach_the_fetch_and_listing_params(tmp_path: Path) -> None:
+    feed = {
+        "ratelimit": 50_000,
+        "sleep_interval_requests": 1.5,
+        "format_sort": ["abr"],
+        "geo_bypass_country": "CH",
+        "age_limit": 18,
+        "subtitleslangs": ["de"],
+        "extractor_args": {"youtube": {"player_client": ["ios"]}},
+    }
+    options = engine_options_for(get_settings(), feed, feed_id="f1", language="fr")
+    assert options["extractor_args"] == {"youtube": {"player_client": ["ios"], "lang": ["fr"]}}
+    params = fetch_params(
+        options, kind=FetchKind.ytdlp, item_id="i", home_dir=tmp_path, temp_dir=tmp_path
+    )
+    for key in ("ratelimit", "sleep_interval_requests", "format_sort", "age_limit"):
+        assert params[key] == feed[key]
+    assert params["geo_bypass_country"] == "CH" and params["subtitleslangs"] == ["de"]
+    listing = listing_params(options)
+    assert listing["ratelimit"] == 50_000
+    assert listing["extractor_args"]["youtube"] == {"player_client": ["ios"], "lang": ["fr"]}
+
+
+def test_operator_po_token_survives_a_mirrors_own_extractor_args(tmp_path: Path) -> None:
+    """[engine.options] is the only place for po_token and youtubepot-*: a Mirror adds to it."""
+    settings = get_settings(
+        engine={
+            "options": {
+                "extractor_args": {
+                    "youtube": {"po_token": ["web.gvs+abc"]},
+                    "youtubepot-bgutilhttp": {"base_url": ["http://pot:4416"]},
+                }
+            }
+        }
+    )
+    feed = {"extractor_args": {"youtube": {"player_client": ["ios"]}}}
+    options = engine_options_for(settings, feed, feed_id="f1", language="fr")
+    params = fetch_params(
+        options, kind=FetchKind.ytdlp, item_id="i", home_dir=tmp_path, temp_dir=tmp_path
+    )
+    assert params["extractor_args"] == {
+        "youtube": {"po_token": ["web.gvs+abc"], "player_client": ["ios"], "lang": ["fr"]},
+        "youtubepot-bgutilhttp": {"base_url": ["http://pot:4416"]},
+    }
+    assert listing_params(options)["extractor_args"]["youtube"]["po_token"] == ["web.gvs+abc"]
+
+
+def test_stored_feed_options_drop_refused_keys_with_a_warning(tmp_path: Path) -> None:
+    """A row written before 2.3.0 keeps its keys in Postgres; none of them reaches yt-dlp."""
+    stored = {
+        "netrc_cmd": "touch /tmp/pwned",
+        "usenetrc": True,
+        "proxy": "http://attacker:3128",
+        "http_headers": {"Ytdl-Request-Proxy": "http://attacker:3128"},
+        "extractor_args": {"youtube": {"lang": ["de"], "innertube_host": ["attacker"]}},
+        "ratelimit": 5,
+    }
+    with structlog.testing.capture_logs() as events:
+        kept = stored_feed_options("feed-1", stored)
+    assert kept == {"ratelimit": 5, "extractor_args": {"youtube": {"lang": ["de"]}}}
+    warnings = [e for e in events if e["event"] == "engine_options.refused"]
+    assert len(warnings) == 1
+    assert warnings[0]["log_level"] == "warning" and warnings[0]["feed_id"] == "feed-1"
+    assert warnings[0]["keys"] == [
+        "extractor_args.youtube.innertube_host",
+        "http_headers",
+        "netrc_cmd",
+        "proxy",
+        "usenetrc",
+    ]
+
+    # The same row through the engine call path: the operator's own proxy survives,
+    # the Feed's refused keys do not.
+    settings = get_settings(engine={"options": {"proxy": "http://operator:3128"}})
+    with structlog.testing.capture_logs() as events:
+        options = engine_options_for(settings, stored, feed_id="feed-1", language=None)
+    assert [e["feed_id"] for e in events if e["event"] == "engine_options.refused"] == ["feed-1"]
+    params = fetch_params(
+        options, kind=FetchKind.ytdlp, item_id="i", home_dir=tmp_path, temp_dir=tmp_path
+    )
+    for key in ("netrc_cmd", "usenetrc", "http_headers"):
+        assert key not in params and key not in listing_params(options)
+    assert params["proxy"] == "http://operator:3128"
+    assert params["extractor_args"] == {"youtube": {"lang": ["de"]}}
+
+
+def test_stored_feed_options_log_nothing_for_a_clean_row() -> None:
+    with structlog.testing.capture_logs() as events:
+        assert stored_feed_options("f", {"ratelimit": 5}) == {"ratelimit": 5}
+        assert stored_feed_options("f", None) == {}
+    assert events == []
 
 
 def test_strip_owned_drops_every_engine_owned_key() -> None:

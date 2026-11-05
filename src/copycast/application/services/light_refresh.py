@@ -234,6 +234,7 @@ def _list(ctx: ServiceContext, plan: _Plan, cancel: CancelToken, timeout: float)
         return _Listed("complete", listing=fetched.listing, rss=fetched, changed=changed)
     listing = ctx.sources.list_shallow(
         plan.source_url,
+        feed_id=plan.feed_id,
         options=plan.options,
         language=plan.language,
         cancel=cancel,

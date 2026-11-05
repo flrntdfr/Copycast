@@ -27,6 +27,7 @@ from copycast.adapters.db.repositories import (
 )
 from copycast.adapters.storage.layout import LAYOUT_VERSION, Layout
 from copycast.adapters.storage.objects import ObjectStore
+from copycast.domain.engine_options import EngineOptions
 from copycast.domain.enums import (
     ArchiveState,
     AssetFormat,
@@ -153,6 +154,17 @@ class DescriptorRequest(_Strict):
     created_at: datetime
 
 
+def _policy(feed: Feed) -> DescriptorPolicy:
+    """The Feed's policy, its ``engine_options`` minus the keys the per-Mirror allowlist refuses.
+
+    A row written before 2.3.0 may still hold one (a credential, ``netrc_cmd``); the
+    Engine never uses it, so ``feed.json`` stops carrying it from the next export.
+    """
+    policy = DescriptorPolicy.model_validate(feed)
+    kept, refused = EngineOptions.sanitize_feed(policy.engine_options)
+    return policy.model_copy(update={"engine_options": kept}) if refused else policy
+
+
 class FeedDescriptor(_Strict):
     format: str = DESCRIPTOR_FORMAT
     layout_version: str = LAYOUT_VERSION
@@ -180,7 +192,7 @@ class FeedDescriptor(_Strict):
             exported_at=exported_at or utcnow(),
             intent_version=feed.intent_version,
             feed=DescriptorFeed.model_validate(feed),
-            policy=DescriptorPolicy.model_validate(feed),
+            policy=_policy(feed),
             items=[DescriptorItem.model_validate(i) for i in items],
             assets=[DescriptorAsset.model_validate(a) for a in assets],
             requests=[

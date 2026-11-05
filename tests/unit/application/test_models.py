@@ -130,12 +130,13 @@ def test_latest_requires_n_and_n_is_dropped_otherwise() -> None:
     assert BackfillRequest(mode=BackfillMode.all, retention_days=30).retention_days is None
 
 
-def test_mirror_create_rejects_owned_and_global_only_engine_options() -> None:
+def test_mirror_create_allows_only_allowlisted_engine_options() -> None:
     with pytest.raises(EngineOptionRejected) as excinfo:
         MirrorCreate(
-            source_url="https://p.example/f.xml", engine_options={"proxy": "x", "quiet": 1}
+            source_url="https://p.example/f.xml",
+            engine_options={"proxy": "x", "quiet": 1, "netrc_cmd": "id"},
         )
-    assert excinfo.value.keys == ["proxy", "quiet"]
+    assert excinfo.value.keys == ["netrc_cmd", "proxy", "quiet"]
     ok = MirrorCreate(
         source_url="https://p.example/f.xml", engine_options={"subtitleslangs": ["de"]}
     )
@@ -154,6 +155,9 @@ def test_mirror_update_tracks_fields_set() -> None:
     assert patch.model_fields_set == {"follow"}
     with pytest.raises(EngineOptionRejected):
         MirrorUpdate(engine_options={"cookiefile": "/x"})
+    with pytest.raises(EngineOptionRejected):
+        MirrorUpdate(engine_options={"extractor_args": {"youtube-ejs": {"repo": ["x/y"]}}})
+    assert MirrorUpdate(engine_options={}).engine_options == {}
 
 
 def test_selection_request_needs_something() -> None:

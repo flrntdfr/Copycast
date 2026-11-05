@@ -113,6 +113,25 @@ def test_mirror_read_and_selection_summary() -> None:
         mirror_row(backfill_mode="selection"), Urls(), counts=CatalogCounts(), selected_count=9
     ).selection
     assert selection is not None and selection.count == 9 and selection.applied_at == NOW
+
+
+def test_mirror_read_hides_refused_engine_options_of_an_old_row() -> None:
+    """A row written before 2.3.0 may hold credentials; a read-scope key never sees them."""
+    stored = {
+        "username": "me",
+        "password": "hunter2",
+        "netrc_cmd": "pass show yt",
+        "http_headers": {"Authorization": "Bearer secret"},
+        "extractor_args": {"youtube": {"lang": ["de"], "po_token": ["web+secret"]}},
+        "ratelimit": 1,
+    }
+    read = readmodels.mirror_read(
+        mirror_row(engine_options=stored), Urls(), counts=CatalogCounts(), selected_count=0
+    )
+    assert read.engine_options == {"ratelimit": 1, "extractor_args": {"youtube": {"lang": ["de"]}}}
+    dumped = read.model_dump_json()
+    for secret in ("hunter2", "pass show", "Bearer", "web+secret"):
+        assert secret not in dumped
     with pytest.raises(ValueError):
         readmodels.mirror_read(mirror_row(source_url=None), Urls(), counts=CatalogCounts())
 

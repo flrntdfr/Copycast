@@ -478,6 +478,13 @@ class BackfillRequest(RequestModel):
         return self
 
 
+ENGINE_OPTIONS_DESCRIPTION = (
+    "Raw yt-dlp params from an allowlist (format_sort, rate, sleep and retry tuning, "
+    "subtitleslangs, geo_bypass*, age_limit, a few extractor_args); any other key is "
+    "refused with 422 engine-option-rejected naming it"
+)
+
+
 class MirrorCreate(RequestModel):
     source_url: str = Field(min_length=1, max_length=2048)
     candidate_token: str | None = None
@@ -487,7 +494,9 @@ class MirrorCreate(RequestModel):
     follow: bool | None = Field(
         default=None, description="Defaults to true, or false under a selection backfill"
     )
-    engine_options: dict[str, Any] = Field(default_factory=dict[str, Any])
+    engine_options: dict[str, Any] = Field(
+        default_factory=dict[str, Any], description=ENGINE_OPTIONS_DESCRIPTION
+    )
     preferred_language: str | None = Field(
         default=None, max_length=16, description="BCP 47 tag such as fr; YouTube metadata language"
     )
@@ -524,7 +533,7 @@ class MirrorCreate(RequestModel):
     @field_validator("engine_options")
     @classmethod
     def _feed_scope(cls, value: dict[str, Any]) -> dict[str, Any]:
-        return EngineOptions.validate(value, scope="feed")
+        return EngineOptions.validate_feed(value)
 
     def resolve(self, default: BackfillRequest) -> tuple[BackfillRequest, bool]:
         """The policy to apply and the Follow flag, filling both from ``default``."""
@@ -546,7 +555,9 @@ class MirrorUpdate(RequestModel):
     )
     follow: bool | None = None
     backfill: BackfillRequest | None = None
-    engine_options: dict[str, Any] | None = None
+    engine_options: dict[str, Any] | None = Field(
+        default=None, description=ENGINE_OPTIONS_DESCRIPTION
+    )
     preferred_language: str | None = Field(default=None, max_length=16)
     min_duration_seconds: int | None = Field(default=None, ge=1)
     refresh_interval_hours: int | None = Field(default=None, ge=1)
@@ -577,7 +588,7 @@ class MirrorUpdate(RequestModel):
     @field_validator("engine_options")
     @classmethod
     def _feed_scope(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        return None if value is None else EngineOptions.validate(value, scope="feed")
+        return None if value is None else EngineOptions.validate_feed(value)
 
 
 class SelectionRequest(RequestModel):

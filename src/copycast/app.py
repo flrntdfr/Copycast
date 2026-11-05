@@ -180,11 +180,14 @@ class SourceGatewayAdapter:
         return playlists
 
     def inspect_video(
-        self, url: str, *, options: Mapping[str, Any], language: str | None
+        self, url: str, *, feed_id: str, options: Mapping[str, Any], language: str | None
     ) -> SourceListingItem | None:
-        """One item's full metadata from the engine (a single video is never flat)."""
-        with_language = _load("copycast.adapters.engine.options", "with_language")
-        merged = with_language({**self._settings.engine.options, **options}, language)
+        """One item's full metadata from the engine (a single video is never flat).
+
+        ``options`` are the Feed's stored ones, merged (and filtered) like the worker's.
+        """
+        engine_options_for = _load("copycast.adapters.engine.options", "engine_options_for")
+        merged = engine_options_for(self._settings, options, feed_id=feed_id, language=language)
         listing = self._engine.list_source(url, merged, CancelToken(), _SearchLog())
         return listing.items[0] if listing.items else None
 
@@ -237,6 +240,7 @@ class SourceGatewayAdapter:
         self,
         url: str,
         *,
+        feed_id: str,
         options: Mapping[str, Any],
         language: str | None,
         cancel: CancelToken,
@@ -244,7 +248,7 @@ class SourceGatewayAdapter:
     ) -> SourceListing:
         """The first ``limit`` entries of a yt-dlp Source; options merged like the worker's."""
         engine_options_for = _load("copycast.adapters.engine.options", "engine_options_for")
-        merged = engine_options_for(self._settings, options, language=language)
+        merged = engine_options_for(self._settings, options, feed_id=feed_id, language=language)
         return self._engine.list_source(
             url, merged, cancel, _SearchLog("copycast.light_refresh"), limit=limit
         )

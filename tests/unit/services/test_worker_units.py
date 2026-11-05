@@ -122,9 +122,9 @@ def test_to_job_progress_maps_finished_to_hundred_percent() -> None:
 
 def test_engine_options_for_layers_config_and_feed() -> None:
     settings = get_settings(engine={"options": {"ratelimit": 100, "subtitleslangs": ["fr"]}})
-    merged = engine_options_for(settings, {"ratelimit": 5}, language="de-CH")
+    merged = engine_options_for(settings, {"ratelimit": 5}, feed_id="f", language="de-CH")
     assert merged["ratelimit"] == 5 and merged["subtitleslangs"] == ["fr"]
-    defaulted = engine_options_for(get_settings(), None, language="de-CH")
+    defaulted = engine_options_for(get_settings(), None, feed_id="f", language="de-CH")
     assert defaulted["subtitleslangs"] == ["de-ch", "de", "en", "-live_chat"]
 
 
