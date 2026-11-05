@@ -19,6 +19,7 @@ release adds stays refused until it is listed here.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, Final, Literal, cast
@@ -103,6 +104,21 @@ def _texts(max_items: int, max_len: int) -> ValueCheck:
     return check
 
 
+_LANGUAGE_PATTERN: Final = re.compile(r"-?(?:all|[A-Za-z0-9]{1,8}(?:[-_][A-Za-z0-9]{1,8})*)")
+
+
+def _subtitle_languages(value: Any) -> bool:
+    """Language codes, ``all`` and ``-`` exclusions (``-live_chat``); no regex syntax.
+
+    yt-dlp compiles each entry as a regular expression and matches it against every
+    subtitle language the Source offers, holding the GIL: a backtracking pattern would
+    stall the whole worker, an invalid one fails every fetch of the Mirror.
+    """
+    return _texts(32, 64)(value) and all(
+        _LANGUAGE_PATTERN.fullmatch(entry) for entry in cast(list[str], value)
+    )
+
+
 def _extractor_args(value: Any) -> bool:
     """Only the outer shape; entries are checked one by one against FEED_EXTRACTOR_ARGS."""
     return isinstance(value, Mapping)
@@ -135,11 +151,12 @@ FEED_OPTIONS: Final[Mapping[str, ValueCheck]] = MappingProxyType(
         "socket_timeout": _seconds(600),
         "concurrent_fragment_downloads": _count(1, 16),
         "skip_unavailable_fragments": _flag,
-        # Subtitle choice: language and format codes, never a file name. writesubtitles
-        # is engine-owned; writeautomaticsub and subtitlesformat are overlaid by
-        # BASE_OPTIONS on a fetch.
+        # Subtitle choice: language and format codes, never a file name nor a pattern
+        # (yt-dlp compiles subtitleslangs entries as regexes). writesubtitles is
+        # engine-owned; writeautomaticsub and subtitlesformat are overlaid by BASE_OPTIONS
+        # on a fetch.
         "writeautomaticsub": _flag,
-        "subtitleslangs": _texts(32, 64),
+        "subtitleslangs": _subtitle_languages,
         "subtitlesformat": _text(64),
         # Geo bypass fakes an X-Forwarded-For header on requests to the same hosts; it
         # routes nothing elsewhere (``proxy`` and ``geo_verification_proxy`` do).
@@ -242,6 +259,17 @@ def _sanitize_extractor_args(
     return kept, refused
 
 
+def _merge_extractor_args(below: Mapping[str, Any], above: Mapping[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = dict(below)
+    for extractor, args in above.items():
+        under = merged.get(extractor)
+        if isinstance(under, Mapping) and isinstance(args, Mapping):
+            merged[extractor] = {**cast(Mapping[str, Any], under), **cast(Mapping[str, Any], args)}
+        else:
+            merged[extractor] = args
+    return merged
+
+
 class EngineOptions:
     """Validation and layering of raw yt-dlp options."""
 
@@ -293,9 +321,27 @@ class EngineOptions:
         feed_options: Mapping[str, Any] | None,
         base_options: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Layer ``[engine.options]`` -> ``feeds.engine_options`` -> ``BASE_OPTIONS``; last wins."""
+        """Layer ``[engine.options]`` -> ``feeds.engine_options`` -> ``BASE_OPTIONS``; last wins.
+
+        ``extractor_args`` merge per extractor, then per argument: a Mirror that sets
+        ``youtube.player_client`` keeps the operator's ``youtube.po_token`` and
+        ``youtubepot-*`` providers, which only ``[engine.options]`` may set. A later
+        layer still replaces an argument it names.
+        """
         merged: dict[str, Any] = {}
         for layer in (global_options, feed_options, base_options):
-            if layer:
-                merged.update(layer)
+            if not layer:
+                continue
+            for key, value in layer.items():
+                below = merged.get(key)
+                if (
+                    key == "extractor_args"
+                    and isinstance(below, Mapping)
+                    and isinstance(value, Mapping)
+                ):
+                    merged[key] = _merge_extractor_args(
+                        cast(Mapping[str, Any], below), cast(Mapping[str, Any], value)
+                    )
+                else:
+                    merged[key] = value
         return merged

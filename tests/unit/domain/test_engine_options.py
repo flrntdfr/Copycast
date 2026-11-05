@@ -225,6 +225,10 @@ def test_non_string_keys_are_refused() -> None:
         ("subtitleslangs", ["de", 1]),
         ("subtitleslangs", ["x" * 65]),
         ("subtitleslangs", ["de"] * 33),
+        ("subtitleslangs", ["en.*"]),
+        ("subtitleslangs", ["de", "("]),
+        ("subtitleslangs", ["de\n"]),
+        ("subtitleslangs", ["-"]),
         ("subtitlesformat", ""),
         ("format_sort", {"abr": 1}),
         ("extractor_args", ["youtube"]),
@@ -348,3 +352,44 @@ def test_merge_order_config_then_feed_then_base_last() -> None:
 def test_merge_tolerates_missing_layers() -> None:
     assert EngineOptions.merge(None, None) == {}
     assert EngineOptions.merge({"a": 1}, None, None) == {"a": 1}
+
+
+def test_subtitle_languages_take_codes_all_and_exclusions() -> None:
+    langs = ["all", "-live_chat", "de", "zh-Hans", "pt-BR", "-en-US", "sr_Latn"]
+    assert EngineOptions.validate_feed({"subtitleslangs": langs}) == {"subtitleslangs": langs}
+
+
+def test_a_backtracking_subtitle_pattern_is_refused_without_running_it() -> None:
+    """yt-dlp would compile the entry and match it against every caption language (ReDoS)."""
+    evil = "(.*)*" * 10 + "!"
+    with pytest.raises(EngineOptionRejected) as excinfo:
+        EngineOptions.validate_feed({"subtitleslangs": ["de", evil]})
+    assert excinfo.value.keys == ["subtitleslangs"]
+    kept, refused = EngineOptions.sanitize_feed({"subtitleslangs": [evil], "age_limit": 1})
+    assert kept == {"age_limit": 1} and refused == ["subtitleslangs"]
+
+
+def test_merge_layers_extractor_args_per_extractor_then_per_argument() -> None:
+    """A Mirror's player_client keeps the operator's PO token and provider settings."""
+    merged = EngineOptions.merge(
+        {
+            "extractor_args": {
+                "youtube": {"po_token": ["web.gvs+abc"], "player_client": ["web"]},
+                "youtubepot-bgutilhttp": {"base_url": ["http://pot:4416"]},
+            }
+        },
+        {"extractor_args": {"youtube": {"player_client": ["ios"]}, "youtubetab": {"skip": ["x"]}}},
+    )
+    assert merged == {
+        "extractor_args": {
+            "youtube": {"po_token": ["web.gvs+abc"], "player_client": ["ios"]},
+            "youtubepot-bgutilhttp": {"base_url": ["http://pot:4416"]},
+            "youtubetab": {"skip": ["x"]},
+        }
+    }
+
+
+def test_merge_copies_instead_of_mutating_the_layers() -> None:
+    operator = {"extractor_args": {"youtube": {"po_token": ["t"]}}}
+    EngineOptions.merge(operator, {"extractor_args": {"youtube": {"lang": ["fr"]}}})
+    assert operator == {"extractor_args": {"youtube": {"po_token": ["t"]}}}

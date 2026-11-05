@@ -92,6 +92,30 @@ def test_allowlisted_feed_options_reach_the_fetch_and_listing_params(tmp_path: P
     assert listing["extractor_args"]["youtube"] == {"player_client": ["ios"], "lang": ["fr"]}
 
 
+def test_operator_po_token_survives_a_mirrors_own_extractor_args(tmp_path: Path) -> None:
+    """[engine.options] is the only place for po_token and youtubepot-*: a Mirror adds to it."""
+    settings = get_settings(
+        engine={
+            "options": {
+                "extractor_args": {
+                    "youtube": {"po_token": ["web.gvs+abc"]},
+                    "youtubepot-bgutilhttp": {"base_url": ["http://pot:4416"]},
+                }
+            }
+        }
+    )
+    feed = {"extractor_args": {"youtube": {"player_client": ["ios"]}}}
+    options = engine_options_for(settings, feed, feed_id="f1", language="fr")
+    params = fetch_params(
+        options, kind=FetchKind.ytdlp, item_id="i", home_dir=tmp_path, temp_dir=tmp_path
+    )
+    assert params["extractor_args"] == {
+        "youtube": {"po_token": ["web.gvs+abc"], "player_client": ["ios"], "lang": ["fr"]},
+        "youtubepot-bgutilhttp": {"base_url": ["http://pot:4416"]},
+    }
+    assert listing_params(options)["extractor_args"]["youtube"]["po_token"] == ["web.gvs+abc"]
+
+
 def test_stored_feed_options_drop_refused_keys_with_a_warning(tmp_path: Path) -> None:
     """A row written before 2.3.0 keeps its keys in Postgres; none of them reaches yt-dlp."""
     stored = {

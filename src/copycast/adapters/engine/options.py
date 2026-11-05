@@ -159,8 +159,10 @@ def engine_options_for(
     """config ``[engine.options]`` -> Feed options, with the languages defaulted.
 
     The one place a Feed's stored options join an engine call: they pass
-    :func:`stored_feed_options` first. ``BASE_OPTIONS`` are overlaid by the engine
-    itself; a Feed's own ``subtitleslangs`` wins over the ``[feed language, en]``
+    :func:`stored_feed_options` first, then add to the config's ``extractor_args``
+    argument by argument (an operator's ``po_token`` survives a Mirror's
+    ``player_client``). ``BASE_OPTIONS`` are overlaid by the engine itself; a Feed's own
+    ``subtitleslangs`` wins over the ``[feed language, en]``
     default, and its ``language`` becomes the preferred YouTube metadata language
     unless the Feed's options name one (the engine falls back to ``[engine]
     language``). Shared by the worker's jobs, the light Refresh's shallow listing and

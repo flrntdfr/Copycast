@@ -216,6 +216,28 @@ async def test_descriptor_carries_intent_not_telemetry(uow_factory: UnitOfWorkFa
     assert round_trip == descriptor
 
 
+async def test_descriptor_drops_refused_engine_options_of_an_old_row(
+    uow_factory: UnitOfWorkFactory,
+) -> None:
+    """A row written before 2.3.0 keeps its credentials in Postgres; feed.json drops them."""
+    stored = {
+        "videopassword": "hunter2",
+        "netrc_cmd": "pass show yt",
+        "extractor_args": {"youtube": {"lang": ["de"], "visitor_data": ["secret"]}},
+        "ratelimit": 1,
+    }
+    async with uow_factory() as uow:
+        feed = await uow.feeds.add(mirror_row(engine_options=stored))
+        descriptor = await build_descriptor(uow.session, feed.id)
+    assert descriptor is not None
+    assert descriptor.policy.engine_options == {
+        "ratelimit": 1,
+        "extractor_args": {"youtube": {"lang": ["de"]}},
+    }
+    body = descriptor.to_json()
+    assert "hunter2" not in body and "pass show" not in body and "secret" not in body
+
+
 async def test_session_lock_and_xact_lock(uow_factory: UnitOfWorkFactory) -> None:
     engine = uow_factory.sessionmaker.kw["bind"]
     async with SessionLock(engine, WORKER_LOCK) as first:
