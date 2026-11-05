@@ -9,6 +9,7 @@ environment-only and use the flat ``COPYCAST_<NAME>`` form.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import uuid
 from pathlib import Path
@@ -181,6 +182,19 @@ def config_path() -> Path:
     return Path(os.environ.get(CONFIG_ENV) or DEFAULT_CONFIG_PATH)
 
 
+TOML_REFUSED_KEYS = frozenset({"forwarded_allow_ips", "COPYCAST_FORWARDED_ALLOW_IPS"})
+"""Keys the TOML file never sets: whom to believe about a client's address belongs to the
+deployment (compose, Kubernetes), next to the proxy it names."""
+
+
+class EnvOnlyFilteredTomlSource(TomlConfigSettingsSource):
+    """The TOML file without :data:`TOML_REFUSED_KEYS`."""
+
+    def __call__(self) -> dict[str, Any]:
+        data = super().__call__()
+        return {key: value for key, value in data.items() if key not in TOML_REFUSED_KEYS}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="COPYCAST__",
@@ -201,6 +215,12 @@ class Settings(BaseSettings):
 
     # Environment-only knobs (flat COPYCAST_<NAME>, never read from the TOML file).
     bind: str = Field(default="0.0.0.0", validation_alias="COPYCAST_BIND")
+    forwarded_allow_ips: str | None = Field(
+        default=None, validation_alias="COPYCAST_FORWARDED_ALLOW_IPS"
+    )
+    """The proxies whose ``X-Forwarded-For``/``-Proto`` uvicorn believes: comma-separated
+    addresses or CIDR networks, or ``*``. Unset keeps uvicorn's own default (its
+    ``FORWARDED_ALLOW_IPS`` environment variable, else ``127.0.0.1``)."""
     port: int = Field(default=8080, ge=1, le=65535, validation_alias="COPYCAST_PORT")
     worker_port: int = Field(default=8081, ge=1, le=65535, validation_alias="COPYCAST_WORKER_PORT")
     web_dir: Path | None = Field(default=None, validation_alias="COPYCAST_WEB_DIR")
@@ -222,7 +242,7 @@ class Settings(BaseSettings):
         return (
             init_settings,
             env_settings,
-            TomlConfigSettingsSource(settings_cls, toml_file=config_path()),
+            EnvOnlyFilteredTomlSource(settings_cls, toml_file=config_path()),
         )
 
     @field_validator("base_url")
@@ -251,6 +271,29 @@ class Settings(BaseSettings):
                 f"got {parts.scheme or value!r}"
             )
         return value
+
+    @field_validator("forwarded_allow_ips")
+    @classmethod
+    def _check_forwarded_allow_ips(cls, value: str | None) -> str | None:
+        """Every entry an address, a network or ``*``: uvicorn would silently take a typo
+        (``10.0.0.0/33``) for a literal host name that never matches."""
+        if value is None or not value.strip():
+            return None
+        entries = [entry.strip() for entry in value.split(",") if entry.strip()]
+        for entry in entries:
+            if entry == "*":
+                continue
+            try:
+                if "/" in entry:
+                    ipaddress.ip_network(entry, strict=False)
+                else:
+                    ipaddress.ip_address(entry)
+            except ValueError:
+                raise ValueError(
+                    "COPYCAST_FORWARDED_ALLOW_IPS must list IP addresses or CIDR networks "
+                    f"separated by commas, or *, got {entry!r}"
+                ) from None
+        return ",".join(entries)
 
     @field_validator("log_level")
     @classmethod

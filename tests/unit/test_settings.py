@@ -202,3 +202,46 @@ def test_auth_settings_are_validated(
 ) -> None:
     with pytest.raises(SettingsError, match=message):
         get_settings(storage={"scratch_dir": tmp_path}, **overrides)
+
+
+def test_forwarded_allow_ips_is_unset_by_default(tmp_path: Path) -> None:
+    assert get_settings(storage={"scratch_dir": tmp_path}).forwarded_allow_ips is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("10.0.0.5", "10.0.0.5"),
+        (" 172.16.0.0/12 , 10.0.0.0/8,::1 ", "172.16.0.0/12,10.0.0.0/8,::1"),
+        ("fd00::/8", "fd00::/8"),
+        ("*", "*"),
+        ("  ", None),
+    ],
+)
+def test_forwarded_allow_ips_from_the_environment(
+    raw: str, expected: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COPYCAST_FORWARDED_ALLOW_IPS", raw)
+    assert get_settings(storage={"scratch_dir": tmp_path}).forwarded_allow_ips == expected
+
+
+@pytest.mark.parametrize("raw", ["10.0.0.0/33", "traefik", "10.0.0.1,proxy.local", "1.2.3"])
+def test_a_bad_forwarded_allow_ips_is_one_settings_error(
+    raw: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COPYCAST_FORWARDED_ALLOW_IPS", raw)
+    with pytest.raises(SettingsError, match="COPYCAST_FORWARDED_ALLOW_IPS"):
+        get_settings(storage={"scratch_dir": tmp_path})
+
+
+def test_forwarded_allow_ips_is_never_read_from_the_toml_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "copycast.toml"
+    config.write_text(
+        'forwarded_allow_ips = "*"\nCOPYCAST_FORWARDED_ALLOW_IPS = "*"\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("COPYCAST_CONFIG", str(config))
+    assert get_settings(storage={"scratch_dir": tmp_path}).forwarded_allow_ips is None
+    monkeypatch.setenv("COPYCAST_FORWARDED_ALLOW_IPS", "10.0.0.0/8")
+    assert get_settings(storage={"scratch_dir": tmp_path}).forwarded_allow_ips == "10.0.0.0/8"

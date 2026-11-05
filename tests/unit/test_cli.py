@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
@@ -54,3 +55,29 @@ def test_every_plan_command_is_registered() -> None:
     }
     result = CliRunner().invoke(main, ["rebuild", "--help"])
     assert result.exit_code == 0 and "--yes" in result.output
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"), [(None, None), ("172.18.0.0/16,10.0.0.2", "172.18.0.0/16,10.0.0.2")]
+)
+def test_api_trusts_forwarded_headers_only_from_the_configured_proxies(
+    env: str | None, expected: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import uvicorn
+
+    import copycast.cli as cli
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setenv("COPYCAST__STORAGE__SCRATCH_DIR", str(tmp_path))
+    if env is None:
+        monkeypatch.delenv("COPYCAST_FORWARDED_ALLOW_IPS", raising=False)
+    else:
+        monkeypatch.setenv("COPYCAST_FORWARDED_ALLOW_IPS", env)
+    monkeypatch.setattr(cli, "configure_logging", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "_api_preflight", lambda settings: None)
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: calls.append(kwargs))
+    result = CliRunner().invoke(main, ["api"])
+    assert result.exit_code == 0, result.output
+    (kwargs,) = calls
+    assert kwargs["proxy_headers"] is True
+    assert kwargs["forwarded_allow_ips"] == expected
