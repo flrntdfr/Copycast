@@ -29,3 +29,15 @@ url = "redis://localhost:6379/0"
 # [auth]                     # prefer COPYCAST__AUTH__PASSWORD in the environment (docs/adr/0011)
 # username = "copycast"
 # password = ""              # set (8+ characters) to switch authentication on
+
+# [security]                 # the fetch guard (docs/adr/0023): server-side fetches refuse loopback,
+#                            # private, link-local, CGNAT and other non-public addresses (and
+#                            # redirects to them); list the exceptions here, e.g. a LAN Source
+# allow_private_hosts = []   # hostnames (exact; may then resolve anywhere) or CIDRs (a bare address
+#                            # is one host), e.g. ["nas.lan", "192.168.1.0/24"];
+#                            # or COPYCAST__SECURITY__ALLOW_PRIVATE_HOSTS='["nas.lan"]'
+
+# COPYCAST_FORWARDED_ALLOW_IPS (trusted proxies) is environment-only: written here it is
+# ignored, without an error. COPYCAST_ALLOWED_HOSTS (extra host names browsers and clients
+# may use) belongs in the environment too, though this file can set it like the other flat
+# knobs. See docs/operations.md, "Environment-only variables".

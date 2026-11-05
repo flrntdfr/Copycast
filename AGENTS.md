@@ -50,8 +50,8 @@ A Catalog item with archived media; its Mirror Feed entry is captured once at ar
 _Avoid_: Item (say Catalog item when it may not be archived), entry, track, video
 
 **Artwork**:
-The cover image of a Feed and the images of its Episodes, archived alongside the audio and served from the Feed like any other asset.
-_Avoid_: Thumbnail, image
+The cover image of a Feed and the images of its Episodes, archived alongside the audio. Published in every feed and in `AssetRead.url` at one public URL, `/art/{asset_id}-{mac}.{ext}`, whose MAC under the instance secret (32 random bytes in Postgres) is its only credential, in both auth modes (ADR 0022); its bare path under the Feed takes the Feed credentials like any other asset.
+_Avoid_: Thumbnail, image, artwork key, signed URL
 
 **Catalog**:
 Everything a Feed's detail page shows: every item the Source advertises (whether archived or not) plus anything archived that the Source has since dropped. Each Catalog item shows one state: Listed, Delisted, Available, Queued, Archiving or Failed.
@@ -198,8 +198,16 @@ A Feed's files: its prefix of the Object store (`feeds/{id}/`: media, Artwork, a
 _Avoid_: Storage, folder, volume, data directory; Bucket for a Feed with no Source (that is a Local feed); S3 bucket (say Object store)
 
 **Scope**:
-What an API key may do over MCP: `read` (read-only tools), `write` (everything but deletions) or `full` (everything). Every tool checks it before running.
+What an API key may do over MCP: `read` (read-only tools), `write` (everything but deletions and a Mirror's `engine_options`) or `full` (everything). Every tool checks it before running.
 _Avoid_: Role, permission, level, grant
+
+**Fetch guard**:
+The check every Source-driven server-side fetch passes, Copycast's httpx client and the Engine's own connections alike: the host is resolved once, an address that is loopback, private, link-local or otherwise not public is refused (`422 destination-not-allowed`, its class only in the log), and the connection goes to the address that was checked. `[security] allow_private_hosts` lists the operator's exceptions; the Object store and the Feed cache never pass through it (ADR 0023).
+_Avoid_: SSRF filter, firewall, allowlist (for the guard itself; its exceptions are `allow_private_hosts`)
+
+**Cross-site request**:
+A request with an unsafe method that a browser sends on behalf of another site (`Sec-Fetch-Site` other than `same-origin`/`none`, or a foreign `Origin`), refused with `403 cross-site-request` whether authentication is on or off. Any request but `/healthz` addressed to a host name that is not Copycast's is refused alike, as `403 unknown-host` (DNS rebinding, which over plain http sends neither header; `COPYCAST_ALLOWED_HOSTS`). Clients that send neither header are never refused as cross-site (ADR 0025).
+_Avoid_: CSRF token (there is none), CORS (Copycast sends no CORS headers), origin check
 
 ## Conventions for agents
 
@@ -210,12 +218,16 @@ Python 3.13, uv lockfile, FastAPI, Pydantic v2, pydantic-settings (`config/copyc
 ### Repository map
 
 ```
-src/copycast/domain/         pure rules: enums, ids, urls, listing, ordinals, selection, engine_options
+src/copycast/domain/         pure rules: enums, ids, urls, listing, ordinals, selection, engine_options (the
+                             per-Mirror allowlist), credentials (feed pairs, media keys, artwork MACs),
+                             destinations (which addresses the fetch guard refuses)
 src/copycast/application/    models (the API/MCP contract), capabilities registry, ports (Engine), events, services/
-src/copycast/adapters/       api (FastAPI; objects.py proxies Object store objects, cache.py the Feed cache), mcp
-                             (fastmcp), db (SQLAlchemy, migrations), storage (objects: the Object store over obstore;
-                             layout: its keys; scratch; descriptor; rebuild; push), engine (the only importer of
-                             yt_dlp), sources (RSS, discovery, probe, iTunes), feeds (RSS rendering), assets
+src/copycast/adapters/       api (FastAPI; objects.py proxies Object store objects, cache.py the Feed cache,
+                             security.py the cross-site guard and security headers), mcp (fastmcp), db (SQLAlchemy,
+                             migrations; repositories/secrets.py the instance secrets), storage (objects: the Object
+                             store over obstore; layout: its keys; scratch; descriptor; rebuild; push), engine (the
+                             only importer of yt_dlp; netguard.py guards its connections), sources (RSS, discovery,
+                             probe, iTunes; guard.py the fetch guard), feeds (RSS rendering), assets
 src/copycast/worker/         runner, scheduler, progress, joblog, jobs/{refresh,archive_item,expand_request,prune,rebuild}
 src/copycast/{app,cli,settings,logging,version}.py   composition root, click CLI, configuration
 web/                         Vite app; web/openapi.json is committed and generated into src/api/schema.d.ts
@@ -265,6 +277,9 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 - Postgres tests are marked `integration` and get a per-test database cloned from a migrated template (`db` fixture); never share state between tests. Set `COPYCAST_TEST_DATABASE_URL` to skip testcontainers.
 - Every test gets an Object store of its own (`store`, `layout` fixtures): a `memory://` store by default. `COPYCAST_TEST_S3_URL` (with `_ENDPOINT`, `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY`) runs the whole suite against a real S3 bucket, a prefix per test; the `s3` marker runs SeaweedFS in a testcontainer. Assert against the Object store, never a local path; only Scratch is a directory.
 - HTTP Sources come from `tests/support/origin.py` serving `tests/fixtures` (Range, ETag, scripted 304/5xx); never reach the internet in tests.
+- The fetch guard is on in every test. An autouse fixture resolves names through `tests/support/dns.py` (address literals and `localhost` resolve, every other name does not; tests marked `network` keep the real resolver), and the suite's policy exempts only loopback (`TEST_ALLOW_PRIVATE_HOSTS` in `tests/conftest.py`), where `Origin` runs. A test that builds its own `Settings` passes `security={"allow_private_hosts": TEST_ALLOW_PRIVATE_HOSTS}`; a test that needs a name to resolve passes its own resolver.
+- The `s3` testcontainer runs the real `deploy/compose/seaweedfs/entrypoint.sh` (keys enforced, the bucket made by its bootstrap) and checks which sockets it leaves beyond loopback; `tests/unit/test_compose.py` pins its bind flags and the `objects` network layout.
+- Playwright specs import `test` and `expect` from `web/e2e/fixtures.ts`, never from `@playwright/test`: it fails any test whose pages met a Content-Security-Policy violation. Editing the inline theme script of `web/index.html` means updating `SPA_SCRIPT_HASHES` in `adapters/api/security.py` (`tests/unit/api/test_security.py` fails until it matches), and the web app never uses eval (zod runs jitless, `web/src/lib/zod.ts`).
 - Rendered feeds are compared canonically (`tests/support/xml.py`) against golden files; regenerate with `make golden-regen` and review the diff.
 - Keep coverage above the gates (85 % overall, 95 % for `copycast.domain`).
 
@@ -292,3 +307,8 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0019](docs/adr/0019-object-store-scratch-and-a-shared-feed-cache.md) | Every byte lives in an S3 Object store; the worker transcodes in Scratch; first plays hold the line on a reserved slot; feeds are cached in a shared Valkey |
 | [0020](docs/adr/0020-media-keys-in-enclosure-urls.md) | While auth is on, enclosures and non-artwork assets are published under a media key derived from the feed's password |
 | [0021](docs/adr/0021-every-feed-has-a-bucket-and-locks.md) | Every Feed has a bucket; the Feed with no Source is a Local feed; the Lock (ex Archive flag) alone protects an Episode, and the Archive policy Locks what it archives |
+| [0022](docs/adr/0022-public-artwork-under-opaque-tokens.md) | Public Artwork under opaque `/art/` tokens keyed with an instance secret; one 401 for every refusal under `/feeds`; every feed carries directory block tags |
+| [0023](docs/adr/0023-fetch-guard-on-every-source-driven-fetch.md) | The fetch guard: no Source-driven fetch, the Engine's connections included, reaches an internal address unless `allow_private_hosts` exempts it |
+| [0024](docs/adr/0024-per-mirror-engine-options-are-an-allowlist.md) | A Mirror's `engine_options` are an allowlist; setting them over MCP needs a `full` key |
+| [0025](docs/adr/0025-the-browser-boundary.md) | Cross-site writes and foreign Host names are refused; security headers (CSP sandbox on `/feeds` and `/art`); trusted forwarded headers; no secret in a log line |
+| [0026](docs/adr/0026-seaweedfs-internal-apis-on-loopback-and-the-objects-network.md) | SeaweedFS keeps master, volume and filer on loopback; its gateway is reachable only on the internal `objects` network |

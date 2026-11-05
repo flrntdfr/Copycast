@@ -198,7 +198,10 @@ def test_mirror_feed_links_point_home(
     artwork = channel.find(f"{{{ITUNES_NS}}}image")
     assert artwork is not None, "channel artwork missing from the rendered feed"
     href = artwork.get("href", "")
-    assert href.startswith(f"{stack.base_url}/feeds/{mirror['id']}/assets/"), href
+    # Public Artwork under its opaque token: neither the feed id nor an item id names it.
+    assert href.startswith(f"{stack.base_url}/art/"), href
+    assert mirror["id"] not in href, href
+    assert channel.findtext(f"{{{ITUNES_NS}}}block") == "Yes"  # directories stay out
     served = http.get(href[len(stack.base_url) :])
     assert served.status_code == 200, served.text
     assert served.headers["content-type"].startswith("image/")

@@ -386,3 +386,34 @@ async def test_storage_summary_tool(
     assert per_feed[mirror["id"]]["file_count"] == listing["count"] > 0
     assert per_feed[mirror["id"]]["total_bytes"] == listing["total_bytes"]
     assert summary["file_count"] == sum(feed["file_count"] for feed in summary["feeds"])
+
+
+async def test_items_publish_their_artwork_under_its_public_art_url(
+    mcp_client: Client[Any], source: Source, runner: Runner, container: Container
+) -> None:
+    """MCP returns what the API does: an artwork asset's url is its /art/ token, other assets
+    stay under the feed (an agent can hand the image to anything that fetches it bare)."""
+    from copycast.domain.credentials import artwork_mac
+
+    url = source.write_rss("mcp-art", items=[1], assets=True)
+    mirror = structured(
+        await mcp_client.call_tool(
+            "create_mirror", {"mirror": {"source_url": url, "backfill": {"mode": "all"}}}
+        )
+    )
+    await runner.run_until_idle()
+    page = structured(await mcp_client.call_tool("list_items", {"feed_id": mirror["id"]}))
+    (item,) = page["items"]
+    detail = structured(
+        await mcp_client.call_tool("get_item", {"feed_id": mirror["id"], "item_id": item["id"]})
+    )
+    secret = await container.artwork_secret()
+    for read in (item, detail):
+        (art,) = [a for a in read["assets"] if a["kind"] == "artwork"]
+        assert (
+            art["url"] == f"http://testserver/art/{art['id']}-{artwork_mac(secret, art['id'])}.jpg"
+        )
+        others = [a for a in read["assets"] if a["kind"] != "artwork" and a["url"]]
+        assert others and all(
+            a["url"].startswith(f"http://testserver/feeds/{mirror['id']}/assets/") for a in others
+        )

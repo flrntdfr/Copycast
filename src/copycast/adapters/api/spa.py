@@ -1,8 +1,9 @@
 """The web UI: hashed assets under ``/assets`` (immutable) and ``index.html`` for the rest.
 
 Mounted only when ``COPYCAST_WEB_DIR`` is set. The catch-all never shadows
-``/api``, ``/feeds``, ``/mcp``, ``/healthz`` or ``/assets``: unknown paths under
-those prefixes answer 404 instead of the UI shell.
+``/api``, ``/feeds``, ``/art``, ``/uploads``, ``/mcp``, ``/healthz`` or ``/assets``:
+unknown paths under those prefixes answer 404 instead of the UI shell (whose
+security headers ``/feeds`` and ``/art`` do not get).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from starlette.staticfiles import StaticFiles
 
 from copycast.adapters.api.problems import problem_response
 
-RESERVED_PREFIXES = ("api", "feeds", "mcp", "healthz", "assets")
+RESERVED_PREFIXES = ("api", "feeds", "art", "uploads", "mcp", "healthz", "assets")
 IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
 NO_CACHE = "no-cache"
 

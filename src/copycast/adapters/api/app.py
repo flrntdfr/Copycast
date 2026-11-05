@@ -38,15 +38,18 @@ from copycast.adapters.api.problems import install_exception_handlers, relabel_p
 from copycast.adapters.api.routes import create_api_router
 from copycast.adapters.api.routes import public as public_routes
 from copycast.adapters.api.routes import uploads as upload_routes
+from copycast.adapters.api.security import CrossSiteGuardMiddleware, SecurityHeadersMiddleware
 from copycast.adapters.api.spa import mount_spa
 from copycast.adapters.api.watchdog import LoopWatchdog
 from copycast.adapters.mcp.server import create_mcp
+from copycast.domain.urls import ART_PATH_PREFIX
 from copycast.logging import get_logger
 from copycast.settings import Settings, SettingsError
 from copycast.version import APP_VERSION
 
 API_PREFIX = "/api"
 FEEDS_PREFIX = "/feeds"
+ART_PREFIX = ART_PATH_PREFIX
 UPLOADS_PREFIX = "/uploads"
 HEALTH_PREFIX = "/healthz"
 MCP_PREFIX = "/mcp"
@@ -156,6 +159,8 @@ def _lifespan(settings: Settings, container: ApiContainer, mcp_app: Any) -> Any:
             log.error("api.startup_failed", error=str(exc))
             raise
         await container.services.ensure_default_bucket()
+        # The artwork tokens' key, read (or minted) once: /art/ never waits on Postgres for it.
+        app.state.feed_cache.set_namespace(await container.artwork_secret())
         _ = container.sources.cache  # the per-process probe cache
         hub = EventHub(psycopg_conninfo(settings.database_url))
         app.state.event_hub = hub
@@ -205,8 +210,16 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
     install_exception_handlers(app)
     # Innermost: runs right before routing, inside the request-id and gzip layers.
     app.add_middleware(OperatorAuthMiddleware, auth=settings.auth)
+    # Ahead of authentication and every route, whether auth is on or off.
+    app.add_middleware(
+        CrossSiteGuardMiddleware,
+        base_url=settings.base_url,
+        allowed_hosts=settings.allowed_host_names,
+    )
     app.add_middleware(NoStoreJsonMiddleware)
     app.add_middleware(NoRobotsMiddleware)
+    # Outside the guard and auth, so their 403 and 401 carry the headers too.
+    app.add_middleware(SecurityHeadersMiddleware, base_url=settings.base_url)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
         GZipMiddleware, minimum_size=GZIP_MINIMUM_SIZE, exclude_content_types=GZIP_EXCLUDED_TYPES
@@ -217,6 +230,7 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
     app.include_router(create_api_router(), prefix=API_PREFIX)
     app.include_router(public_routes.open_router, prefix=FEEDS_PREFIX)
     app.include_router(public_routes.router, prefix=FEEDS_PREFIX)
+    app.include_router(public_routes.art_router, prefix=ART_PREFIX)
     app.include_router(upload_routes.open_router, prefix=UPLOADS_PREFIX)
     app.add_api_route(ROBOTS_PATH, robots, methods=["GET"], include_in_schema=False)
     app.include_router(create_health_router(), prefix=HEALTH_PREFIX)
@@ -243,6 +257,7 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
 
 __all__ = [
     "API_PREFIX",
+    "ART_PREFIX",
     "FEEDS_PREFIX",
     "GZIP_EXCLUDED_TYPES",
     "HEALTH_PREFIX",

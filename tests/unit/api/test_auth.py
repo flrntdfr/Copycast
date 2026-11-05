@@ -66,10 +66,32 @@ def test_is_operator() -> None:
         ("/mcp/", False),
         ("/mcp/.well-known/x", False),
         ("/mcpx", True),
+        ("/art/0123456789abcdef-abcdefghijklmnopqrstuvwxyz.jpg", False),
+        ("/art/anything", False),
+        ("/art", True),
+        ("/artwork", True),
+        ("/arts/x", True),
     ],
 )
 def test_is_gated(path: str, gated: bool) -> None:
     assert auth.is_gated(path) is gated
+
+
+@pytest.mark.parametrize(
+    ("path", "public"),
+    [
+        ("/art/0123456789abcdef-abcdefghijklmnopqrstuvwxyz.jpg", True),
+        ("/feeds/copycast-artwork.png", True),
+        # The old artwork path is computable from a Source URL: it takes the feed's pair now.
+        ("/feeds/abc/assets/feed.artwork.jpg", False),
+        ("/feeds/abc/assets/0123456789abcdef.artwork.jpg", False),
+        ("/feeds/abc/k/key/assets/feed.artwork.jpg", False),
+        ("/art", False),
+        ("/artwork/x", False),
+    ],
+)
+def test_is_public_artwork(path: str, public: bool) -> None:
+    assert auth.is_public_artwork(path) is public
 
 
 def _app(settings: AuthSettings) -> Starlette:

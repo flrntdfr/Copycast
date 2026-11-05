@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from copycast.adapters.feeds.urls import (
+    artwork_url,
     asset_url,
     feed_object_url,
     feed_url,
     media_url,
     with_credentials,
 )
+from copycast.domain.credentials import artwork_mac
 from tests.support.paths import ASSET_URL, FEED_URL, MEDIA_URL
 
 BASE = "http://testserver"
@@ -69,3 +71,12 @@ def test_feed_object_url_quotes_each_segment_of_the_relative_path() -> None:
     assert feed_object_url(BASE, "a b", "assets/we ird.jpg") == (
         f"{BASE}/api/feeds/a%20b/objects/assets/we%20ird.jpg"
     )
+
+
+def test_artwork_url_is_opaque_and_the_same_whatever_the_feed() -> None:
+    """``/art/{asset_id}-{mac}.{ext}``: no feed id, no item id, nothing to compute it from."""
+    secret = b"\x03" * 32
+    url = artwork_url(BASE + "/", "0123456789abcdef", "assets/i1.artwork.JPG", secret=secret)
+    assert url == f"{BASE}/art/0123456789abcdef-{artwork_mac(secret, '0123456789abcdef')}.jpg"
+    assert "/feeds/" not in url and "i1" not in url
+    assert artwork_url(BASE, "0123456789abcdef", "x.png", secret=b"\x04" * 32) != url

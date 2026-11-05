@@ -23,6 +23,7 @@ from copycast.adapters.db.repositories import (
     AssetRepository,
     CatalogRepository,
     FeedRepository,
+    InstanceSecretRepository,
     JobRepository,
     RequestRepository,
     TelemetryRepository,
@@ -77,6 +78,7 @@ class UnitOfWork:
         self.jobs = JobRepository(session)
         self.telemetry = TelemetryRepository(session)
         self.api_keys = ApiKeyRepository(session)
+        self.instance_secrets = InstanceSecretRepository(session)
 
     # ------------------------------------------------------------------ hooks
 

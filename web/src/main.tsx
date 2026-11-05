@@ -1,3 +1,6 @@
+// First: configures zod before any schema parses (the CSP forbids its eval probe).
+import "./lib/zod";
+
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 

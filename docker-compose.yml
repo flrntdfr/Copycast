@@ -6,6 +6,13 @@
 #   direct     the api publishes port 8080 on this host (only for a trusted network)
 # The worker, Postgres, SeaweedFS (the Object store) and Valkey (the Feed cache) run under both.
 #
+# SeaweedFS keeps master, volume and filer on loopback; only its S3 gateway listens, on 8333 (S3
+# over HTTP, which checks the keys) and 18333 (its gRPC, which in 4.48 accepts IAM changes without
+# a credential and cannot be bound apart from 8333). So it sits alone with the api and the worker,
+# which hold the keys already, on the internal network "objects": no other compose container
+# reaches it, it reaches nothing outside, and it publishes no port. A one-off S3 client, a backup
+# sync say, joins <project>_objects, and <project>_default too to reach an off-site target.
+#
 # Every byte Copycast keeps lives in the Object store (docs/adr/0019); the worker downloads and
 # transcodes in its Scratch volume and uploads only finished files. Set COPYCAST_S3_SECRET_KEY
 # in .env before the first start.
@@ -25,6 +32,10 @@ x-env: &env
   COPYCAST__STORAGE__SECRET_ACCESS_KEY: ${COPYCAST_S3_SECRET_KEY:?set COPYCAST_S3_SECRET_KEY in .env}
   COPYCAST__STORAGE__SCRATCH_DIR: /scratch
   COPYCAST__CACHE__URL: redis://valkey:6379/0
+  # Empty keeps the defaults: 127.0.0.1 is the only trusted proxy, and browsers may use the base
+  # URL's host name, an IP address or localhost (see .env.example).
+  COPYCAST_FORWARDED_ALLOW_IPS: ${COPYCAST_FORWARDED_ALLOW_IPS:-}
+  COPYCAST_ALLOWED_HOSTS: ${COPYCAST_ALLOWED_HOSTS:-}
 
 x-app: &app
   image: ${COPYCAST_IMAGE:-ghcr.io/flrntdfr/copycast:latest}
@@ -51,6 +62,10 @@ services:
       TS_STATE_DIR: /var/lib/tailscale
       TS_SERVE_CONFIG: /config/serve.json
       TS_USERSPACE: "true"
+    # The api runs in this container's network namespace, so its networks are the api's. Recreate
+    # the api with this container, as a plain `docker compose up -d` does: `--force-recreate
+    # tailscale` alone leaves the api in the old, deleted namespace, with no network at all.
+    networks: [default, objects]
     volumes:
       - tailscale-state:/var/lib/tailscale
       - ./config/tailscale:/config:ro
@@ -86,6 +101,7 @@ services:
     <<: *app
     profiles: [direct]
     command: [api]
+    networks: [default, objects]
     ports:
       - "${COPYCAST_PORT:-8080}:8080"
     volumes:
@@ -102,6 +118,7 @@ services:
   worker:
     <<: *app
     command: [worker]
+    networks: [default, objects]
     # Downloads, transcodes and tags happen here; only finished files go to the Object store.
     volumes:
       - ./config:/config:ro
@@ -132,6 +149,9 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
     entrypoint: ["/bin/sh", "/copycast/entrypoint.sh"]
+    # Never on "default" and never a published port: the gateway's gRPC port (18333) accepts
+    # identities without a credential, so only the containers holding the keys may reach it.
+    networks: [objects]
     environment:
       COPYCAST_S3_ACCESS_KEY: ${COPYCAST_S3_ACCESS_KEY:-copycast}
       COPYCAST_S3_SECRET_KEY: ${COPYCAST_S3_SECRET_KEY:?set COPYCAST_S3_SECRET_KEY in .env}
@@ -158,6 +178,11 @@ services:
       timeout: 5s
       retries: 12
     restart: unless-stopped
+
+networks:
+  default:
+  objects:
+    internal: true
 
 volumes:
   pgdata:

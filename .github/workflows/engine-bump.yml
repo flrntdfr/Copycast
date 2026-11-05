@@ -104,6 +104,12 @@ jobs:
         if: steps.versions.outputs.changed == 'true'
         run: uv run pytest -m ffmpeg tests/integration/engine -q
 
+      # The only tests that drive the new yt-dlp's real handlers through the fetch guard
+      # (redirects to loopback, proxies); the unit tests only see what was rebound.
+      - name: Engine fetch-guard tests (real yt-dlp, no Postgres)
+        if: steps.versions.outputs.changed == 'true'
+        run: uv run pytest tests/integration/engine/test_netguard.py -q
+
       - name: Network flat-extraction test (advisory)
         if: steps.versions.outputs.changed == 'true'
         continue-on-error: true

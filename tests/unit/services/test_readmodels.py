@@ -33,6 +33,12 @@ class Urls:
     def asset_url(self, feed_id: str, local_path: str) -> str:
         return f"http://t/feeds/{feed_id}/assets/{local_path.rsplit('/', 1)[-1]}"
 
+    def artwork_url(self, asset_id: str, local_path: str) -> str:
+        return f"http://t/art/{asset_id}-mac.{local_path.rsplit('.', 1)[-1]}"
+
+    async def prepare(self) -> None:
+        return None
+
 
 def mirror_row(**overrides: Any) -> Any:
     fields: dict[str, Any] = {
@@ -113,6 +119,25 @@ def test_mirror_read_and_selection_summary() -> None:
         mirror_row(backfill_mode="selection"), Urls(), counts=CatalogCounts(), selected_count=9
     ).selection
     assert selection is not None and selection.count == 9 and selection.applied_at == NOW
+
+
+def test_mirror_read_hides_refused_engine_options_of_an_old_row() -> None:
+    """A row written before 2.3.0 may hold credentials; a read-scope key never sees them."""
+    stored = {
+        "username": "me",
+        "password": "hunter2",
+        "netrc_cmd": "pass show yt",
+        "http_headers": {"Authorization": "Bearer secret"},
+        "extractor_args": {"youtube": {"lang": ["de"], "po_token": ["web+secret"]}},
+        "ratelimit": 1,
+    }
+    read = readmodels.mirror_read(
+        mirror_row(engine_options=stored), Urls(), counts=CatalogCounts(), selected_count=0
+    )
+    assert read.engine_options == {"ratelimit": 1, "extractor_args": {"youtube": {"lang": ["de"]}}}
+    dumped = read.model_dump_json()
+    for secret in ("hunter2", "pass show", "Bearer", "web+secret"):
+        assert secret not in dumped
     with pytest.raises(ValueError):
         readmodels.mirror_read(mirror_row(source_url=None), Urls(), counts=CatalogCounts())
 
@@ -230,6 +255,20 @@ def test_item_read_carries_the_live_status() -> None:
         asset_row(state="failed", local_path=None, last_error="too big"), Urls()
     )
     assert failed_asset.url is None and failed_asset.last_error == "too big"
+
+
+def test_artwork_assets_get_their_public_art_url() -> None:
+    """Artwork is the one asset served bare: its URL is the ``/art/`` token, never the feed's
+    asset path (which takes the pair or media key while auth is on)."""
+    art = readmodels.asset_read(
+        asset_row(id="feedbeef00000001", kind="artwork", local_path="assets/x.artwork.png"),
+        Urls(),
+    )
+    assert art.url == "http://t/art/feedbeef00000001-mac.png"
+    unarchived = readmodels.asset_read(
+        asset_row(kind="artwork", state="wanted", local_path=None), Urls()
+    )
+    assert unarchived.url is None
 
 
 def test_job_read_from_row() -> None:

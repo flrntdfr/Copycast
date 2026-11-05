@@ -58,6 +58,11 @@ spec:
                   key: secret_access_key
             - name: COPYCAST__STORAGE__SCRATCH_DIR
               value: /scratch
+            # The Tailscale ingress proxies from another pod: without this the request log
+            # shows the proxy pod's address as client_ip and the scheme stays http. Set it to
+            # your cluster's pod CIDR (k3s: 10.42.0.0/16, kubeadm with Flannel: 10.244.0.0/16).
+            # - name: COPYCAST_FORWARDED_ALLOW_IPS
+            #   value: "10.42.0.0/16"
           volumeMounts:
             - name: scratch
               mountPath: /scratch

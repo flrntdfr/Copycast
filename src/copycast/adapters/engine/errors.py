@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import errno
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import cast
 
 from copycast.application.ports import (
@@ -20,6 +20,7 @@ from copycast.application.ports import (
     StorageFull,
     TransientError,
 )
+from copycast.domain.exceptions import DestinationNotAllowed
 
 STORAGE_ERRNOS = frozenset({errno.ENOSPC, errno.EDQUOT})
 PERMANENT_HTTP_STATUSES = frozenset({401, 403, 404, 410})
@@ -154,6 +155,27 @@ def classify(exc: BaseException) -> EngineError:
     return _wrap(TransientError, exc, exc)
 
 
+def destination_refusal(
+    exc: BaseException, refused: Sequence[DestinationNotAllowed] = ()
+) -> DestinationNotAllowed | None:
+    """The fetch guard's refusal behind ``exc``, if a refused connection made it fail.
+
+    yt-dlp wraps the guard's ``OSError`` in its own network and extractor errors,
+    with the refusal chained to it (``netguard.GuardRefusal``). Its downloaders
+    retry and then report only the last error's text: a refusal among ``refused``
+    (those recorded during the call) whose words the chain repeats is the cause too.
+    """
+    chain = list(_chain(exc))
+    for item in chain:
+        if isinstance(item, DestinationNotAllowed):
+            return item
+    text = " ".join(str(item) for item in chain)
+    for refusal in refused:
+        if str(refusal) in text:
+            return refusal
+    return None
+
+
 def upcoming_refusal(exc: BaseException) -> str | None:
     """The extractor's reason when ``exc`` says a stream or premiere has not started yet.
 
@@ -192,5 +214,6 @@ __all__ = [
     "StorageFull",
     "TransientError",
     "classify",
+    "destination_refusal",
     "upcoming_refusal",
 ]

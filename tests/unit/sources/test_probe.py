@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
+from copycast.adapters.sources.guard import install_policy
 from copycast.adapters.sources.probe import (
     PROBE_TTL_SECONDS,
     ProbeCache,
@@ -10,8 +13,9 @@ from copycast.adapters.sources.probe import (
     rss_candidate,
 )
 from copycast.application.ports import PermanentError, TransientError
+from copycast.domain.destinations import DestinationPolicy
 from copycast.domain.enums import SourceKind
-from copycast.domain.exceptions import Unsupported
+from copycast.domain.exceptions import DestinationNotAllowed, Unsupported
 from tests.support.factories import listing
 from tests.support.fake_engine import FakeEngine
 from tests.support.origin import Origin
@@ -167,3 +171,70 @@ def test_apple_podcasts_link_resolves_to_its_feed(origin: Origin, engine: FakeEn
         pytest.raises(Unsupported, match="could not be resolved"),
     ):
         probe("https://podcasts.apple.com/us/podcast/x/id1", engine=engine, client=client)
+
+
+@pytest.fixture
+def no_exemptions() -> Iterator[None]:
+    previous = install_policy(DestinationPolicy())
+    try:
+        yield
+    finally:
+        install_policy(previous)
+
+
+@pytest.mark.usefixtures("no_exemptions")
+def test_a_refused_destination_ends_the_probe_and_skips_the_engine(
+    origin: Origin, engine: FakeEngine
+) -> None:
+    """Neither the other scheme nor the Engine gets a second chance at an internal host."""
+    with pytest.raises(DestinationNotAllowed) as excinfo:
+        probe(origin.url_for("/rss/itunes_podcast20.xml"), engine=engine)
+    assert excinfo.value.slug == "destination-not-allowed"
+    with pytest.raises(DestinationNotAllowed):
+        probe(f"127.0.0.1:{origin.port}/rss/itunes_podcast20.xml", engine=engine)
+    assert origin.requests == []
+    assert engine.records.listings == []
+
+
+def test_an_internal_feed_a_page_advertises_is_skipped(origin: Origin, engine: FakeEngine) -> None:
+    """The page is public (exempt here by name); a feed it advertises on 127.0.0.1 is not.
+
+    The refused link is skipped like a broken one: the public feed next to it is offered.
+    """
+    previous = install_policy(DestinationPolicy.from_entries(["localhost"]))
+    try:
+        internal = origin.url_for("/rss/atom.xml")
+        public = f"http://localhost:{origin.port}/rss/itunes_podcast20.xml"
+        origin.script(
+            "/page",
+            body="<html><head>"
+            f'<link rel="alternate" type="application/rss+xml" href="{internal}">'
+            f'<link rel="alternate" type="application/rss+xml" href="{public}">'
+            "</head></html>",
+            content_type="text/html",
+        )
+        result = probe(f"http://localhost:{origin.port}/page", engine=engine)
+        assert [c.source_url for c in result.candidates] == [public]
+        assert origin.hits("/rss/atom.xml") == 0
+    finally:
+        install_policy(previous)
+
+
+def test_a_page_advertising_only_an_internal_feed_offers_nothing_from_it(
+    origin: Origin, engine: FakeEngine
+) -> None:
+    previous = install_policy(DestinationPolicy.from_entries(["localhost"]))
+    try:
+        link = origin.url_for("/rss/itunes_podcast20.xml")
+        origin.script(
+            "/page",
+            body=f'<html><head><link rel="alternate" type="application/rss+xml" href="{link}">'
+            "</head></html>",
+            content_type="text/html",
+        )
+        with pytest.raises(Unsupported, match="not an allowed destination") as excinfo:
+            probe(f"http://localhost:{origin.port}/page", engine=engine)
+        assert not isinstance(excinfo.value, DestinationNotAllowed)
+        assert origin.hits("/rss/itunes_podcast20.xml") == 0
+    finally:
+        install_policy(previous)

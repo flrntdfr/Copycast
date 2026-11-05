@@ -41,6 +41,7 @@ from copycast.domain.enums import (
     RefreshRunStatus,
     SourceKind,
 )
+from copycast.domain.exceptions import DestinationNotAllowed
 from copycast.domain.listing import SourceListing
 from copycast.logging import get_logger
 from copycast.worker.jobs import JobContext, JobOutcome
@@ -146,6 +147,7 @@ async def run(ctx: JobContext) -> JobOutcome:
             options=engine_options_for(
                 ctx.container.settings,
                 feed.engine_options,
+                feed_id=feed.id,
                 language=effective(
                     load_defaults(ctx.container.layout),
                     language=feed.preferred_language,
@@ -268,18 +270,22 @@ async def run(ctx: JobContext) -> JobOutcome:
 
 
 async def _list(ctx: JobContext, feed: _FeedSnapshot) -> Listed:
-    if feed.source_kind is SourceKind.rss:
-        # The first listing walks rel="next" pages and must not be short-cut by a 304.
+    """The Source's listing; a destination the fetch guard refuses fails the run for good."""
+    try:
+        if feed.source_kind is SourceKind.rss:
+            # The first listing walks rel="next" pages and must not be short-cut by a 304.
+            return await ctx.run_blocking(
+                list_rss,
+                feed.source_url,
+                etag=None if feed.first_listing else feed.etag,
+                last_modified=None if feed.first_listing else feed.last_modified,
+                follow_next=feed.first_listing,
+            )
         return await ctx.run_blocking(
-            list_rss,
-            feed.source_url,
-            etag=None if feed.first_listing else feed.etag,
-            last_modified=None if feed.first_listing else feed.last_modified,
-            follow_next=feed.first_listing,
+            list_engine, ctx.container.engine, feed.source_url, feed.options, ctx.cancel, ctx.log
         )
-    return await ctx.run_blocking(
-        list_engine, ctx.container.engine, feed.source_url, feed.options, ctx.cancel, ctx.log
-    )
+    except DestinationNotAllowed as exc:
+        raise PermanentError(str(exc)) from exc
 
 
 async def _record_failure(ctx: JobContext, feed_id: str, run_id: int, exc: BaseException) -> None:

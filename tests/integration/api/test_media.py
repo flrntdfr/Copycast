@@ -124,9 +124,12 @@ async def test_assets_are_served_and_never_counted(
     client: httpx.AsyncClient, source: Source, runner: Runner
 ) -> None:
     mirror, item = await one_archived(client, source, runner, name="assets", assets=True)
-    served = [a for a in item["assets"] if a["url"]]
+    served = [a for a in item["assets"] if a["url"] and a["kind"] != "artwork"]
     kinds = {a["kind"] for a in served}
     assert {"chapters", "transcript"} <= kinds, item["assets"]
+    # Artwork is published under its opaque /art/ URL; the feed's asset path still serves it.
+    (art,) = [a for a in item["assets"] if a["kind"] == "artwork"]
+    assert art["url"].startswith("http://testserver/art/"), art
     for asset in served:
         assert asset["url"].startswith(f"http://testserver{ASSET_URL(mirror['id'], '')}")
         basename = asset["url"].rsplit("/", 1)[-1]

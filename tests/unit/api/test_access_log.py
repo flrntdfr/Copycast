@@ -18,6 +18,7 @@ from starlette.types import Message, Receive, Scope, Send
 
 from copycast.adapters.api.middleware import (
     ACCESS_LOG_EVENT,
+    LOGGED_VALUE_MAX,
     REQUEST_ID_MAX_LEN,
     AccessLogMiddleware,
     RequestContextMiddleware,
@@ -133,6 +134,24 @@ async def test_plain_response_logs_one_line(
     assert "copycast:" not in serialized and "hunter2" not in serialized
 
 
+async def test_long_paths_queries_and_headers_are_cut_after_redaction(
+    client: httpx.AsyncClient, captured: list[EventDict]
+) -> None:
+    dotted = "a." * 20_000
+    secret = "https://user:hunter2@host.example/"
+    response = await client.get(
+        f"/{dotted}",
+        params={"u": f"{dotted}{secret}"},
+        headers={"User-Agent": dotted, "X-Forwarded-For": dotted, "Range": f"bytes={dotted}"},
+    )
+    assert response.status_code == 404
+    (event,) = requests_in(captured)
+    for field in ("path", "query", "user_agent", "forwarded_for", "range"):
+        assert len(event[field]) == LOGGED_VALUE_MAX + 1, field
+        assert event[field].endswith("…"), field
+    assert "hunter2" not in repr(event)
+
+
 async def test_query_is_none_when_empty(
     client: httpx.AsyncClient, captured: list[EventDict]
 ) -> None:
@@ -189,14 +208,44 @@ async def test_health_paths_are_skipped(
     assert requests_in(captured) == []
 
 
-async def test_forwarded_for_first_hop_wins(
+async def test_a_forged_forwarded_for_is_never_the_client_ip(
     client: httpx.AsyncClient, captured: list[EventDict]
 ) -> None:
+    # No proxy in front: the header is the client's claim, kept raw in its own field only.
     forwarded = "203.0.113.9, 10.0.0.1, 10.0.0.2"
     assert (await client.get("/api/x", headers={"X-Forwarded-For": forwarded})).status_code == 200
     (event,) = requests_in(captured)
-    assert event["client_ip"] == "203.0.113.9"
+    assert event["client_ip"] == "127.0.0.1"
     assert event["forwarded_for"] == forwarded
+
+
+@pytest.mark.parametrize(
+    ("trusted", "expected"),
+    [
+        ("127.0.0.1", "203.0.113.9"),  # the peer is a trusted proxy: uvicorn takes its hop
+        ("127.0.0.0/8", "203.0.113.9"),  # CIDRs are accepted by the pinned uvicorn
+        ("10.0.0.0/8", "127.0.0.1"),  # an untrusted peer's header changes nothing
+    ],
+)
+async def test_client_ip_is_what_uvicorn_resolved_from_trusted_proxies(
+    media_file: Path,
+    captured: list[EventDict],
+    events_seen_by_background: list[int],
+    trusted: str,
+    expected: str,
+) -> None:
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    app = ProxyHeadersMiddleware(
+        _app(media_file, captured, events_seen_by_background), trusted_hosts=trusted
+    )
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)  # pyright: ignore[reportArgumentType]
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as http:
+        response = await http.get("/api/x", headers={"X-Forwarded-For": "203.0.113.9"})
+    assert response.status_code == 200
+    (event,) = requests_in(captured)
+    assert event["client_ip"] == expected
+    assert event["forwarded_for"] == "203.0.113.9"
 
 
 async def test_unhandled_exception_logs_500_not_completed(
@@ -294,22 +343,16 @@ async def test_non_http_scopes_pass_through(captured: list[EventDict]) -> None:
 
 
 @pytest.mark.parametrize(
-    ("forwarded_for", "client", "expected"),
-    [
-        (None, ("10.1.2.3", 5000), "10.1.2.3"),
-        (None, None, None),
-        ("", ("10.1.2.3", 5000), "10.1.2.3"),
-        ("198.51.100.7", None, "198.51.100.7"),
-        (" 198.51.100.7 ,10.0.0.1", ("10.1.2.3", 5000), "198.51.100.7"),
-    ],
+    ("client", "expected"),
+    [(("10.1.2.3", 5000), "10.1.2.3"), (None, None), (("::1", 5000), "::1")],
 )
-def test_client_ip_of(
-    forwarded_for: str | None, client: tuple[str, int] | None, expected: str | None
-) -> None:
-    from starlette.datastructures import Headers
-
-    headers = Headers({"x-forwarded-for": forwarded_for} if forwarded_for is not None else {})
-    assert client_ip_of({"type": "http", "client": client}, headers) == expected
+def test_client_ip_of(client: tuple[str, int] | None, expected: str | None) -> None:
+    scope = {
+        "type": "http",
+        "client": client,
+        "headers": [(b"x-forwarded-for", b"198.51.100.7")],
+    }
+    assert client_ip_of(scope) == expected
 
 
 def test_a_feed_media_key_never_reaches_the_log() -> None:
@@ -320,3 +363,19 @@ def test_a_feed_media_key_never_reaches_the_log() -> None:
         "/feeds/abc/media/0123456789abcdef.m4a"
     )
     assert logged_path("/api/feeds") == "/api/feeds"
+
+
+def test_an_upload_token_never_reaches_the_log() -> None:
+    token = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+    assert logged_path(f"/uploads/0123456789abcdef/{token}") == "/uploads/0123456789abcdef/***"
+    assert logged_path("/api/uploads/0123456789abcdef") == "/api/uploads/0123456789abcdef"
+
+
+async def test_secrets_in_the_path_and_query_never_reach_the_log(
+    client: httpx.AsyncClient, captured: list[EventDict]
+) -> None:
+    key = "cck_ABCDEFGH" + "x" * 46
+    await client.get(f"/feeds/abc/k/s3cretkey/media/a.mp3?api_key={key}")
+    (event,) = requests_in(captured)
+    assert event["path"] == "/feeds/abc/k/***/media/a.mp3"
+    assert event["query"] == "api_key=cck_ABCDEFGH***"

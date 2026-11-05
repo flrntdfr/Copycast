@@ -26,12 +26,15 @@ WWW_AUTHENTICATE = f'Basic realm="{BASIC_REALM}", charset="UTF-8"'
 
 TITLES: dict[str, str] = {
     "unauthorized": "Authentication required",
+    "cross-site-request": "Cross-site request refused",
+    "unknown-host": "Unknown host name",
     "not-found": "Not found",
     "validation": "Validation failed",
     "feed-exists": "Mirror already exists",
     "candidates-ambiguous": "Several candidates found",
     "source-unsupported": "Source unsupported",
     "source-kind-change": "Source kind change refused",
+    "destination-not-allowed": "Destination not allowed",
     "invalid-selection": "Invalid selection",
     "engine-option-rejected": "Engine option rejected",
     "invalid-cookies": "Not a cookie file",

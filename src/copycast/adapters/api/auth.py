@@ -3,7 +3,8 @@
 Off unless ``settings.auth.password`` is set (ADR 0011). When on:
 
 * :class:`OperatorAuthMiddleware` requires the operator pair on every request
-  except the health checks, the public feed routes and the MCP mount (MCP is
+  except the health checks, the public feed routes, public Artwork (``/art/``,
+  an opaque token is its credential), upload URLs and the MCP mount (MCP is
   gated by API keys inside the fastmcp app, see ``adapters.mcp.auth``);
 * :func:`require_feed_access` on the ``/feeds`` router accepts the operator
   pair or the pair of the very feed being fetched, so a podcast client holding
@@ -13,14 +14,17 @@ Off unless ``settings.auth.password`` is set (ADR 0011). When on:
   AVPlayer) never answers a challenge.
 
 Both answer 401 as problem+json with a ``Basic`` challenge, which is what makes
-browsers, Overcast and AntennaPod prompt for the pair.
+browsers, Overcast and AntennaPod prompt for the pair. Under ``/feeds`` that 401
+is one and the same answer (:data:`FEED_UNAUTHORIZED`) for a missing pair, a
+wrong pair, another feed's pair, a wrong media key and a feed, item or asset
+that does not exist, and it comes before anything else is looked up: the routes
+are no oracle of what this server mirrors.
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
-import re
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -34,7 +38,7 @@ from copycast.adapters.api.deps import get_container
 from copycast.adapters.api.problems import WWW_AUTHENTICATE, build_problem
 from copycast.domain.credentials import constant_time_equals, feed_media_key
 from copycast.domain.exceptions import Unauthorized
-from copycast.domain.urls import COPYCAST_ARTWORK_PATH
+from copycast.domain.urls import ART_PATH_PREFIX, COPYCAST_ARTWORK_PATH
 from copycast.settings import AuthSettings
 
 HEALTH_PATH = "/healthz"
@@ -42,7 +46,13 @@ HEALTH_PATH = "/healthz"
 FEEDS_PREFIX = "/feeds/"
 UPLOADS_PREFIX = "/uploads"
 LOGO_PATH = COPYCAST_ARTWORK_PATH
+ART_PREFIX = ART_PATH_PREFIX
 MCP_PATH = "/mcp"
+FEED_UNAUTHORIZED = "this feed requires its username and password"
+"""The detail of every 401 under ``/feeds``: it never says what was wrong, or whether the
+feed exists."""
+_ABSENT_PASSWORD = "-" * 24
+"""Compared against when the feed does not exist, so an unknown feed costs the same work."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,26 +92,27 @@ def _under(path: str, prefix: str) -> bool:
 
 
 ROBOTS_PATH = "/robots.txt"
-ARTWORK_RE = re.compile(r"^/feeds/[^/]+/assets/[^/]+\.artwork\.[A-Za-z0-9]+$")
 
 
 def is_gated(path: str) -> bool:
-    """Paths the operator middleware challenges (everything but health, feeds, MCP, robots
-    and upload URLs, whose one-time token is their credential)."""
+    """Paths the operator middleware challenges (everything but health, feeds, MCP, robots,
+    public Artwork and upload URLs, whose token is their credential)."""
     if _under(path, HEALTH_PATH) or _under(path, MCP_PATH) or path == ROBOTS_PATH:
         return False
-    if path.startswith(UPLOADS_PREFIX + "/"):
+    if path.startswith(UPLOADS_PREFIX + "/") or is_public_artwork(path):
         return False
     return not path.startswith(FEEDS_PREFIX)
 
 
 def is_public_artwork(path: str) -> bool:
-    """Artwork assets answer without credentials: podcast apps fetch images bare.
+    """Artwork that answers without credentials: ``/art/{token}`` and the Copycast logo.
 
-    The URLs stay unguessable (feed id and item id); media, feeds, chapters and
-    transcripts keep the feed's pair. The logo route is under the same rule.
+    Podcast apps, the SPA and the Media Session fetch images bare. The token's MAC
+    (``domain.credentials.artwork_mac``) makes ``/art/`` URLs unguessable; the old
+    ``/feeds/{id}/assets/*.artwork.*`` path, computable from a Source URL, takes the
+    feed's pair or media key like every other asset.
     """
-    return ARTWORK_RE.match(path) is not None or path == LOGO_PATH
+    return path.startswith(ART_PREFIX + "/") or path == LOGO_PATH
 
 
 def unauthorized_response(path: str | None, detail: str) -> JSONResponse:
@@ -150,43 +161,45 @@ async def require_feed_access(
     feed_id: str,
 ) -> None:
     """The operator pair, this feed's own pair, or (on a ``/k/{key}/`` route) this feed's
-    media key; a no-op while auth is off or for artwork."""
+    media key; a no-op while auth is off.
+
+    A router dependency, so it runs before the endpoint looks anything up (the path
+    parameters are plain strings: no validation can answer first). Every refusal is
+    the same :data:`FEED_UNAUTHORIZED`, and an unknown feed is compared against a
+    stand-in pair so it takes the same work as a known one.
+    """
     auth = container.settings.auth
-    if not auth.enabled or is_public_artwork(request.url.path):
+    if not auth.enabled:
         return
     # Read from the path only: a ``?key=`` query must never stand in for the pair.
     key: str | None = request.path_params.get("key")
     credentials = parse_basic(request.headers.get("authorization"))
     if credentials is None and key is None:
-        raise Unauthorized("this feed requires its username and password")
+        raise Unauthorized(FEED_UNAUTHORIZED)
     if is_operator(auth, credentials):
         return
     async with container.uow_factory() as uow:
         feed = await uow.feeds.get(feed_id)
-        username: str | None = feed.auth_username if feed is not None else None
-        password: str | None = feed.auth_password if feed is not None else None
-    if (
-        key is not None
-        and password is not None
-        and constant_time_equals(key, feed_media_key(feed_id, password))
-    ):
+        known = feed is not None
+        username: str = feed.auth_username if feed is not None else ""
+        password: str = feed.auth_password if feed is not None else _ABSENT_PASSWORD
+    key_ok = key is not None and constant_time_equals(key, feed_media_key(feed_id, password))
+    pair_ok = False
+    if credentials is not None:
+        user_ok = constant_time_equals(credentials.username, username)
+        pass_ok = constant_time_equals(credentials.password, password)
+        pair_ok = user_ok and pass_ok
+    if known and (key_ok or pair_ok):
         return
-    if credentials is None:
-        raise Unauthorized("wrong media key for this feed")
-    if (
-        username is not None
-        and password is not None
-        and constant_time_equals(credentials.username, username)
-        and constant_time_equals(credentials.password, password)
-    ):
-        return
-    raise Unauthorized("wrong username or password for this feed")
+    raise Unauthorized(FEED_UNAUTHORIZED)
 
 
 FeedAccess = Depends(require_feed_access)
 
 __all__ = [
+    "ART_PREFIX",
     "FEEDS_PREFIX",
+    "FEED_UNAUTHORIZED",
     "HEALTH_PATH",
     "LOGO_PATH",
     "MCP_PATH",
@@ -196,6 +209,7 @@ __all__ = [
     "OperatorAuthMiddleware",
     "is_gated",
     "is_operator",
+    "is_public_artwork",
     "parse_basic",
     "require_feed_access",
     "unauthorized_response",

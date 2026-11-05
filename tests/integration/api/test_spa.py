@@ -62,7 +62,15 @@ async def test_spa_routes(spa_settings: Settings) -> None:
         favicon = await client.get("/favicon.svg")
         assert favicon.status_code == 200 and favicon.headers["cache-control"] == "no-cache"
 
-        for reserved in ("/api/nothing", "/feeds/x/y", "/healthz/nope", "/mcp/extra/deep"):
+        for reserved in (
+            "/api/nothing",
+            "/feeds/x/y",
+            "/healthz/nope",
+            "/mcp/extra/deep",
+            "/art",
+            "/art/TOKEN.jpg",
+            "/uploads/x",
+        ):
             response = await client.get(reserved)
             assert response.status_code in (404, 405), reserved
             assert not response.headers["content-type"].startswith("text/html"), reserved

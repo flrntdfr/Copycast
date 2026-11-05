@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import structlog
 from lxml import etree
 
 from copycast.adapters.sources.http import BodyTooLarge, NotAFeed
@@ -23,6 +24,7 @@ from copycast.adapters.sources.rss import (
     tag,
 )
 from copycast.domain.enums import ListingOrder
+from copycast.domain.exceptions import DestinationNotAllowed
 from tests.support.origin import Origin
 
 
@@ -284,6 +286,24 @@ def test_fetch_feed_stops_after_max_pages_and_on_bad_pages(origin: Origin) -> No
     assert len(paged.parsed.listing.items) == 2
     limited = fetch_feed(origin.url_for("/rss/paged_1.xml"), follow_next=True, max_pages=1)
     assert limited.pages == 1
+
+
+@pytest.mark.parametrize("target", ["http://10.1.2.3/page2.xml", "http://169.254.169.254/x"])
+def test_a_refused_next_page_ends_the_walk_and_page_one_stands(origin: Origin, target: str) -> None:
+    """A page the Source advertises (or redirects to) is not the operator's input."""
+    origin.script("/rss/paged_2.xml", status=302, headers={"Location": target}, times=5)
+    with structlog.testing.capture_logs() as events:
+        paged = fetch_feed(origin.url_for("/rss/paged_1.xml"), follow_next=True)
+    assert paged.parsed is not None and paged.pages == 1
+    assert paged.parsed.listing.source_keys == ["urn:paged:episode:4", "urn:paged:episode:3"]
+    (refused,) = [e for e in events if e["event"] == "rss.next_page_refused"]
+    assert refused["url"] == origin.url_for("/rss/paged_2.xml")
+    assert "not an allowed destination" in refused["reason"]
+
+
+def test_a_refused_first_page_still_fails() -> None:
+    with pytest.raises(DestinationNotAllowed):
+        fetch_feed("http://10.1.2.3/feed.xml", follow_next=True)
 
 
 def test_fetch_feed_rejects_non_feed_bodies(origin: Origin) -> None:

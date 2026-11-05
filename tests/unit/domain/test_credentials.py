@@ -66,3 +66,40 @@ def test_scopes_granted_and_required_scope() -> None:
     assert c.required_scope(destructive=True, read_only=False) is KeyScope.full
     assert c.required_scope(destructive=False, read_only=True) is KeyScope.read
     assert c.required_scope(destructive=False, read_only=False) is KeyScope.write
+
+
+def test_instance_secret_is_32_random_bytes() -> None:
+    secret = c.new_instance_secret()
+    assert isinstance(secret, bytes) and len(secret) == c.INSTANCE_SECRET_BYTES == 32
+    assert c.new_instance_secret() != secret
+
+
+def test_artwork_mac_matches_its_definition() -> None:
+    """The first 26 characters of the lowercase unpadded base32 of
+    HMAC-SHA256(secret, "copycast artwork\\0" + asset_id): pinned, since published URLs
+    depend on it."""
+    import base64
+    import hashlib
+    import hmac
+
+    secret, asset_id = b"\x01" * 32, "0123456789abcdef"
+    digest = hmac.new(secret, b"copycast artwork\x00" + asset_id.encode(), hashlib.sha256)
+    expected = base64.b32encode(digest.digest()).decode().lower().rstrip("=")[:26]
+    mac = c.artwork_mac(secret, asset_id)
+    assert mac == expected and len(mac) == c.ARTWORK_MAC_LEN == 26
+    assert set(mac) <= set("abcdefghijklmnopqrstuvwxyz234567")
+    # Bound to the asset and to the secret.
+    assert c.artwork_mac(secret, "0123456789abcdee") != mac
+    assert c.artwork_mac(b"\x02" * 32, asset_id) != mac
+
+
+def test_artwork_mac_ok_accepts_only_the_exact_mac() -> None:
+    secret, asset_id = c.new_instance_secret(), "feedbeef00000001"
+    mac = c.artwork_mac(secret, asset_id)
+    assert c.artwork_mac_ok(secret, asset_id, mac)
+    assert not c.artwork_mac_ok(secret, asset_id, mac.upper())
+    assert not c.artwork_mac_ok(secret, asset_id, mac[:-1])
+    assert not c.artwork_mac_ok(secret, asset_id, mac + "a")
+    assert not c.artwork_mac_ok(secret, asset_id, "")
+    assert not c.artwork_mac_ok(secret, "feedbeef00000002", mac)
+    assert not c.artwork_mac_ok(c.new_instance_secret(), asset_id, mac)

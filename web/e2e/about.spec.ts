@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 test("About shows the app and engine versions and the worker heartbeat", async ({
   page,

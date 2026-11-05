@@ -10,7 +10,7 @@
       <itunes:name>Fixture Media</itunes:name>
       <itunes:email>podcast@podcast.example</itunes:email>
     </itunes:owner>
-    <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/feeds/0123456789abcdef/assets/feed.artwork.png"/>
+    <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/art/76bba376ea574e63-3oogtkogsoqqg4qqpzwofmkane.png"/>
     <itunes:category xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" text="Technology"/>
     <itunes:explicit xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">false</itunes:explicit>
     <itunes:type xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">episodic</itunes:type>
@@ -19,8 +19,10 @@
     <podcast:funding xmlns:podcast="https://podcastindex.org/namespace/1.0" url="https://podcast.example/support">Support the show</podcast:funding>
     <podcast:person xmlns:podcast="https://podcastindex.org/namespace/1.0" href="https://podcast.example/host" img="https://podcast.example/host.jpg" role="host">Alex Host</podcast:person>
     <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="http://testserver/feeds/0123456789abcdef.xml" rel="self" type="application/rss+xml"/>
-    <generator>Copycast 2.2.1</generator>
+    <generator>Copycast 2.3.0</generator>
     <lastBuildDate/>
+    <itunes:block xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Yes</itunes:block>
+    <podcast:block xmlns:podcast="https://podcastindex.org/namespace/1.0">yes</podcast:block>
     <item>
       <title>Episode 5: Chapters, transcripts and all</title>
       <itunes:title xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Chapters, transcripts and all</itunes:title>
@@ -36,7 +38,7 @@
       <itunes:episodeType xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">full</itunes:episodeType>
       <itunes:explicit xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">false</itunes:explicit>
       <itunes:author xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">Alex Host</itunes:author>
-      <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/feeds/0123456789abcdef/assets/i6.artwork.jpg"/>
+      <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/art/75ec5320c29c94d4-7bywkxi2mqnr3vwnj6ojmrxolh.jpg"/>
       <podcast:chapters xmlns:podcast="https://podcastindex.org/namespace/1.0" type="application/json+chapters" url="https://podcast.example/chapters/5.json"/>
       <podcast:transcript xmlns:podcast="https://podcastindex.org/namespace/1.0" language="en" rel="captions" type="text/vtt" url="https://podcast.example/transcripts/5.vtt"/>
       <podcast:transcript xmlns:podcast="https://podcastindex.org/namespace/1.0" language="en" rel="captions" type="application/x-subrip" url="https://podcast.example/transcripts/5.srt"/>
@@ -68,7 +70,7 @@
       <itunes:duration xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">45</itunes:duration>
       <itunes:episodeType xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">trailer</itunes:episodeType>
       <itunes:season xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">1</itunes:season>
-      <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/feeds/0123456789abcdef/assets/i3.artwork.webp"/>
+      <itunes:image xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" href="http://testserver/art/088c8291cd4c4401-iijvfarkufwndmz5jlj43gefmq.webp"/>
     </item>
   </channel>
 </rss>

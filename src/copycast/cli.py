@@ -91,6 +91,10 @@ def api(reload: bool) -> None:
         factory=True,
         host=settings.bind,
         port=settings.port,
+        # X-Forwarded-For/-Proto only from the proxies named here (None: uvicorn's default,
+        # 127.0.0.1): the request log's client_ip and the request scheme come from them.
+        proxy_headers=True,
+        forwarded_allow_ips=settings.forwarded_allow_ips,
         reload=reload,
         log_config=None,
         access_log=False,

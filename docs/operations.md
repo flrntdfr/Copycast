@@ -1,7 +1,8 @@
 # Operating Copycast
 
-This is the runbook: first run, configuration, the Object store, Kubernetes, backup and
-restore, rebuilding the database from the Object store, and engine bumps and rollbacks. The
+This is the runbook: first run, configuration, the Object store, upgrading to 2.3.0,
+Kubernetes, backup and restore, rebuilding the database from the Object store, and engine
+bumps and rollbacks. The
 product language (Mirror, Local feed, bucket,
 Refresh, ...) is defined in [AGENTS.md](../AGENTS.md).
 
@@ -41,7 +42,9 @@ podcast clients will use: `https://copycast.<tailnet>.ts.net` for the Tailscale 
 Both processes exit with code 2 and a single actionable line when the configuration is
 unusable: an Object store that cannot be reached or refuses the keys, a `LAYOUT_VERSION` mismatch
 (a 1.x data directory not yet pushed, below), an unwritable Scratch directory (the line
-contains the `chown` command to run), a rejected engine option, or a malformed base URL.
+contains the `chown` command to run), a rejected engine option, a malformed base URL, or a
+bad entry in `[security] allow_private_hosts`, `COPYCAST_FORWARDED_ALLOW_IPS` or
+`COPYCAST_ALLOWED_HOSTS`.
 
 Readiness: `GET /healthz/ready` on the api (8080) and on the worker (8081) answers 200 with
 `{status, checks{db, schema, storage, layout, worker_seen_at}}` (the worker adds
@@ -97,6 +100,10 @@ ttl_seconds = 86400
 [auth]                          # prefer the environment for the password (below)
 username = "copycast"           # the operator's username
 # password = ""                 # 8+ characters switches authentication on
+
+[security]                      # the fetch guard ("Fetch guard and browser defences")
+allow_private_hosts = []        # hostnames or CIDRs a server-side fetch may reach although
+                                # they are not public, e.g. ["nas.lan", "192.168.1.0/24"]
 ```
 
 Every TOML key can be overridden with `COPYCAST__<SECTION>__<KEY>` (double underscores):
@@ -105,8 +112,26 @@ Every TOML key can be overridden with `COPYCAST__<SECTION>__<KEY>` (double under
 
 `[engine.options]` takes raw yt-dlp options (for example `cookiefile`, `proxy`,
 `sleep_interval`). Options Copycast owns (output paths, format selection, postprocessors,
-hooks, ...) are rejected at startup with exit code 2; `cookiefile`, `proxy` and
-`geo_verification_proxy` are accepted here only, never per Mirror.
+hooks, ...) are rejected at startup with exit code 2. Everything else is accepted here, since
+the operator owns this file: cookies, proxies, a YouTube PO token and any credential belong
+here and never per Mirror.
+
+A Mirror's own `engine_options` (the API and MCP) pass an allowlist instead
+([ADR 0024](adr/0024-per-mirror-engine-options-are-an-allowlist.md)). They cover format
+order (`format_sort`, `format_sort_force`, `prefer_free_formats`), bounded pacing and retries
+(`ratelimit`, `throttledratelimit`, the `sleep_interval*` family, `retries`,
+`fragment_retries`, `extractor_retries`, `file_access_retries`, `socket_timeout`,
+`concurrent_fragment_downloads` 1 to 16, `skip_unavailable_fragments`), subtitles
+(`writeautomaticsub`, `subtitlesformat`, and `subtitleslangs` as language codes, never
+patterns), `geo_bypass`, `geo_bypass_country`, `geo_bypass_ip_block`, `age_limit`, and
+`extractor_args` for `youtube` (`lang`, `player_client`, `player_skip`, `skip`, `formats`),
+`youtubetab` (`approximate_date`, `skip`) and `generic` (`impersonate`), each value a list of
+strings. Any other key answers `422 engine-option-rejected` with `keys` naming every refused
+path (`netrc_cmd`, `extractor_args.youtube.po_token`). `extractor_args` merge per argument,
+so a Mirror's `youtube.player_client` keeps the operator's `youtube.po_token`. `retries`,
+`fragment_retries`, `socket_timeout`, `writeautomaticsub` and `subtitlesformat` only affect
+listings: Copycast sets its own on a fetch. Over MCP, setting a Mirror's `engine_options`
+needs a `full` key.
 
 ### Environment-only variables
 
@@ -114,6 +139,8 @@ hooks, ...) are rejected at startup with exit code 2; `cookiefile`, `proxy` and
 |---|---|---|
 | `COPYCAST_CONFIG` | `./config/copycast.toml` (`/config/copycast.toml` in the image) | TOML file to read |
 | `COPYCAST_BIND` / `COPYCAST_PORT` | `0.0.0.0` / `8080` | api listen address and port |
+| `COPYCAST_FORWARDED_ALLOW_IPS` | unset (uvicorn's `FORWARDED_ALLOW_IPS`, else `127.0.0.1`) | the proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` the api believes: comma-separated IPs or CIDR networks, or `*`. Set it to the proxy's network behind Traefik or any proxy that is not on loopback (the Tailscale sidecar is). Ignored, without a word, when it is written in the TOML file; a bad entry exits 2 |
+| `COPYCAST_ALLOWED_HOSTS` | unset | host names besides `base_url`'s that a browser or a client may reach Copycast by (a MagicDNS short name, a LAN alias, a compose or Kubernetes service name), comma-separated, or `*` to turn the check off; IP addresses and `localhost` always pass ("Fetch guard and browser defences" below). Unlike the variable above, the TOML file can set it too, like the other flat knobs |
 | `COPYCAST_WORKER_PORT` | `8081` | worker health endpoint port |
 | `COPYCAST_WEB_DIR` | unset (`/app/web` in the image) | directory of the built web UI; unset disables the UI |
 | `COPYCAST_LOG_FORMAT` | `console` (`json` in the image) | `console` or `json` |
@@ -132,6 +159,10 @@ Compose-only (interpolated by `docker compose`, see `.env.example`): `COMPOSE_PR
 1024 MiB by default; they grow as written, so these only cap the store and the disk stays the
 limit. Never `0`, "auto": SeaweedFS then fixes the count from the free disk at the first
 start, and writes stop once those volumes are full even after space is freed).
+The repository's `docker-compose.yml` passes `COPYCAST_FORWARDED_ALLOW_IPS` and
+`COPYCAST_ALLOWED_HOSTS` from `.env` to both processes as they are. A compose file of your own
+does so only if its `environment:` names them or an `env_file:` loads them ("Upgrading to
+2.3.0").
 
 ## Authentication
 
@@ -143,9 +174,18 @@ front. The decision and its trade-offs are
 | Surface | Credential | Notes |
 |---|---|---|
 | Web UI, `/api/*`, `/api/events` | the operator pair (HTTP Basic) | `auth.username` defaults to `copycast`; the browser prompts once |
-| `/feeds/<id>.xml`, media, assets | that feed's own pair, or the operator pair | one pair opens one feed; a wrong pair is 401 with a `Basic` challenge |
+| `/feeds/<id>.xml`, media, assets | that feed's own pair, or the operator pair | one pair opens one feed; every refusal is the same 401 with a `Basic` challenge |
+| `/feeds/<id>/k/<key>/media/…`, `…/assets/…` | the feed's media key in the path (or a pair) | what the feed publishes its enclosures, chapters, transcripts and attachments under |
+| `/art/<asset_id>-<mac>.<ext>`, `/feeds/copycast-artwork.png` | none | Artwork; the MAC is the credential |
+| `/uploads/<id>/<token>` | the one-time token | an Upload's `PUT` |
 | `/mcp` | an API key as `Authorization: Bearer cck_…` | keys only; the operator pair is refused |
 | `/healthz/*` | none | probes and healthchecks stay open |
+
+Under `/feeds` every refusal gets the same 401, detail "this feed requires its username and
+password": a missing or wrong pair, another feed's pair, a wrong media key, or a feed, item or
+asset that does not exist. No answer tells a stranger what this server mirrors
+([ADR 0022](adr/0022-public-artwork-under-opaque-tokens.md)). The operator's 401 on `/api`
+still says "wrong username or password".
 
 **Feed credentials.** Every feed has a random username (8 characters) and password (24) minted
 at creation; migration 0002 mints them for feeds that existed before. They live in Postgres
@@ -158,9 +198,18 @@ the old one.
 credentials and never answers a challenge, so while authentication is on a feed publishes its
 media, chapters, transcripts and attachments under `/feeds/<id>/k/<key>/…`: the key is derived
 from the feed's password, opens only that feed's files, rotates with the pair and is logged as
-`***`. A reverse proxy's own access log records it with the path. Bare `/feeds/<id>/media/…`
-URLs still work with the pair. The upgrade to 2.0.2 moves every enclosure URL once, so apps
-may download Episodes they already have again (ADR 0020).
+`***`. A reverse proxy's own access log records it with the path (see "Upgrading to 2.3.0"
+for Traefik). Bare `/feeds/<id>/media/…` URLs still work with the pair. The upgrade to 2.0.2
+moved every enclosure URL once, so apps may have downloaded Episodes they already had again
+(ADR 0020).
+
+**Artwork** is published at `/art/<asset_id>-<mac>.<ext>` in both auth modes, in every feed
+and in the API's `AssetRead.url`. The `mac` is an HMAC of the asset id under the instance
+secret, 32 random bytes the api mints on its first start in the Postgres table
+`instance_secrets`. The URL needs no credential (podcast apps fetch images bare) and cannot be
+computed from a Source URL. Every bad token is the same 404, and images are served with
+`Cache-Control: public, max-age=86400`. The old path `/feeds/<id>/assets/*.artwork.*` takes
+the pair or the media key like any asset while authentication is on.
 
 **API keys.** Minted and revoked on the *MCP* page (`/keys` in the UI, `/api/keys` in the API),
 shown once as two `.env` lines (`COPYCAST_MCP_URL=<base URL>/mcp` and `COPYCAST_MCP_KEY=cck_…`),
@@ -247,6 +296,242 @@ and only when every file has landed; until then both processes refuse to start o
 It exits 1 when a file failed: run it again. To roll back, start the previous image on the
 untouched `./data` directory.
 
+## Fetch guard and browser defences
+
+**Fetch guard.** Every fetch a Source drives refuses an address that is not public: the probe
+and the feeds a page advertises, directory and iTunes lookups, RSS Refreshes and Light
+Refreshes, the YouTube Atom feed, Request expansion, Artwork, chapters, transcripts,
+Attachments, and every connection the Engine opens (redirects, manifests, fragments,
+thumbnails). That covers loopback, private (RFC 1918), CGNAT `100.64/10`, link-local
+(`169.254/16`, `fe80::/10`), `0/8` and `::`, multicast, reserved and broadcast, `fc00::/7`,
+`fec0::/10`, 6to4, NAT64 local-use and the IPv4-mapped or NAT64 forms of these. Schemes other
+than `http` and `https` are refused too. Every redirect hop is checked, and the address
+connected to is the one that was checked, so a DNS answer that changes in between does not get
+through. A name that resolves to any refused address is refused as a whole
+([ADR 0023](adr/0023-fetch-guard-on-every-source-driven-fetch.md)). The Object store and the
+Feed cache are not Sources and never pass through it.
+
+- **Exceptions.** `[security] allow_private_hosts` lists hostnames, matched exactly
+  (case-insensitive, trailing dot ignored), which may then resolve to any address, and IP
+  networks in CIDR form (a bare address is one host), which are exempt whatever name led to
+  them. In the environment it is a JSON list:
+  `COPYCAST__SECURITY__ALLOW_PRIVATE_HOSTS='["nas.lan","192.168.1.0/24"]'`. A bad entry exits
+  2 with one line. List a NAS, a self-hosted podcast server or a compose service you mirror
+  from; for `make dev` against a local test server, `["localhost"]`. The Engine's proxy
+  ("Proxies" below) is judged as the peer the Engine connects to, so a proxy on a private
+  address must be listed too.
+- **What a refusal looks like.** The probe, `create_mirror` and a retarget answer
+  `422 destination-not-allowed` ("… is not an allowed destination: it resolves to a
+  non-public address (an operator can exempt it with security.allow_private_hosts)"). Which
+  kind of address it was, and the address, are only in the `fetch.destination_refused` log
+  line. In the worker a refused Refresh, archive or Request expansion fails once, for good
+  (no retry), and the Mirror keeps serving what it has. A refused Artwork or Attachment fails
+  only that asset. A Request with an internal URL is accepted and fails at expansion.
+- **Proxies.** Copycast's own fetches (RSS, the probe, Atom, Artwork, Attachments) ignore
+  `HTTP_PROXY` / `HTTPS_PROXY` and have no proxy setting at all: they always connect
+  directly. The Engine uses `proxy` from `[engine.options]` or, when that is unset,
+  `HTTP_PROXY` / `HTTPS_PROXY` from the worker's environment (yt-dlp reads them itself). That
+  proxy is judged as the peer, and every destination the Engine sends through it, each
+  redirect hop included, is judged on its own before the proxy hears of it (HTTP and SOCKS
+  proxies alike). The proxy resolves the name itself, so the address cannot be pinned: a name
+  that resolves in the worker is judged by what it resolves to there, and one that does not
+  resolve there passes, leaving it to the proxy's own network.
+- **Not covered:** a process yt-dlp starts itself (ffmpeg as the downloader of a stream it
+  cannot fetch natively) connects outside the guard.
+
+**Cross-site requests and host names.** Whether authentication is on or off, the api refuses:
+
+- any request but `/healthz` (any method, any client) whose `Host` is not `base_url`'s host, a
+  name in `COPYCAST_ALLOWED_HOSTS`, an IP address or `localhost`: `403 unknown-host`. This
+  stops DNS rebinding. Over plain http a browser sends no `Sec-Fetch-Site` and a same-origin
+  `GET` no `Origin`, so the check cannot tell a browser apart and applies to every client.
+  Add the names you browse to Copycast by, and the service names clients on a compose or
+  Kubernetes network use;
+- an unsafe method (anything but `GET`, `HEAD`, `OPTIONS`) whose `Sec-Fetch-Site` is neither
+  `same-origin` nor `none`, or, without that header, whose `Origin` is neither `base_url`'s
+  origin nor the request's own: `403 cross-site-request`. This applies to `/api`, `/uploads`,
+  `/mcp` and `/feeds` alike.
+
+Clients that send neither header (curl, podcast apps, Claude Code and other desktop or CLI
+MCP clients, probes) are never refused as cross-site; like browsers, they must address
+Copycast by one of its names. A browser-based MCP client on another origin, such as
+MCP Inspector in a browser tab, is refused on `/mcp`. Each refusal logs `http.cross_site_refused`
+with the method, the path and the reason
+([ADR 0025](adr/0025-the-browser-boundary.md)).
+
+**Security headers.**
+
+| Where | Headers |
+|---|---|
+| every response | `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` |
+| the web UI, `/api`, `/uploads`, `/mcp`, `/healthz` (everything but `/feeds/` and `/art/`) | `Content-Security-Policy` (below), `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`, and `Strict-Transport-Security: max-age=31536000` when `base_url` is https |
+| `/api/docs` | as above, with a policy that lets Swagger UI load from `https://cdn.jsdelivr.net` and boot inline |
+| `/feeds/`, `/art/`, except audio, video and PDF | `Content-Security-Policy: sandbox`: a mirrored HTML transcript, an SVG or a feed's XML opened in a browser runs no script on Copycast's origin; podcast apps ignore it. PDF Attachments are left out because a sandboxed document cannot load Chromium's PDF viewer |
+
+The web UI's policy, with `base_url` `https://copycast.example`:
+
+```
+default-src 'self'; script-src 'self' 'sha256-XZ7u7Kv4d6fvgp7L9MVTGFXnly56yiM72Fsf3EqvlFw=';
+style-src 'self' 'unsafe-inline'; img-src 'self' https://copycast.example data: https: http:;
+media-src 'self' https://copycast.example; connect-src 'self' https://copycast.example;
+font-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'
+```
+
+The hash is the inline theme script of `web/index.html`. Styles may be inline because Radix
+and sonner inject `<style>` elements, and images may come from anywhere because a Catalog item
+that is not archived shows its Source's Artwork, some of it over plain http. A header a route
+sets itself wins.
+
+**Problem types** new or changed in 2.3.0 (`application/problem+json` with `type`
+`urn:copycast:problem:<slug>`; MCP tools end their error with `[<slug>]`):
+
+| Status | Slug | When |
+|---|---|---|
+| 403 | `cross-site-request` | an unsafe browser request from another site |
+| 403 | `unknown-host` | a request (anywhere but `/healthz`) to a host name that is not this Copycast's |
+| 422 | `destination-not-allowed` | a Source URL, or a link it leads to, that the fetch guard refuses |
+| 422 | `engine-option-rejected` | a Mirror's `engine_options` key off the allowlist; `keys` names each one, `scope` is `feed` (the slug is older; before 2.3.0 it refused only a deny-list) |
+
+## Upgrading to 2.3.0
+
+2.3.0 is the security pass (ADRs 0022 to 0026). Migration 0016 runs when the api starts and
+adds the `instance_secrets` table. Nothing else in Postgres or the Object store changes.
+
+**What podcast apps see, once.**
+
+- Artwork URLs move to `/art/…`. Apps refetch the images and download no audio again: no
+  enclosure URL changes.
+- Every feed's `Last-Modified` and `lastBuildDate` move forward once, to 2026-11-05, so an
+  app that revalidates with `If-Modified-Since` alone gets the new body instead of a 304.
+- Every feed carries the directory block tags. A feed that Apple Podcasts or Podcast Index
+  listed drops out of it.
+- While authentication is on, `/feeds/<id>/assets/*.artwork.*` needs the pair. Anything that
+  kept such a URL takes the `/art/` one from the feed or the API.
+- Every 401 under `/feeds` has the one detail "this feed requires its username and
+  password". Monitors that matched "wrong media key" or "wrong username or password for this
+  feed" need the new text.
+
+**What the operator checks.**
+
+1. **Sources on your own network.** A Mirror whose Source is a NAS, a self-hosted podcast
+   server, a `.lan` name, a compose service or a private address starts failing its Refreshes
+   with "… is not an allowed destination". List those hosts in
+   `[security] allow_private_hosts` before the upgrade, or afterwards from the
+   `fetch.destination_refused` log lines.
+2. **Environment proxies.** Copycast's own fetches ignore `HTTP_PROXY` and `HTTPS_PROXY`
+   now and connect directly; there is no setting that gives them a proxy. The Engine still
+   uses `proxy` from `[engine.options]`, or else those variables from the worker's
+   environment. Either proxy, on a private address, must be listed in
+   `[security] allow_private_hosts`, and destinations behind it are judged as well
+   ("Fetch guard and browser defences" above).
+3. **Per-Mirror engine options.** List the Mirrors that have any:
+
+   ```bash
+   docker compose exec postgres psql -U copycast -d copycast \
+     -c "SELECT id, engine_options FROM feeds WHERE engine_options <> '{}'"
+   ```
+
+   A key off the allowlist (above, "Configuration") is ignored from now on, and each engine
+   call for that feed logs `engine_options.refused feed_id=… keys=[…]`. Move cookies, a proxy
+   or a PO token to `[engine.options]`, then clear the row. The Settings dialog and the API
+   show only the allowed keys, so the dialog has nothing to remove, and saving it unchanged
+   sends no options and leaves the row as it is (editing any option there does rewrite the
+   row with the allowed set). Send the allowed set, or `{}`, yourself:
+
+   ```bash
+   curl -u copycast:"$COPYCAST_AUTH_PASSWORD" -X PATCH -H 'Content-Type: application/json' \
+     -d '{"engine_options": {}}' https://copycast.example/api/mirrors/<id>
+   ```
+
+   (curl sends no `Origin`, so the cross-site guard lets it through), or in Postgres:
+   `UPDATE feeds SET engine_options = '{}' WHERE id = '<id>'`.
+4. **Behind a reverse proxy**, set `COPYCAST_FORWARDED_ALLOW_IPS` to the proxy's network,
+   for example `docker network inspect <network> -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}'`
+   for the Traefik network the api shares. Without it the request log shows the proxy's
+   address as `client_ip`. The Tailscale profile needs nothing: its sidecar proxies from
+   loopback. On Kubernetes, uncomment the variable in `api-deployment.yaml` with the pod CIDR.
+5. **Other host names.** If browsers reach the UI, or clients reach the api, by a name other
+   than `base_url`'s (a MagicDNS short name, a LAN alias, a compose or Kubernetes service name
+   such as `copycast-api`), list it in `COPYCAST_ALLOWED_HOSTS`, or they get
+   `403 unknown-host`. IP addresses, `localhost` and `/healthz` always pass.
+6. **Browser-based MCP clients** on another origin are refused (`403 cross-site-request`).
+   Claude Code and other desktop or CLI clients are not affected.
+7. **A compose file of your own** (production's, say) reaches the containers only with the
+   variables its services name. Add both new ones to the `environment:` of the api (or
+   `api-direct`) and of the worker, next to the others:
+
+   ```yaml
+   COPYCAST_FORWARDED_ALLOW_IPS: ${COPYCAST_FORWARDED_ALLOW_IPS:-}
+   COPYCAST_ALLOWED_HOSTS: ${COPYCAST_ALLOWED_HOSTS:-}
+   ```
+
+   or load `.env` with `env_file:`. Otherwise setting them in `.env` does nothing and nothing
+   says so. Check with `docker compose exec api env | grep -E 'COPYCAST_(FORWARDED|ALLOWED)'`
+   (`api-direct` for the direct profile).
+
+**SeaweedFS in a compose file of your own.** The repository's `docker-compose.yml` already has
+these changes. A production compose file kept elsewhere needs them by hand (adapt the service
+names; [ADR 0026](adr/0026-seaweedfs-internal-apis-on-loopback-and-the-objects-network.md)):
+
+1. Copy the new `deploy/compose/seaweedfs/entrypoint.sh` over the one the `seaweedfs` service
+   mounts at `/copycast/entrypoint.sh`. It binds master, volume and filer to `127.0.0.1`, the
+   S3 gateway (8333 and its gRPC, 18333) to the container network, turns the Iceberg and Lance
+   listeners off and the telemetry with them.
+2. In the `seaweedfs` service, delete any `ports:` and `expose:` entries and add
+   `networks: [objects]`.
+3. Add `networks: [default, objects]` to the service whose network namespace the api uses
+   (the `tailscale` sidecar, since `api` has `network_mode: service:tailscale`), or to
+   `api-direct`, and to `worker`. If a service already lists networks (a Traefik network, say),
+   add `objects` to its list and keep the others. Never add it to Postgres or Valkey.
+4. At the top level, keeping any networks already there (Traefik's external one):
+
+   ```yaml
+   networks:
+     default:
+     objects:
+       internal: true
+   ```
+
+5. Apply with a plain `docker compose up -d`. Whenever the `tailscale` sidecar is recreated,
+   recreate the api with it: `--force-recreate tailscale` alone leaves the api in the old,
+   deleted namespace with no network. If you force a recreate, name both:
+   `docker compose up -d --force-recreate tailscale api seaweedfs worker`. The first start
+   takes about 10 s longer while the master re-elects itself on 127.0.0.1. The data volume needs
+   no migration.
+
+Then verify, with `<project>` the compose project name (`docker network ls` shows
+`<project>_objects`):
+
+```bash
+docker inspect -f '{{json .HostConfig.PortBindings}}' $(docker compose ps -q seaweedfs)   # {}
+docker compose exec seaweedfs netstat -tlnp
+# 127.0.0.1 for 9333, 19333, 8080, 18080, 8888, 18888; only weed's 8333 and 18333 beyond it
+docker run --rm --network <project>_objects curlimages/curl:8.17.0 \
+  -sS -o /dev/null -w '%{http_code}\n' http://seaweedfs:8333/                            # 403
+docker run --rm --network <project>_objects curlimages/curl:8.17.0 -sS -m 3 http://seaweedfs:8888/
+# Failed to connect (the same for :9333 and :8080)
+docker run --rm --network <project>_default curlimages/curl:8.17.0 -sS -m 3 http://seaweedfs:8333/
+# Could not resolve host
+curl -s https://<host>/healthz/ready                      # 200, checks.storage.ok is true
+docker compose exec worker python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8081/healthz/ready').read().decode())"
+```
+
+From another machine, `nmap -p 8333,18333,9333,8080,8888 <host>` shows them closed or
+filtered (8080 may be `api-direct`'s own published port). The host itself can still reach
+18333 at the container's address, like anything on `objects`. gRPC mTLS is the follow-up
+that closes it.
+
+**Traefik's access log.** Traefik logs every request before Copycast sees it, and its
+`RequestPath` field holds media keys (`/feeds/<id>/k/<key>/…`) and upload tokens. Either drop
+the field (`accessLog.fields.names.RequestPath: drop` in the static configuration, which
+Traefik applies to every router, or switch the copycast router's access log off where your
+Traefik release offers router-level observability options), or keep the file at mode 0600 and
+rotate it. Either way, rotate out the existing file once: it holds every key since 2.0.2.
+
+**After a rebuild onto an empty database** (`copycast rebuild`), the api mints a new instance
+secret, so every `/art/` URL moves once more (images only). Restart the api afterwards: a
+running api keeps the secret it read, and a replica started later would read the new one.
+
 ## Mirror modes
 
 A Mirror's Settings dialog (the *Settings* button on its page) and the Settings page offer two
@@ -284,7 +569,8 @@ deleted Episodes and downloads them again when a podcast app asks. The Mirror he
 offers *Archive all Available…* (queues everything not archived yet, Shorts and Tombstones
 included, with the option to switch the Mirror to Everything) and *Retry N failed*; the same
 actions are the `archive_available` and `retry_failed` tools and routes. Over MCP, `create_mirror` and
-`update_mirror` refuse Rolling and expiring Automatic modes without a `full` key. Latest N
+`update_mirror` refuse Rolling and expiring Automatic modes, and `engine_options`, without a
+`full` key. Latest N
 stays on Mirrors that already use it but is no longer offered ([ADR 0012](adr/0012-mirror-modes-rolling-and-automatic.md)).
 
 An Automatic Mirror's feed lists every item the Source lists, archived or not, and an item
@@ -439,10 +725,15 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
 - A Mirror's Settings dialog has a *Title* field: a title of your own is shown in the UI, the
   Mirror Feed and MCP and survives Refreshes (`title_override`; the Source's title stays in
   `source_title`); *Use Source title* clears it.
-- Artwork assets (`/feeds/{id}/assets/*.artwork.*`) and the Copycast logo
+- Artwork (`/art/<asset_id>-<mac>.<ext>`) and the Copycast logo
   (`/feeds/copycast-artwork.png`, the artwork of a Local feed without its own) answer without
-  credentials even while authentication is on: podcast apps fetch images bare, and the URLs
-  stay unguessable. Media, feeds, chapters and transcripts keep the feed's pair.
+  credentials even while authentication is on: podcast apps fetch images bare, and the MAC
+  keeps the URLs unguessable (see "Authentication"). Media, feeds, chapters and transcripts
+  keep the feed's pair.
+- Every feed asks directories not to list it: its channel carries
+  `<itunes:block>Yes</itunes:block>` and `<podcast:block>yes</podcast:block>`, replacing any
+  the Source sets. Apple Podcasts and Podcast Index honour them; your own podcast app ignores
+  them.
 - `/robots.txt` disallows everything and every response carries
   `X-Robots-Tag: noindex, nofollow, noarchive`; the UI shell adds the equivalent meta tag.
 - `POST /api/admin/purge` (`dry_run` true by default) deletes every archived Episode of every
@@ -545,6 +836,9 @@ What the base creates in namespace `copycast`:
   Secret `copycast-storage`. Probes on `/healthz/ready` and `/healthz/live`.
 - `Service copycast` (ClusterIP 8080) and `Ingress copycast` with `ingressClassName: tailscale`
   and host `copycast`, so the app is `https://copycast.<tailnet>.ts.net` inside your tailnet.
+  The ingress proxies from another pod: set `COPYCAST_FORWARDED_ALLOW_IPS` to the cluster's
+  pod CIDR (commented out in `api-deployment.yaml`; k3s uses `10.42.0.0/16`) so `client_ip`
+  and the scheme are the client's.
 
 The worker is active-passive by construction (one runs at a time); the api scales out.
 Nothing is pinned to a node: the archive lives in the Object store.
@@ -554,8 +848,14 @@ Nothing is pinned to a node: the archive lives in the Object store.
 Back up the Object store (for SeaweedFS in compose, the `seaweedfs` volume or the
 `COPYCAST_S3_DATA` directory while it is stopped, or any S3 sync tool against the bucket). It
 is sufficient: media, sidecars, original Source XML, assets and the `feed.json` descriptors
-reconstruct the database. Optionally add a `pg_dump` to keep
-telemetry (job history, refresh runs, download counters, engine versions):
+reconstruct the database. In compose, SeaweedFS is reachable only on the internal `objects`
+network, so a sync tool runs there (`docker run --rm --network <project>_objects …
+http://seaweedfs:8333`). To reach an off-site target (B2, S3, an rclone remote) it also needs
+`<project>_default` (`docker network connect <project>_default <container>`), since `objects`
+has no egress. The Copycast image ships no S3 sync tool. Optionally add a `pg_dump` to keep
+telemetry (job history, refresh runs, download counters, engine versions) and the instance
+secret that `/art/` URLs are keyed with (without it a restore mints a new one and image URLs
+move once):
 
 ```bash
 docker compose exec postgres pg_dump -U copycast -Fc copycast > copycast-$(date +%F).dump
@@ -580,8 +880,11 @@ docker compose run --rm worker rebuild          # add --yes to also delete rows 
 docker compose start worker
 ```
 
-Lost by a rebuild: jobs and their logs, refresh runs, heartbeats, engine version history and
-download counters. Everything else, including item ids and ordinals, comes back identical.
+Lost by a rebuild: jobs and their logs, refresh runs, heartbeats, engine version history,
+download counters and the instance secret. Everything else, including item ids and ordinals,
+comes back identical. Onto an empty database the api mints a new secret, so every Artwork URL
+(`/art/…`) changes once; podcast apps refetch the images, never the audio. Restart the api
+after such a rebuild: a running api keeps the secret it read.
 
 ## Engine bumps and rollback
 
@@ -593,8 +896,8 @@ pushes the lock change to `main`; `image.yml` then builds and publishes:
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
-| `2.2.1` | yes, on every engine bump | "the current 2.2.1" |
-| `2.2.1-yt2026.10.26.220202.dev0` | never (until pruned) | exactly this app + engine combination |
+| `2.3.0` | yes, on every engine bump | "the current 2.3.0" |
+| `2.3.0-yt2026.10.29.232701.dev0` | never (until pruned) | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
 Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. After each build the
@@ -603,7 +906,7 @@ are deleted, so roll back within that window or pull and keep the image yourself
 runs with `GITHUB_TOKEN`, which needs the package to grant the repository the Admin role
 (Package settings → Manage Actions access). To roll back an engine that broke a site, pin
 the previous immutable tag in `.env`
-(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:2.2.1-yt<previous>`) or in the kustomize overlay
+(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:2.3.0-yt<previous>`) or in the kustomize overlay
 (`images[].newTag`), and `docker compose up -d` / `kubectl apply -k`. The About page and
 `copycast --version` show which engine is running; `jobs.engine_version` records which engine
 archived each item.
@@ -636,13 +939,22 @@ stored per job in `job_log_lines` for the Jobs page.
 The api writes its own request log (uvicorn's access log is off): one `http.request` line
 per request, emitted once the last body byte went out, with `method`, `path`, `query` (null
 when empty), `status`, `duration_ms`, `bytes` (body bytes sent, after compression),
-`content_length` (the response header, when set), `client_ip` (the first hop of
-`X-Forwarded-For`, else the socket peer), `forwarded_for` (the raw header), `user_agent`,
-`range`, `request_id` and `completed` (false when the response never finished: an unhandled
-exception is logged as `status=500`, a client that went away with the status it got).
-Requests under `/healthz/` are never logged; `Authorization` and usernames never appear. A
-fetch that ran a Light Refresh also logs one `light_refresh.done` line (`feed_id`, `status`,
-`kind`, `new`, `wanted`, `enqueued`, `duration_ms`). A media key in a path is logged as `***`.
+`content_length` (the response header, when set), `client_ip` (the address uvicorn resolved:
+the socket peer, or the `X-Forwarded-For` hop a proxy listed in `COPYCAST_FORWARDED_ALLOW_IPS`
+named), `forwarded_for` (the raw header as the client sent it, which anyone can forge),
+`user_agent`, `range`, `request_id` and `completed` (false when the response never finished:
+an unhandled exception is logged as `status=500`, a client that went away with the status it
+got). Requests under `/healthz/` are never logged; `Authorization` and usernames never appear.
+A fetch that ran a Light Refresh also logs one `light_refresh.done` line (`feed_id`, `status`,
+`kind`, `new`, `wanted`, `enqueued`, `duration_ms`).
+
+No line carries a secret, whatever logged it (Copycast, uvicorn, httpx, yt-dlp), in JSON or
+console form, tracebacks included. URL userinfo becomes `scheme://***@host`, media keys
+`/k/***/`, upload tokens `/uploads/<id>/***`, API keys `cck_XXXXXXXX***`, and `Authorization`
+and `Cookie` values and Basic, Bearer and Digest credentials `***`. Console tracebacks show no
+frame locals. The security events are `fetch.destination_refused` (a Source fetch the guard
+refused, with the address and its class), `http.cross_site_refused` (method, path, reason)
+and `engine_options.refused` (a stored Mirror option the allowlist dropped).
 
 Feeds are rendered in a thread and gzipped once per revision when they enter the Feed
 cache; a client that sends `Accept-Encoding: gzip` gets those bytes as they are

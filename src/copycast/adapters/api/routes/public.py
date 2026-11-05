@@ -17,9 +17,17 @@ or answers 503 with ``Retry-After`` before a podcast app gives up (iOS drops a
 silent request after 60 s). ``/feeds/{id}/assets/{basename}`` is matched
 against the feed's archived asset rows and never counted. While authentication
 is on, every route here takes the operator pair or the feed's own pair
-(``adapters.api.auth.require_feed_access``); media and assets are also served
-under ``/feeds/{id}/k/{key}/``, the feed's media key standing in for the pair,
-which is the form a feed publishes its enclosures in while auth is on.
+(``adapters.api.auth.require_feed_access``), Artwork included; media and assets
+are also served under ``/feeds/{id}/k/{key}/``, the feed's media key standing in
+for the pair, which is the form a feed publishes its enclosures in while auth is on.
+
+``GET|HEAD /art/{asset_id}-{mac}.{ext}`` (``art_router``, no credentials in either
+mode) is where every feed and response publishes Artwork: the MAC
+(``domain.credentials.artwork_mac``, keyed with the instance secret) is checked in
+constant time before anything is looked up, and every failure (malformed token,
+wrong MAC, unknown, non-artwork or unarchived asset, wrong extension, missing
+object) answers the one same 404, so the route confirms nothing about what this
+server mirrors.
 """
 
 from __future__ import annotations
@@ -45,9 +53,10 @@ from copycast.adapters.api.problems import problem_response
 from copycast.application.models import ItemRead
 from copycast.application.services import Services
 from copycast.application.services.light_refresh import LIGHT_REFRESH_DEADLINE_SECONDS
-from copycast.domain.enums import ArchiveState, FeedKind, JobTrigger
+from copycast.domain.credentials import ARTWORK_MAC_LEN, artwork_mac_ok
+from copycast.domain.enums import ArchiveState, AssetKind, AssetState, FeedKind, JobTrigger
 from copycast.domain.exceptions import Conflict, Unsupported
-from copycast.domain.urls import COPYCAST_ARTWORK_PATH
+from copycast.domain.urls import COPYCAST_ARTWORK_PATH, artwork_ext
 from copycast.logging import get_logger
 
 if TYPE_CHECKING:
@@ -67,6 +76,13 @@ ON_DEMAND_POLL_SECONDS = 5.0
 """The re-check interval when no event arrives (the event hub reconnecting, a missed NOTIFY)."""
 ON_DEMAND_RETRY_AFTER = 30
 ASSET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+ART_TOKEN_RE = re.compile(
+    rf"^(?P<asset_id>[0-9a-f]{{16}})-(?P<mac>[a-z2-7]{{{ARTWORK_MAC_LEN}}})"
+    r"\.(?P<ext>[a-z0-9]{1,8})$"
+)
+ART_CACHE_CONTROL = "public, max-age=86400"
+"""A day: the token names one archived image for good, but a re-archive may replace it."""
+ART_NOT_FOUND = "no such artwork"
 # LIGHT_REFRESH_DEADLINE_SECONDS (8 s, imported from the service) is a module global here so
 # tests can patch how long a fetch waits on the Source; feed_xml passes it on every call.
 
@@ -307,6 +323,32 @@ async def _next_change(subscription: Any, item_id: str, within: float) -> None:
             return
 
 
+async def _asset_object(
+    container: ApiContainer,
+    feed_id: str,
+    local_path: str,
+    mime: str | None,
+    *,
+    cache_control: str,
+) -> ObjectResponse | None:
+    """The stored object of one asset row, streamed (Range, ETag); ``None`` when the path
+    leaves the feed's bucket or the object is gone."""
+    layout = container.layout
+    try:
+        key: str = layout.resolve(feed_id, local_path)
+    except ValueError:
+        return None
+    obj = await layout.store.head_async(key)
+    if obj is None:
+        return None
+    return ObjectResponse(
+        layout.store,
+        obj,
+        media_type=mime or "application/octet-stream",
+        headers={"Cache-Control": cache_control},
+    )
+
+
 async def asset(request: Request, container: ContainerDep, feed_id: str, filename: str) -> Response:
     if ASSET_NAME_RE.match(filename) is None or ".." in filename:
         return problem_response(request, status=404, slug="not-found", detail="no such asset")
@@ -316,21 +358,57 @@ async def asset(request: Request, container: ContainerDep, feed_id: str, filenam
         mime: str | None = row.mime if row is not None else None
     if row is None or not local_path:
         return problem_response(request, status=404, slug="not-found", detail="no such asset")
-    layout = container.layout
-    try:
-        key: str = layout.resolve(feed_id, local_path)
-    except ValueError:
-        return problem_response(request, status=404, slug="not-found", detail="no such asset")
-    obj = await layout.store.head_async(key)
-    if obj is None:
-        return problem_response(request, status=404, slug="not-found", detail="asset missing")
-    return ObjectResponse(
-        layout.store,
-        obj,
-        media_type=mime or "application/octet-stream",
-        headers={"Cache-Control": MEDIA_CACHE_CONTROL},
+    response = await _asset_object(
+        container, feed_id, local_path, mime, cache_control=MEDIA_CACHE_CONTROL
     )
+    if response is None:
+        return problem_response(request, status=404, slug="not-found", detail="asset missing")
+    return response
 
+
+async def artwork(request: Request, container: ContainerDep, token: str) -> Response:
+    """Public Artwork by its opaque token; the MAC is checked before any lookup."""
+
+    def not_found() -> Response:
+        return problem_response(request, status=404, slug="not-found", detail=ART_NOT_FOUND)
+
+    match = ART_TOKEN_RE.match(token)
+    if match is None:
+        return not_found()
+    asset_id, mac, ext = match.group("asset_id"), match.group("mac"), match.group("ext")
+    # The secret is read once per process (the lifespan already did): no lookup per request.
+    if not artwork_mac_ok(await container.artwork_secret(), asset_id, mac):
+        return not_found()
+    async with container.uow_factory() as uow:
+        row = await uow.assets.get(asset_id)
+        feed_id: str | None = row.feed_id if row is not None else None
+        kind: str | None = row.kind if row is not None else None
+        state: str | None = row.state if row is not None else None
+        local_path: str | None = row.local_path if row is not None else None
+        mime: str | None = row.mime if row is not None else None
+    if (
+        feed_id is None
+        or kind != AssetKind.artwork.value
+        or state != AssetState.archived.value
+        or not local_path
+        or artwork_ext(local_path) != ext
+    ):
+        return not_found()
+    response = await _asset_object(
+        container, feed_id, local_path, mime, cache_control=ART_CACHE_CONTROL
+    )
+    return response if response is not None else not_found()
+
+
+art_router = APIRouter(tags=["public"])
+"""``/art``: public Artwork under opaque tokens, no credentials in either auth mode."""
+art_router.add_api_route(
+    "/{token}",
+    artwork,
+    methods=["GET", "HEAD"],
+    response_class=Response,
+    include_in_schema=False,
+)
 
 LOGO_FILE = Path(__file__).resolve().parents[1] / "copycast-artwork.png"
 LOGO_CACHE_CONTROL = "public, max-age=604800"
@@ -397,9 +475,12 @@ for _path, _endpoint in (
 
 
 __all__ = [
+    "ART_CACHE_CONTROL",
+    "ART_TOKEN_RE",
     "FEED_CACHE_CONTROL",
     "MEDIA_CACHE_CONTROL",
     "accepts_gzip",
+    "art_router",
     "counts_as_download",
     "etag_matches",
     "http_date",

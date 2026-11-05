@@ -35,6 +35,7 @@ from copycast.application.services.context import (
     RequestRow,
     UnitOfWorkPort,
 )
+from copycast.domain.engine_options import EngineOptions
 from copycast.domain.enums import (
     ArchiveState,
     AssetFormat,
@@ -117,7 +118,9 @@ def mirror_read(
             latest_n=feed.backfill_latest_n,
             retention_days=feed.retention_days,
         ),
-        engine_options=dict(feed.engine_options or {}),
+        # A row written before 2.3.0 may hold refused keys (credentials among them):
+        # never shown, as never used (``adapters.engine.options.stored_feed_options``).
+        engine_options=EngineOptions.sanitize_feed(feed.engine_options)[0],
         last_refresh_attempt_at=feed.last_refresh_attempt_at,
         last_refresh_success_at=feed.last_refresh_success_at,
         last_light_refresh_at=feed.last_light_refresh_at,
@@ -203,8 +206,15 @@ async def one_feed_read(uow: UnitOfWorkPort, urls: PublicUrls, feed: FeedRow) ->
 
 
 def asset_read(asset: AssetRow, urls: PublicUrls) -> AssetRead:
+    """Artwork's ``url`` is its public ``/art/`` URL (the SPA and the Media Session load it
+    without credentials); every other asset's is under its feed."""
     served = asset.state == AssetState.archived and bool(asset.local_path)
-    url = urls.asset_url(asset.feed_id, asset.local_path) if served and asset.local_path else None
+    url: str | None = None
+    if served and asset.local_path:
+        if asset.kind == AssetKind.artwork:
+            url = urls.artwork_url(asset.id, asset.local_path)
+        else:
+            url = urls.asset_url(asset.feed_id, asset.local_path)
     return AssetRead(
         id=asset.id,
         feed_id=asset.feed_id,
@@ -278,6 +288,7 @@ async def item_reads(
     uow: UnitOfWorkPort, urls: PublicUrls, items: Sequence[ItemRow]
 ) -> list[ItemRead]:
     """ItemReads with assets and request ids inlined (two queries for the whole page)."""
+    await urls.prepare()
     ids = [item.id for item in items]
     assets: Mapping[str, Sequence[AssetRow]] = await uow.assets.for_items(ids) if ids else {}
     requests: Mapping[str, Sequence[uuid.UUID]] = (
