@@ -207,7 +207,11 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
     # Innermost: runs right before routing, inside the request-id and gzip layers.
     app.add_middleware(OperatorAuthMiddleware, auth=settings.auth)
     # Ahead of authentication and every route, whether auth is on or off.
-    app.add_middleware(CrossSiteGuardMiddleware, base_url=settings.base_url)
+    app.add_middleware(
+        CrossSiteGuardMiddleware,
+        base_url=settings.base_url,
+        allowed_hosts=settings.allowed_host_names,
+    )
     app.add_middleware(NoStoreJsonMiddleware)
     app.add_middleware(NoRobotsMiddleware)
     # Outside the guard and auth, so their 403 and 401 carry the headers too.

@@ -83,6 +83,23 @@ def json_logs(restore_logging: None) -> Callable[[], list[dict[str, Any]]]:
         ('{"authorization": "opaque-value"}', '{"authorization": "***"}'),
         (f"sent {BASIC} upstream", "sent Basic *** upstream"),
         (f"sent {BEARER}", "sent Bearer ***"),
+        # Letter-only credentials: base64("user:pass") and a long letter-only token.
+        ("rejected Basic dXNlcjpwYXNz", "rejected Basic ***"),
+        ("Authorization header Basic dXNlcjpwYXNz", "Authorization header Basic ***"),
+        ("(b'authorization', b'Basic dXNlcjpwYXNz')", "(b'authorization', b'Basic ***')"),
+        ("sent Bearer abcdefghijklmnopqrstu", "sent Bearer ***"),
+        # A Digest value is quoted parameters: all of them go.
+        ('Authorization: Digest username="a", response="deadbeef"', "Authorization: ***"),
+        # Userinfo up to the last @ of the authority, a quote included.
+        ("https://user:pa'ss@host/feed.xml", "https://***@host/feed.xml"),
+        ("https://user:p@ss@host/feed.xml?a=b@c", "https://***@host/feed.xml?a=b@c"),
+        # An upload token before punctuation.
+        (f"see https://h{UPLOAD_PATH}.", "see https://h/uploads/0123456789abcdef/***."),
+        (f"(https://h{UPLOAD_PATH})", "(https://h/uploads/0123456789abcdef/***)"),
+        (
+            f"urls=[{UPLOAD_PATH}, {UPLOAD_PATH}]",
+            "urls=[/uploads/0123456789abcdef/***, /uploads/0123456789abcdef/***]",
+        ),
     ],
 )
 def test_redact_text_masks_every_known_secret(text: str, expected: str) -> None:
@@ -100,6 +117,8 @@ def test_redact_text_masks_every_known_secret(text: str, expected: str) -> None:
         "cck_ABCDEFGH",  # the displayable head of a key is no secret
         'WWW-Authenticate: Basic realm="Copycast", charset="UTF-8"',
         "basic authentication is configured; bearer tokens are minted on the MCP page",
+        "Basic Authentication; Bearer authorization",
+        "uploads/0123456789abcdef/AbCdEfGhIjKlMnOpQrStUvWxYz.m4a",
     ],
 )
 def test_redact_text_leaves_what_is_no_secret(text: str) -> None:
@@ -182,3 +201,54 @@ def test_console_tracebacks_are_redacted(restore_logging: None) -> None:
     assert "refresh.failed" in err and "RuntimeError" in err
     assert "/k/***/" in err
     assert_clean(err)
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        'upstream said Authorization: "Bearer abc"',
+        'proxy-authorization=""',
+        'Authorization: tok"rest',
+        f'Authorization: "{BASIC}" and {FEED_PAIR_URL}',
+        'a "quoted" \\ value with a backslash',
+    ],
+)
+def test_every_json_line_stays_json(json_logs: Any, detail: str) -> None:
+    """The JSON line is not re-redacted: a rule matching inside a ``\\"`` escape would cut the
+    string short and the line would no longer parse."""
+    get_logger("copycast.test").warning("upstream.refused", detail=detail)
+    logging.getLogger("httpx").warning("HTTP Request: %s", detail)
+    first, second = json_logs()  # json.loads of every line
+    assert first["detail"] == redact_text(detail)
+    assert second["event"] == redact_text(f"HTTP Request: {detail}")
+    assert_clean(json.dumps([first, second]))
+
+
+def test_console_tracebacks_show_no_locals(restore_logging: None) -> None:
+    """A secret in a variable has no shape to match: the console prints no frame locals."""
+    buffer = configured("console")
+
+    def fail() -> None:
+        media_key = "MEDIAKEYSECRET123"
+        password = "hunter2hunter2"
+        raise RuntimeError(f"failed with {len(media_key) + len(password)} characters")
+
+    try:
+        fail()
+    except RuntimeError:
+        get_logger("copycast.test").exception("refresh.failed")
+    err = buffer.getvalue()
+    assert "Traceback (most recent call last)" in err and "RuntimeError" in err
+    assert "MEDIAKEYSECRET123" not in err
+    assert "hunter2hunter2" not in err
+
+
+def test_console_tracebacks_keep_a_long_url_on_one_line(restore_logging: None) -> None:
+    """A wrapped traceback could split a userinfo away from its @; a plain one never wraps."""
+    buffer = configured("console")
+    long_url = f"https://u7Gh2kLm:Pq9Rs8Tu7Vw6Xy5Z@{'sub.' * 40}copycast.example/feeds/abc123.xml"
+    try:
+        raise RuntimeError(f"upstream refused {long_url}")
+    except RuntimeError:
+        get_logger("copycast.test").exception("refresh.failed")
+    assert_clean(buffer.getvalue())

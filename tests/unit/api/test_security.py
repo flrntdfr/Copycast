@@ -21,10 +21,14 @@ from starlette.types import Receive, Scope, Send
 from copycast.adapters.api.security import (
     CROSS_SITE_SLUG,
     HSTS_VALUE,
+    PODCAST_POLICY,
     SPA_SCRIPT_HASHES,
+    UNKNOWN_HOST_SLUG,
     CrossSiteGuardMiddleware,
     SecurityHeadersMiddleware,
+    base_origin,
     docs_policy,
+    host_name,
     normalized_origin,
     spa_policy,
 )
@@ -34,11 +38,22 @@ BASE_URL = "https://copycast.example"
 UNSAFE = ("POST", "PUT", "PATCH", "DELETE")
 
 
-def _app(*, base_url: str = BASE_URL, reached: list[str] | None = None) -> Starlette:
+def _app(
+    *,
+    base_url: str = BASE_URL,
+    reached: list[str] | None = None,
+    allowed_hosts: tuple[str, ...] = ("internal",),
+) -> Starlette:
     seen = reached if reached is not None else []
 
     async def handler(request: Request) -> Response:
         seen.append(request.method)
+        if request.url.path.endswith(".mp3"):
+            return Response(b"ID3", media_type="audio/mpeg")
+        if request.url.path.endswith(".mp4"):
+            return Response(b"", media_type="video/mp4")
+        if request.url.path.endswith(".html"):
+            return Response(b"<script>alert(1)</script>", media_type="text/html")
         return PlainTextResponse("ok")
 
     async def own_headers(request: Request) -> Response:
@@ -58,7 +73,7 @@ def _app(*, base_url: str = BASE_URL, reached: list[str] | None = None) -> Starl
             Route("/{path:path}", handler, methods=methods),
         ]
     )
-    app.add_middleware(CrossSiteGuardMiddleware, base_url=base_url)
+    app.add_middleware(CrossSiteGuardMiddleware, base_url=base_url, allowed_hosts=allowed_hosts)
     app.add_middleware(SecurityHeadersMiddleware, base_url=base_url)
     return app
 
@@ -75,12 +90,12 @@ async def client(reached: list[str]) -> AsyncIterator[httpx.AsyncClient]:
         yield http
 
 
-def assert_refused(response: httpx.Response) -> None:
+def assert_refused(response: httpx.Response, slug: str = CROSS_SITE_SLUG) -> None:
     assert response.status_code == 403, response.text
     assert response.headers["content-type"].startswith("application/problem+json")
     assert response.headers["cache-control"] == "no-store"
     body = response.json()
-    assert body["type"] == f"urn:copycast:problem:{CROSS_SITE_SLUG}"
+    assert body["type"] == f"urn:copycast:problem:{slug}"
     assert body["status"] == 403
 
 
@@ -202,6 +217,148 @@ async def test_the_guard_ignores_lifespan_scopes() -> None:
     assert seen == ["lifespan", "lifespan"]
 
 
+# --- the host check (DNS rebinding) --------------------------------------------------------
+
+
+REBOUND = ("evil.example:8080", "copycast.example.evil.example", "internal.evil.example")
+
+
+@pytest.mark.parametrize("host", REBOUND)
+@pytest.mark.parametrize("method", ["GET", "POST", "DELETE"])
+@pytest.mark.parametrize(
+    "browser",
+    [
+        {"Sec-Fetch-Site": "same-origin"},
+        {"Sec-Fetch-Site": "none"},
+        {"Origin": "http://{host}"},
+        {"Sec-Fetch-Site": "same-origin", "Origin": "http://{host}"},
+    ],
+)
+async def test_a_browser_request_to_a_rebound_name_is_refused(
+    client: httpx.AsyncClient, reached: list[str], host: str, method: str, browser: dict[str, str]
+) -> None:
+    """After a rebinding the attacker's page is same-origin with itself: Sec-Fetch-Site and
+    Origin both look right, only Host is foreign."""
+    headers = {name: value.format(host=host) for name, value in browser.items()}
+    for path in ("/api/feeds", "/mcp", "/mcp/", "/feeds/x.xml", "/"):
+        response = await client.request(method, path, headers={**headers, "Host": host})
+        assert_refused(response, UNKNOWN_HOST_SLUG)
+    assert reached == []
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "copycast.example",  # base_url's
+        "Copycast.Example.",
+        "copycast.example:8443",
+        "internal:8080",  # COPYCAST_ALLOWED_HOSTS
+        "localhost:5173",  # the Vite dev server
+        "app.localhost",
+        "127.0.0.1:8080",
+        "[::1]:8080",
+        "100.101.102.103",  # a tailnet address typed in the address bar
+        "10.42.0.17:8080",  # a Kubernetes probe
+    ],
+)
+async def test_a_browser_request_to_a_name_of_this_copycast_passes(
+    client: httpx.AsyncClient, reached: list[str], host: str
+) -> None:
+    headers = {"Sec-Fetch-Site": "same-origin", "Host": host}
+    assert (await client.post("/api/buckets", headers=headers)).status_code == 200
+    assert (await client.get("/api/feeds", headers=headers)).status_code == 200
+    assert reached == ["POST", "GET"]
+
+
+@pytest.mark.parametrize("host", ["", "user@copycast.example", "copycast.example/x", "a b"])
+async def test_a_browser_request_without_a_usable_host_is_refused(
+    client: httpx.AsyncClient, host: str
+) -> None:
+    response = await client.get("/", headers={"Sec-Fetch-Site": "none", "Host": host})
+    assert_refused(response, UNKNOWN_HOST_SLUG)
+
+
+async def test_non_browser_clients_are_not_host_checked(
+    client: httpx.AsyncClient, reached: list[str]
+) -> None:
+    # curl or an MCP client on a Docker network name: no Fetch Metadata, no Origin.
+    assert (await client.post("/mcp", headers={"Host": "copycast-api:8080"})).status_code == 200
+    assert reached == ["POST"]
+
+
+async def test_a_rebound_origin_is_not_the_requests_own() -> None:
+    """Without the host check the Origin would equal the request's own scheme://Host."""
+    seen: list[str] = []
+    transport = httpx.ASGITransport(app=_app(reached=seen, allowed_hosts=()))
+    async with httpx.AsyncClient(transport=transport, base_url="http://evil.example") as http:
+        response = await http.post("/api/buckets", headers={"Origin": "http://evil.example"})
+    assert_refused(response, UNKNOWN_HOST_SLUG)
+    assert seen == []
+
+
+async def test_a_star_turns_the_host_check_off() -> None:
+    seen: list[str] = []
+    transport = httpx.ASGITransport(app=_app(reached=seen, allowed_hosts=("*",)))
+    async with httpx.AsyncClient(transport=transport, base_url="http://any.example") as http:
+        response = await http.post("/api/buckets", headers={"Sec-Fetch-Site": "same-origin"})
+    assert response.status_code == 200
+    assert seen == ["POST"]
+
+
+async def test_a_host_refusal_is_logged(client: httpx.AsyncClient) -> None:
+    with structlog.testing.capture_logs() as events:
+        await client.get("/", headers={"Sec-Fetch-Site": "none", "Host": "evil.example"})
+    (event,) = [e for e in events if e["event"] == "http.cross_site_refused"]
+    assert "evil.example" in event["reason"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Copycast.Example:8080", "copycast.example"),
+        ("copycast.example.", "copycast.example"),
+        ("[::1]:8080", "::1"),
+        ("127.0.0.1", "127.0.0.1"),
+        ("", None),
+        ("host:99999", None),
+        ("user@host", None),
+        ("host/path", None),
+    ],
+)
+def test_host_name(value: str, expected: str | None) -> None:
+    assert host_name(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("https://public.example/copycast", "https://public.example"),
+        ("https://Public.Example:443/a/b/", "https://public.example"),
+        ("http://copycast.tailnet:8080", "http://copycast.tailnet:8080"),
+        ("not a url", None),
+    ],
+)
+def test_base_origin_ignores_the_path(value: str, expected: str | None) -> None:
+    assert base_origin(value) == expected
+
+
+async def test_a_base_url_with_a_path_keeps_its_origin_hsts_and_policy() -> None:
+    seen: list[str] = []
+    base_url = "https://public.example/copycast"
+    transport = httpx.ASGITransport(app=_app(base_url=base_url, reached=seen))
+    async with httpx.AsyncClient(transport=transport, base_url="http://internal:8080") as http:
+        page = await http.get("/")
+        write = await http.post("/api/buckets", headers={"Origin": "https://public.example"})
+        rebound = await http.post(
+            "/api/buckets",
+            headers={"Sec-Fetch-Site": "same-origin", "Host": "public.example"},
+        )
+    assert page.headers["strict-transport-security"] == HSTS_VALUE
+    assert page.headers["content-security-policy"] == spa_policy("https://public.example")
+    assert write.status_code == 200 and rebound.status_code == 200
+    assert seen == ["GET", "POST", "POST"]
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -239,24 +396,43 @@ async def test_the_ui_and_the_api_get_the_full_set(client: httpx.AsyncClient, pa
     [
         "/feeds/abc.xml",
         "/feeds/abc/media/0123.mp3",
+        "/feeds/abc/k/key/media/0123.mp4",
         "/feeds/abc/k/key/assets/x.vtt",
+        "/feeds/abc/k/key/assets/x.html",
         "/feeds/copycast-artwork.png",
         "/art/TOKEN.jpg",
     ],
 )
-async def test_feeds_media_and_artwork_get_only_nosniff_and_referrer_policy(
+async def test_feeds_media_and_artwork_get_no_page_policy(
     client: httpx.AsyncClient, path: str
 ) -> None:
     headers = (await client.get(path)).headers
     assert headers["x-content-type-options"] == "nosniff"
     assert headers["referrer-policy"] == "no-referrer"
-    for absent in (
-        "content-security-policy",
-        "x-frame-options",
-        "cross-origin-opener-policy",
-        "strict-transport-security",
-    ):
+    for absent in ("x-frame-options", "cross-origin-opener-policy", "strict-transport-security"):
         assert absent not in headers, (path, absent)
+    assert headers.get("content-security-policy") in (None, PODCAST_POLICY)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/feeds/abc.xml",
+        "/feeds/abc/k/key/assets/x.html",  # a mirrored HTML transcript
+        "/feeds/abc/k/key/assets/x.vtt",
+        "/feeds/copycast-artwork.png",
+        "/art/TOKEN.jpg",
+    ],
+)
+async def test_podcast_documents_are_sandboxed(client: httpx.AsyncClient, path: str) -> None:
+    """A mirrored HTML transcript opened in a browser would otherwise run its scripts on
+    Copycast's origin, where Sec-Fetch-Site: same-origin passes the guard."""
+    assert (await client.get(path)).headers["content-security-policy"] == PODCAST_POLICY
+
+
+@pytest.mark.parametrize("path", ["/feeds/abc/media/0123.mp3", "/feeds/abc/k/key/media/0123.mp4"])
+async def test_audio_and_video_are_not_sandboxed(client: httpx.AsyncClient, path: str) -> None:
+    assert "content-security-policy" not in (await client.get(path)).headers
 
 
 async def test_a_refusal_carries_the_headers_too(client: httpx.AsyncClient) -> None:

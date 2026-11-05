@@ -9,17 +9,22 @@ access log stays off.
 
 Secrets never reach a line: :func:`redact_secrets` masks every credential whose
 shape Copycast knows in every event value (nested containers included), last of
-the shared chain so stdlib records and JSON tracebacks pass through it, and the
-renderer's output goes through :func:`redact_text` once more for what the console
-renderer formats itself (its pretty tracebacks).
+the shared chain so stdlib records and JSON tracebacks pass through it. The
+console renderer formats tracebacks itself, so its output goes through
+:func:`redact_text` once more; it prints plain tracebacks, without the locals of
+each frame (a secret in a variable has no shape to match) and without wrapping
+(which would split a URL). A JSON line is never re-redacted: the rules would
+match inside its escapes and break the JSON.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 import structlog
@@ -44,31 +49,63 @@ REDACTED = "***"
 
 _SEGMENT = r"[^/\s?#\"'<>]+"
 _TOKEN = r"[A-Za-z0-9._~+/-]"
-_REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
+_CREDENTIAL_SYMBOL = re.compile(r"[0-9+/=_~-]")
+BEARER_MIN_LETTERS = 16
+"""A Bearer value of letters only is taken for a credential from this length on (prose
+after "bearer" is shorter); a Basic one only when it decodes to a ``user:pass`` pair."""
+
+
+def _is_basic_pair(value: str) -> bool:
+    """``value`` is base64 of printable text holding a ``:``, as a Basic credential is."""
+    try:
+        decoded = base64.b64decode(value + "=" * (-len(value) % 4), validate=True)
+        text = decoded.decode("utf-8")
+    except (binascii.Error, ValueError):
+        return False
+    return ":" in text and text.isprintable()
+
+
+def _scheme_credential(match: re.Match[str]) -> str:
+    scheme, value = match.group(1), match.group(2)
+    if (
+        _CREDENTIAL_SYMBOL.search(value)
+        or (scheme.lower() == "bearer" and len(value) >= BEARER_MIN_LETTERS)
+        or (scheme.lower() == "basic" and _is_basic_pair(value))
+    ):
+        return f"{scheme} {REDACTED}"
+    return match.group(0)
+
+
+_REDACTIONS: tuple[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]], ...] = (
     # An Authorization header written out as text, whatever its scheme (first, so the
-    # Basic/Bearer rule below never sees the scheme it already took).
+    # Basic/Bearer rule below never sees the scheme it already took). A Digest value is a
+    # list of quoted parameters: the rest of the line goes.
     (
         re.compile(
             r"(?i)\b((?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?)"
-            r"(?:(?:basic|bearer|digest|token)\s+)?[^\s\"',;}]+"
+            r"(?:digest\s+[^\r\n]*|(?:(?:basic|bearer|token)\s+)?[^\s\"',;}]+)"
         ),
         rf"\g<1>{REDACTED}",
     ),
-    # Basic and Bearer credentials anywhere. The credential must look like one (a digit or a
-    # base64/token symbol in it) so prose such as "basic authentication" is left alone, and
-    # the realm of a challenge is no credential.
+    # Basic and Bearer credentials anywhere. The value must look like one (a digit or a
+    # base64/token symbol in it, a long Bearer value, a Basic value that decodes to a pair)
+    # so prose such as "basic authentication" is left alone, and the realm of a challenge is
+    # no credential.
     (
-        re.compile(rf"(?i)\b(basic|bearer)\s+(?!realm\b)(?={_TOKEN}*[0-9+/=_~-]){_TOKEN}{{8,}}=*"),
-        rf"\g<1> {REDACTED}",
+        re.compile(rf"(?i)\b(basic|bearer)\s+(?!realm\b)({_TOKEN}{{8,}}=*)"),
+        _scheme_credential,
     ),
-    # The userinfo of any URL (a feed's user:pass@, a database or cache URL): both halves.
-    (re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/?#@\"'<>]+@"), rf"\g<1>{REDACTED}@"),
+    # The userinfo of any URL (a feed's user:pass@, a database or cache URL): everything up
+    # to the last @ of the authority, as urlsplit and httpx read it (a password may hold an
+    # @ or a ').
+    (re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/?#\"<>]+@"), rf"\g<1>{REDACTED}@"),
     # A feed's media key (/feeds/{id}/k/{key}/, ADR 0020).
     (re.compile(rf"(/feeds/{_SEGMENT}/k/){_SEGMENT}"), rf"\g<1>{REDACTED}"),
-    # The one-time token of an upload URL (/uploads/{id}/{token}). Object store keys under
-    # uploads/{id}/ end in a file name with a dot and are left alone.
+    # The one-time token of an upload URL (/uploads/{id}/{token}), whatever punctuation
+    # follows it. Object store keys under uploads/{id}/ end in a file name with an extension
+    # and are left alone.
     (
-        re.compile(rf"(/uploads/{_SEGMENT}/)[A-Za-z0-9_-]{{16,}}(?=$|[\s?#\"'<>/])"),
+        re.compile(rf"(/uploads/{_SEGMENT}/)[A-Za-z0-9_-]{{16,}}(?![A-Za-z0-9_-]|\.[A-Za-z0-9])"),
         rf"\g<1>{REDACTED}",
     ),
     # An MCP API key (cck_ plus 54 characters); its displayable head (cck_ plus 8) is no
@@ -128,7 +165,8 @@ def redact_secrets(_: Any, __: str, event_dict: EventDict) -> EventDict:
 
 
 class RedactingRenderer:
-    """A renderer whose output goes through :func:`redact_text` once more."""
+    """A renderer whose output goes through :func:`redact_text` once more (the console
+    renderer only: see the module docstring)."""
 
     def __init__(self, renderer: Processor) -> None:
         self._renderer = renderer
@@ -172,7 +210,11 @@ def configure_logging(
         shared.append(structlog.processors.format_exc_info)
         renderer = structlog.processors.JSONRenderer()
     else:
-        renderer = structlog.dev.ConsoleRenderer(colors=sys.stderr.isatty())
+        renderer = RedactingRenderer(
+            structlog.dev.ConsoleRenderer(
+                colors=sys.stderr.isatty(), exception_formatter=structlog.dev.plain_traceback
+            )
+        )
     # Last of the shared chain: after format_exc_info, so a JSON traceback is redacted too.
     shared.append(redact_secrets)
 
@@ -190,7 +232,7 @@ def configure_logging(
         foreign_pre_chain=shared,
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            RedactingRenderer(renderer),
+            renderer,
         ],
     )
     handler = logging.StreamHandler(sys.stderr)

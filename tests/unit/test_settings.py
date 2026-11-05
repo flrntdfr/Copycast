@@ -245,3 +245,40 @@ def test_forwarded_allow_ips_is_never_read_from_the_toml_file(
     assert get_settings(storage={"scratch_dir": tmp_path}).forwarded_allow_ips is None
     monkeypatch.setenv("COPYCAST_FORWARDED_ALLOW_IPS", "10.0.0.0/8")
     assert get_settings(storage={"scratch_dir": tmp_path}).forwarded_allow_ips == "10.0.0.0/8"
+
+
+def test_allowed_hosts_is_unset_by_default(tmp_path: Path) -> None:
+    settings = get_settings(storage={"scratch_dir": tmp_path})
+    assert settings.allowed_hosts is None
+    assert settings.allowed_host_names == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("copycast", {"copycast"}),
+        (
+            " Copycast.Local. , nas_box,copycast.tail1234.ts.net ",
+            {"copycast.local", "nas_box", "copycast.tail1234.ts.net"},
+        ),
+        ("::1,10.0.0.5", {"::1", "10.0.0.5"}),
+        ("*", {"*"}),
+        ("  ", set()),
+    ],
+)
+def test_allowed_hosts_from_the_environment(
+    raw: str, expected: set[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COPYCAST_ALLOWED_HOSTS", raw)
+    assert get_settings(storage={"scratch_dir": tmp_path}).allowed_host_names == expected
+
+
+@pytest.mark.parametrize(
+    "raw", ["https://copycast.example", "copycast:8080", "copycast/x", "-bad.example", "a..b"]
+)
+def test_a_bad_allowed_hosts_is_one_settings_error(
+    raw: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COPYCAST_ALLOWED_HOSTS", raw)
+    with pytest.raises(SettingsError, match="COPYCAST_ALLOWED_HOSTS"):
+        get_settings(storage={"scratch_dir": tmp_path})

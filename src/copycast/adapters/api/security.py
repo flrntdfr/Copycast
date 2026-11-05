@@ -4,16 +4,24 @@
 another site. Browsers attach a cached Basic pair (and cookies) to cross-site requests,
 and with authentication off any page the operator visits could POST to a tailnet
 Copycast; the guard runs whether authentication is on or off, ahead of it and of every
-route (``/api``, ``/uploads``, ``/mcp`` alike).
+route (``/api``, ``/uploads``, ``/mcp`` alike). It also refuses any browser request (one
+with ``Sec-Fetch-Site`` or ``Origin``, whatever its method) addressed to a host name that
+is not Copycast's: a page whose name the attacker rebinds to Copycast's address is
+same-origin with itself, so only its ``Host`` gives it away (DNS rebinding).
 
 :class:`SecurityHeadersMiddleware` sets ``nosniff`` and ``Referrer-Policy`` on every
 response, and on everything but ``/feeds/`` and ``/art/`` (what podcast apps fetch) a
 Content-Security-Policy, ``X-Frame-Options``, ``Cross-Origin-Opener-Policy`` and, when
-``base_url`` is https, ``Strict-Transport-Security``. A header a route already set wins.
+``base_url`` is https, ``Strict-Transport-Security``. Podcast responses other than audio
+and video get ``Content-Security-Policy: sandbox``, which podcast apps ignore: a mirrored
+HTML transcript (or a feed's XML) opened in a browser runs no script on Copycast's
+origin. A header a route already set wins.
 """
 
 from __future__ import annotations
 
+import ipaddress
+from collections.abc import Iterable
 from urllib.parse import urlsplit
 
 from fastapi.responses import JSONResponse
@@ -28,6 +36,9 @@ SAME_ORIGIN_FETCH_SITES = frozenset({"same-origin", "none"})
 """``Sec-Fetch-Site`` values of a request the page itself (or the user, typing a URL or
 following a bookmark) started; ``same-site`` and ``cross-site`` are refused."""
 CROSS_SITE_SLUG = "cross-site-request"
+UNKNOWN_HOST_SLUG = "unknown-host"
+ANY_HOST = "*"
+"""The ``COPYCAST_ALLOWED_HOSTS`` entry that turns the host check off."""
 DEFAULT_PORTS = {"http": 80, "https": 443}
 
 log = get_logger(__name__)
@@ -53,6 +64,61 @@ def normalized_origin(value: str) -> str | None:
     return f"{scheme}://{host}{suffix}"
 
 
+def base_origin(base_url: str) -> str | None:
+    """The origin of ``base_url``: its scheme and authority, whatever path it has (Copycast
+    behind a proxy that strips a prefix)."""
+    try:
+        parts = urlsplit(base_url.strip())
+    except ValueError:
+        return None
+    return normalized_origin(f"{parts.scheme}://{parts.netloc}")
+
+
+def host_name(host: str) -> str | None:
+    """The host name of a ``Host`` header, lowercased, without brackets, port or trailing
+    dot; ``None`` when it is no host."""
+    try:
+        parts = urlsplit(f"//{host.strip()}")
+        _ = parts.port
+    except ValueError:
+        return None
+    if parts.username is not None or parts.path or parts.query or parts.fragment:
+        return None
+    name = (parts.hostname or "").rstrip(".")
+    return name or None
+
+
+def is_unbindable_host(name: str) -> bool:
+    """A name no attacker can point at Copycast: an IP literal (a page can only be on it by
+    being served from it) or ``localhost`` and its subdomains (browsers resolve them to
+    loopback themselves). The Vite dev server and Kubernetes probes use these."""
+    if name == "localhost" or name.endswith(".localhost"):
+        return True
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return True
+
+
+def foreign_host_refusal(headers: Headers, allowed: frozenset[str]) -> str | None:
+    """Why this browser request is refused for its ``Host``, or ``None`` when it may proceed.
+
+    Only requests carrying ``Sec-Fetch-Site`` or ``Origin`` are checked: other clients
+    (curl, podcast apps, MCP clients, probes) cannot be rebound. ``allowed`` holds
+    ``base_url``'s host name and ``COPYCAST_ALLOWED_HOSTS``.
+    """
+    if ANY_HOST in allowed:
+        return None
+    if headers.get("sec-fetch-site") is None and headers.get("origin") is None:
+        return None
+    raw = headers.get("host") or ""
+    name = host_name(raw)
+    if name is not None and (name in allowed or is_unbindable_host(name)):
+        return None
+    return f"Host {raw.strip()[:128]!r} is not a name of this Copycast"
+
+
 def request_origin(scope: Scope, headers: Headers) -> str | None:
     """The origin the request was addressed to: its scheme (as uvicorn resolved it from a
     trusted proxy) and its ``Host``."""
@@ -70,6 +136,8 @@ def cross_site_refusal(
     Fetch Metadata first: every current browser sends ``Sec-Fetch-Site``. Without it,
     ``Origin`` (``null`` included) must be ``base_url``'s origin or the request's own.
     With neither the client is no browser (curl, a podcast app, an MCP client): allowed.
+    "Same origin" is only as good as the ``Host`` it is relative to: the caller checks
+    :func:`foreign_host_refusal` first.
     """
     if method.upper() in SAFE_METHODS:
         return None
@@ -89,13 +157,15 @@ def cross_site_refusal(
     return f"Origin {origin.strip()[:128]!r} is not this Copycast"
 
 
-def cross_site_response(path: str) -> JSONResponse:
-    problem = build_problem(
-        None,
-        status=403,
-        slug=CROSS_SITE_SLUG,
-        detail="another site cannot send this request; use the Copycast web UI or a client",
-    )
+CROSS_SITE_DETAIL = "another site cannot send this request; use the Copycast web UI or a client"
+UNKNOWN_HOST_DETAIL = (
+    "this Copycast is not served under this host name; use base_url, or add the name to "
+    "COPYCAST_ALLOWED_HOSTS"
+)
+
+
+def refusal_response(path: str, *, slug: str, detail: str) -> JSONResponse:
+    problem = build_problem(None, status=403, slug=slug, detail=detail)
     body = problem.model_dump(mode="json", exclude_none=True)
     body["instance"] = redact_text(path)
     return JSONResponse(
@@ -107,12 +177,18 @@ def cross_site_response(path: str) -> JSONResponse:
 
 
 class CrossSiteGuardMiddleware:
-    """Refuse an unsafe method a browser sent from another site (403 problem+json)."""
+    """Refuse a browser request to a host name that is not Copycast's, and an unsafe method
+    a browser sent from another site (403 problem+json)."""
 
-    def __init__(self, app: ASGIApp, *, base_url: str) -> None:
+    def __init__(self, app: ASGIApp, *, base_url: str, allowed_hosts: Iterable[str] = ()) -> None:
         self.app = app
-        base = normalized_origin(base_url)
+        base = base_origin(base_url)
         self.trusted: frozenset[str] = frozenset({base} if base else ())
+        base_host = host_name(urlsplit(base_url).netloc.rpartition("@")[2])
+        names = {name.lower().rstrip(".") for name in allowed_hosts}
+        self.allowed_hosts: frozenset[str] = frozenset(
+            names | ({base_host} if base_host else set())
+        )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -120,13 +196,17 @@ class CrossSiteGuardMiddleware:
             return
         method = str(scope.get("method", "GET"))
         headers = Headers(scope=scope)
-        reason = cross_site_refusal(method, headers, scope, self.trusted)
+        slug, detail = UNKNOWN_HOST_SLUG, UNKNOWN_HOST_DETAIL
+        reason = foreign_host_refusal(headers, self.allowed_hosts)
+        if reason is None:
+            slug, detail = CROSS_SITE_SLUG, CROSS_SITE_DETAIL
+            reason = cross_site_refusal(method, headers, scope, self.trusted)
         if reason is None:
             await self.app(scope, receive, send)
             return
         path = str(scope.get("path", ""))
         log.warning("http.cross_site_refused", method=method, path=redact_text(path), reason=reason)
-        await cross_site_response(path)(scope, receive, send)
+        await refusal_response(path, slug=slug, detail=detail)(scope, receive, send)
 
 
 SPA_SCRIPT_HASHES: tuple[str, ...] = ("sha256-XZ7u7Kv4d6fvgp7L9MVTGFXnly56yiM72Fsf3EqvlFw=",)
@@ -136,8 +216,13 @@ DOCS_PATHS = frozenset({"/api/docs", "/api/docs/oauth2-redirect"})
 DOCS_CDN = "https://cdn.jsdelivr.net"
 """FastAPI's Swagger UI loads its bundle and stylesheet from here and boots inline."""
 PODCAST_PREFIXES = ("/feeds/", "/art/")
-"""Feeds, media and assets: podcast apps render none of it, so no CSP (``nosniff`` and
-``Referrer-Policy`` only)."""
+"""Feeds, media and assets: podcast apps render none of it, so no page policy (``nosniff``,
+``Referrer-Policy`` and, but on audio and video, :data:`PODCAST_POLICY`)."""
+PODCAST_POLICY = "sandbox"
+"""A mirrored HTML transcript or SVG, or a feed's XML, opened in a browser is a document of
+an opaque origin with scripts, forms and popups off. Audio and video are left alone (the
+browser's own player document)."""
+UNSANDBOXED_TYPES = ("audio/", "video/")
 HSTS_VALUE = "max-age=31536000"
 
 
@@ -197,20 +282,17 @@ class SecurityHeadersMiddleware:
 
     def __init__(self, app: ASGIApp, *, base_url: str) -> None:
         self.app = app
-        base_origin = normalized_origin(base_url)
+        base = base_origin(base_url)
         common = {"x-content-type-options": "nosniff", "referrer-policy": "no-referrer"}
         browser = {
             **common,
             "x-frame-options": "DENY",
             "cross-origin-opener-policy": "same-origin",
         }
-        if base_origin is not None and base_origin.startswith("https://"):
+        if base is not None and base.startswith("https://"):
             browser["strict-transport-security"] = HSTS_VALUE
         self.podcast: dict[str, str] = common
-        self.spa: dict[str, str] = {
-            **browser,
-            "content-security-policy": spa_policy(base_origin),
-        }
+        self.spa: dict[str, str] = {**browser, "content-security-policy": spa_policy(base)}
         self.docs: dict[str, str] = {**browser, "content-security-policy": docs_policy()}
 
     def headers_for(self, path: str) -> dict[str, str]:
@@ -225,6 +307,7 @@ class SecurityHeadersMiddleware:
             await self.app(scope, receive, send)
             return
         wanted = self.headers_for(str(scope.get("path", "")))
+        podcast = wanted is self.podcast
 
         async def send_secured(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -232,23 +315,37 @@ class SecurityHeadersMiddleware:
                 for name, value in wanted.items():
                     if name not in headers:
                         headers[name] = value
+                content_type = headers.get("content-type", "").lower()
+                if (
+                    podcast
+                    and "content-security-policy" not in headers
+                    and not content_type.startswith(UNSANDBOXED_TYPES)
+                ):
+                    headers["content-security-policy"] = PODCAST_POLICY
             await send(message)
 
         await self.app(scope, receive, send_secured)
 
 
 __all__ = [
+    "ANY_HOST",
     "CROSS_SITE_SLUG",
     "DOCS_PATHS",
     "HSTS_VALUE",
+    "PODCAST_POLICY",
     "PODCAST_PREFIXES",
     "SAFE_METHODS",
     "SPA_SCRIPT_HASHES",
+    "UNKNOWN_HOST_SLUG",
     "CrossSiteGuardMiddleware",
     "SecurityHeadersMiddleware",
+    "base_origin",
     "cross_site_refusal",
     "docs_policy",
+    "foreign_host_refusal",
+    "host_name",
     "is_podcast_path",
+    "is_unbindable_host",
     "normalized_origin",
     "request_origin",
     "spa_policy",

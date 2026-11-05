@@ -10,7 +10,12 @@ import httpx
 import pytest
 
 from copycast.adapters.api.app import create_app
-from copycast.adapters.api.security import CROSS_SITE_SLUG, spa_policy
+from copycast.adapters.api.security import (
+    CROSS_SITE_SLUG,
+    PODCAST_POLICY,
+    UNKNOWN_HOST_SLUG,
+    spa_policy,
+)
 from copycast.app import build_container
 from copycast.settings import Settings, get_settings
 from tests.conftest import TEST_BASE_URL
@@ -41,11 +46,11 @@ def with_auth(settings: Settings, **overrides: Any) -> Settings:
     )
 
 
-def assert_refused(response: httpx.Response) -> None:
+def assert_refused(response: httpx.Response, slug: str = CROSS_SITE_SLUG) -> None:
     assert response.status_code == 403, response.text
     assert response.headers["content-type"].startswith("application/problem+json")
     assert response.headers["cache-control"] == "no-store"
-    assert response.json()["type"] == f"urn:copycast:problem:{CROSS_SITE_SLUG}"
+    assert response.json()["type"] == f"urn:copycast:problem:{slug}"
     assert "www-authenticate" not in response.headers
 
 
@@ -62,6 +67,39 @@ async def test_cross_site_writes_are_refused_before_auth_and_routes(
             assert_refused(await client.put("/uploads/abc/AbCdEfGhIjKlMnOpQrSt", headers=headers))
             assert_refused(await client.post(MCP_PATH, json={}, headers=headers))
             assert_refused(await client.post(f"{MCP_PATH}/", json={}, headers=headers))
+
+
+@pytest.mark.parametrize("auth_on", [False, True])
+async def test_a_rebound_host_name_is_refused_on_every_path(
+    settings: Settings, auth_on: bool
+) -> None:
+    """DNS rebinding: the attacker's page, now resolving to Copycast, is same-origin with
+    itself. /mcp runs with the SDK's own host check off, so this one has to hold."""
+    configured = with_auth(settings) if auth_on else settings
+    rebound = {"Host": "evil.example:8080", "Sec-Fetch-Site": "same-origin"}
+    with_origin = {"Host": "evil.example:8080", "Origin": "http://evil.example:8080"}
+    async with app_client(configured) as client:
+        for headers in (rebound, with_origin, {**rebound, **basic(*OPERATOR)}):
+            for response in (
+                await client.get(api("/feeds"), headers=headers),
+                await client.post(api("/buckets"), json={"name": "x"}, headers=headers),
+                await client.post(MCP_PATH, json={}, headers=headers),
+                await client.post(f"{MCP_PATH}/", json={}, headers=headers),
+                await client.get("/feeds/abc.xml", headers=headers),
+            ):
+                assert_refused(response, UNKNOWN_HOST_SLUG)
+
+
+async def test_an_allowed_host_name_passes_the_host_check(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COPYCAST_ALLOWED_HOSTS", "copycast")
+    configured = with_auth(settings)
+    async with app_client(configured) as client:
+        response = await client.get(
+            api("/feeds"), headers={"Host": "copycast:8080", "Sec-Fetch-Site": "none"}
+        )
+    assert response.status_code == 401  # past the guard, at authentication
 
 
 async def test_without_fetch_metadata_a_foreign_origin_is_refused(settings: Settings) -> None:
@@ -113,12 +151,13 @@ async def test_headers_on_the_api_feeds_and_robots(settings: Settings) -> None:
         assert feed.status_code == 401
         assert feed.headers["x-content-type-options"] == "nosniff"
         assert feed.headers["referrer-policy"] == "no-referrer"
-        assert "content-security-policy" not in feed.headers
+        assert feed.headers["content-security-policy"] == PODCAST_POLICY
         assert "strict-transport-security" not in feed.headers
+        assert "x-frame-options" not in feed.headers
 
         logo = await client.get("/feeds/copycast-artwork.png")
         assert logo.status_code == 200
-        assert "content-security-policy" not in logo.headers
+        assert logo.headers["content-security-policy"] == PODCAST_POLICY
 
         docs = await client.get(api("/docs"), headers=basic(*OPERATOR))
         assert docs.status_code == 200
@@ -146,3 +185,8 @@ async def test_the_spa_shell_and_assets_get_the_policy(
             assert response.headers["x-content-type-options"] == "nosniff"
             assert response.headers["cross-origin-opener-policy"] == "same-origin"
             assert "strict-transport-security" not in response.headers
+        # /art carries no page policy: the shell must never be served under it.
+        for path in ("/art", "/art/x", "/art/TOKEN.jpg"):
+            response = await client.get(path)
+            assert response.status_code == 404, path
+            assert not response.headers["content-type"].startswith("text/html"), path

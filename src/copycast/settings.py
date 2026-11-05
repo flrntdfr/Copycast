@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Literal
@@ -182,6 +183,18 @@ def config_path() -> Path:
     return Path(os.environ.get(CONFIG_ENV) or DEFAULT_CONFIG_PATH)
 
 
+HOST_NAME_RE = re.compile(r"[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)*")
+"""A DNS name, labels of letters, digits, hyphens (and the underscores some LANs use)."""
+
+
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value.strip("[]"))
+    except ValueError:
+        return False
+    return True
+
+
 TOML_REFUSED_KEYS = frozenset({"forwarded_allow_ips", "COPYCAST_FORWARDED_ALLOW_IPS"})
 """Keys the TOML file never sets: whom to believe about a client's address belongs to the
 deployment (compose, Kubernetes), next to the proxy it names."""
@@ -221,6 +234,10 @@ class Settings(BaseSettings):
     """The proxies whose ``X-Forwarded-For``/``-Proto`` uvicorn believes: comma-separated
     addresses or CIDR networks, or ``*``. Unset keeps uvicorn's own default (its
     ``FORWARDED_ALLOW_IPS`` environment variable, else ``127.0.0.1``)."""
+    allowed_hosts: str | None = Field(default=None, validation_alias="COPYCAST_ALLOWED_HOSTS")
+    """Host names besides ``base_url``'s a browser may reach Copycast by (a tailnet short
+    name, a LAN name), comma-separated, or ``*`` for any. IP literals and ``localhost``
+    always pass (see ``adapters.api.security``)."""
     port: int = Field(default=8080, ge=1, le=65535, validation_alias="COPYCAST_PORT")
     worker_port: int = Field(default=8081, ge=1, le=65535, validation_alias="COPYCAST_WORKER_PORT")
     web_dir: Path | None = Field(default=None, validation_alias="COPYCAST_WEB_DIR")
@@ -294,6 +311,26 @@ class Settings(BaseSettings):
                     f"separated by commas, or *, got {entry!r}"
                 ) from None
         return ",".join(entries)
+
+    @field_validator("allowed_hosts")
+    @classmethod
+    def _check_allowed_hosts(cls, value: str | None) -> str | None:
+        """Bare host names: a scheme or a port would never equal a ``Host``'s name."""
+        if value is None or not value.strip():
+            return None
+        entries = [entry.strip().lower().rstrip(".") for entry in value.split(",")]
+        entries = [entry for entry in entries if entry]
+        for entry in entries:
+            if entry != "*" and HOST_NAME_RE.fullmatch(entry) is None and not _is_ip(entry):
+                raise ValueError(
+                    "COPYCAST_ALLOWED_HOSTS must list host names (no scheme, port or path) "
+                    f"separated by commas, or *, got {entry!r}"
+                )
+        return ",".join(entries) or None
+
+    @property
+    def allowed_host_names(self) -> frozenset[str]:
+        return frozenset(self.allowed_hosts.split(",")) if self.allowed_hosts else frozenset()
 
     @field_validator("log_level")
     @classmethod
