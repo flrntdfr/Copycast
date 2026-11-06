@@ -12,6 +12,11 @@ its instance-wide facts (the bucket, the endpoint, what every Feed uses) are an 
 only. The Storage component (``quota``, ADR 0029) is the caller's quota: what their Feeds
 use of it, as a meter, ``warn`` from 90 % and ``error`` once over; an Admin also gets one
 line per User, removed Users who still own Feeds included.
+
+"An Admin" here means a Principal whose Scope sees every Owner (an Admin session, the
+open-mode Admin, SYSTEM), never an Admin's API key: a key sees its owner's own (A29). Any
+narrower Principal gets the Worker component with its own running jobs and quarantined
+Feeds only, so the heartbeat never tells one User what another is doing.
 """
 
 from __future__ import annotations
@@ -37,7 +42,12 @@ from copycast.application.models import (
 )
 from copycast.application.ports import EngineVersion
 from copycast.application.services.about import normalize_engine_version
-from copycast.application.services.context import HeartbeatRow, ServiceContext
+from copycast.application.services.context import (
+    HeartbeatRow,
+    Scope,
+    ServiceContext,
+    UnitOfWorkPort,
+)
 from copycast.application.services.engine import get_engine_cookies
 from copycast.application.services.owners import acting_owner
 from copycast.application.services.quota import quota_status, quota_statuses
@@ -83,6 +93,10 @@ class _Snapshot:
     """The caller's own quota."""
     quotas: list[QuotaStatus] = field(default_factory=list[QuotaStatus])
     """Every User's, for an Admin only."""
+    instance: bool = True
+    """Whether the caller sees every Owner (an Admin session); False narrows the worker."""
+    quarantined: list[str] = field(default_factory=list[str])
+    """The quarantined Feeds the caller can see."""
 
     @property
     def worker(self) -> dict[str, Any]:
@@ -94,8 +108,8 @@ async def get_status(ctx: ServiceContext) -> StatusRead:
     """Database, worker, scheduler, job queue, Object store, Storage (the caller's quota),
     yt-dlp, ffmpeg and crawlers."""
     now = datetime.now(UTC)
-    admin = ctx.principal.admin
-    snapshot = await _snapshot(ctx, now)
+    admin = sees_every_owner(ctx)
+    snapshot = await _snapshot(ctx, now, instance=admin)
     engine = await asyncio.to_thread(ctx.engine.version)
     cookies = await get_engine_cookies(ctx)
     unlocked = {service.name.casefold() for service in cookies.services if service.authenticated}
@@ -117,8 +131,13 @@ async def get_status(ctx: ServiceContext) -> StatusRead:
     )
 
 
-async def _snapshot(ctx: ServiceContext, now: datetime) -> _Snapshot:
-    snapshot = _Snapshot()
+def sees_every_owner(ctx: ServiceContext) -> bool:
+    """An Admin session, the open-mode Admin or SYSTEM; never a key, an Admin's included."""
+    return Scope.for_principal(ctx.principal).visible_owner is None
+
+
+async def _snapshot(ctx: ServiceContext, now: datetime, *, instance: bool) -> _Snapshot:
+    snapshot = _Snapshot(instance=instance)
     started = time.perf_counter()
     try:
         async with ctx.uow_factory() as uow:
@@ -128,12 +147,26 @@ async def _snapshot(ctx: ServiceContext, now: datetime) -> _Snapshot:
             snapshot.crawlers = await uow.telemetry.crawler_stats(now - RECENT)
             snapshot.totals = await uow.feeds.totals()
             snapshot.quota = await quota_status(uow, ctx.users, acting_owner(ctx))
-            if ctx.principal.admin:
+            if instance:
                 snapshot.quotas = await quota_statuses(uow, ctx.users)
+            snapshot.quarantined = await _visible_quarantined(uow, snapshot, instance=instance)
         snapshot.schema_current = await ctx.schema_is_current()
     except Exception as exc:  # any driver or network failure
         snapshot.error = str(exc)[:200] or type(exc).__name__
     return snapshot
+
+
+async def _visible_quarantined(
+    uow: UnitOfWorkPort, snapshot: _Snapshot, *, instance: bool
+) -> list[str]:
+    """The heartbeat's quarantined Feeds, narrowed to those the caller's scope can see."""
+    listed: object = snapshot.worker.get("quarantined_feeds")
+    if not isinstance(listed, list):
+        return []
+    ids = [str(feed_id) for feed_id in listed]  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+    if instance:
+        return ids
+    return [feed_id for feed_id in ids if await uow.feeds.get(feed_id) is not None]
 
 
 # --------------------------------------------------------------------------- components
@@ -172,8 +205,12 @@ def _worker(snapshot: _Snapshot, now: datetime) -> ComponentStatus:
         )
     status = snapshot.worker
     age = (now - heartbeat.seen_at).total_seconds()
-    running = _int(status.get("running_jobs"))
-    concurrency = _int(status.get("concurrency"))
+    if snapshot.instance:
+        running = _int(status.get("running_jobs"))
+        concurrency = _int(status.get("concurrency"))
+    else:  # the caller's own jobs; the slots would count everyone's
+        running = snapshot.queue.running if snapshot.queue else 0
+        concurrency = 0
     facts = [StatusFact(label="Last seen", at=heartbeat.seen_at)]
     if concurrency:
         facts.append(StatusFact(label="Jobs", value=f"{running} of {concurrency} slots busy"))
@@ -199,9 +236,8 @@ def _worker(snapshot: _Snapshot, now: datetime) -> ComponentStatus:
             summary="Storage is full: archiving is paused",
             facts=[*facts, StatusFact(label="Retries at", at=full_until)],
         )
-    quarantined = status.get("quarantined_feeds")
-    if isinstance(quarantined, list) and quarantined:
-        count = len(quarantined)  # pyright: ignore[reportUnknownArgumentType]
+    if quarantined := snapshot.quarantined:
+        count = len(quarantined)
         noun = "Feed" if count == 1 else "Feeds"
         return ComponentStatus(
             id="worker",

@@ -2,11 +2,14 @@
 
 A Member gets their own quota as the ``quota`` component (no lines about anyone else)
 and an Object store component without its instance-wide facts; an Admin gets one line
-per User, removed Owners that still own Feeds included.
+per User, removed Owners that still own Feeds included. An Admin's API key is narrowed
+like a Member (A29), and the Worker component never counts another User's jobs nor
+their quarantined Feeds.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -16,7 +19,7 @@ from copycast.app import Container
 from copycast.settings import Settings
 from tests.integration.conftest import settings_with
 from tests.support.paths import STATUS_PATH
-from tests.support.users import USERS, user_entry
+from tests.support.users import USERS, mint_key, user_entry
 from tests.support.world import World
 
 pytestmark = pytest.mark.integration
@@ -73,3 +76,44 @@ async def test_an_admin_sees_every_user_and_removed_owners(
 
     bob = (await components(bob_client))["quota"]
     assert bob["facts"] == [] and bob["meter"]["used_bytes"] == lines["bob"]["meter"]["used_bytes"]
+
+
+async def test_an_admins_key_sees_only_its_owners_storage(
+    world: World, root_client: httpx.AsyncClient, users_client: httpx.AsyncClient
+) -> None:
+    secret = await mint_key(root_client, scope="read")
+    response = await users_client.get(STATUS_PATH, headers={"Authorization": f"Bearer {secret}"})
+    assert response.status_code == 200, response.text
+    found = {c["id"]: c for c in response.json()["components"]}
+    assert found["quota"]["facts"] == [], "no line per User through a key"
+    labels = {fact["label"] for fact in found["storage"]["facts"]}
+    assert labels.isdisjoint({"Bucket", "Endpoint", "Used by Feeds"})
+    assert "bob" not in response.text and "alice" not in response.text
+
+
+async def test_the_worker_component_counts_only_the_callers_jobs_and_feeds(
+    world: World,
+    alice_client: httpx.AsyncClient,
+    root_client: httpx.AsyncClient,
+    users_container: Container,
+) -> None:
+    now = datetime.now(UTC).isoformat()
+    async with users_container.uow_factory() as uow:
+        await uow.telemetry.heartbeat(
+            "w1",
+            {
+                "running_jobs": 3,
+                "concurrency": 4,
+                "started_at": now,
+                "quarantined_feeds": [world.mirror_id],
+            },
+        )
+    alices = (await components(alice_client))["worker"]
+    assert alices["state"] == "ok" and alices["summary"] == "Idle", alices
+    assert "slots busy" not in str(alices) and world.mirror_id not in str(alices)
+    roots = (await components(root_client))["worker"]
+    assert roots["state"] == "warn"
+    assert roots["summary"].startswith("1 Feed quarantined")
+    assert {"label": "Jobs", "value": "3 of 4 slots busy"}.items() <= next(
+        fact for fact in roots["facts"] if fact["label"] == "Jobs"
+    ).items()

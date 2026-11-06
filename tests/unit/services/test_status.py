@@ -50,10 +50,26 @@ def test_worker_states() -> None:
     assert stale.state == "error" and stale.summary.startswith("Not seen for 5 min")
     full = worker(snapshot(storage_full_until=(NOW + timedelta(hours=1)).isoformat()), NOW)
     assert full.state == "error" and "Storage is full" in full.summary
-    assert worker(snapshot(quarantined_feeds=["a", "b"]), NOW).state == "warn"
+    quarantined = snapshot(quarantined_feeds=["a", "b"])
+    quarantined.quarantined = ["a", "b"]  # what _snapshot keeps of the heartbeat's list
+    assert worker(quarantined, NOW).state == "warn"
+    assert worker(snapshot(quarantined_feeds=["a"]), NOW).state == "ok", "none visible"
     assert worker(snapshot(app_version="0.0.1"), NOW).state == "warn"
     down = status._Snapshot(error="connection refused")  # pyright: ignore[reportPrivateUsage]
     assert worker(down, NOW).state == "unknown"
+
+
+def test_a_narrow_caller_sees_its_own_running_jobs_and_no_slots() -> None:
+    worker = status._worker  # pyright: ignore[reportPrivateUsage]
+    busy = snapshot(running_jobs=3, concurrency=4)
+    assert {"label": "Jobs", "value": "3 of 4 slots busy"} in [
+        fact.model_dump(include={"label", "value"}) for fact in worker(busy, NOW).facts
+    ]
+    busy.instance = False
+    busy.queue = QueueStats(running=1)
+    narrow = worker(busy, NOW)
+    assert narrow.summary == "Running 1 job"
+    assert all(fact.label != "Jobs" for fact in narrow.facts)
 
 
 def test_scheduler_states() -> None:
