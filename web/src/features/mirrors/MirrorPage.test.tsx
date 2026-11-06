@@ -288,6 +288,46 @@ describe("Mirror page", () => {
     expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
   });
 
+  it("names the owner's Defaults on another User's Mirror instead of showing the Admin's", async () => {
+    let defaultsAsked = 0;
+    const bobs = { ...feed, owner: "bob" };
+    server.use(
+      http.get("/api/feeds", () => HttpResponse.json({ feeds: [bobs] })),
+      http.get("/api/feeds/:feedId", () => HttpResponse.json(bobs)),
+      http.get("/api/feeds/:feedId/items", () =>
+        HttpResponse.json({
+          // 1 min long: below the Admin's own 5-minute default, which is not Bob's.
+          items: [item({ id: "item-1", feed_id: feed.id, title: "Short", duration_seconds: 60 })],
+          total: 1,
+          limit: 100,
+          offset: 0,
+        }),
+      ),
+      http.get("/api/me", () =>
+        HttpResponse.json(me({ username: "root", auth_mode: "users", via: "session" })),
+      ),
+      http.get("/api/settings/defaults", () => {
+        defaultsAsked += 1;
+        return HttpResponse.json({ language: "fr", min_duration_seconds: 300 });
+      }),
+      ...handlers(),
+    );
+    const user = userEvent.setup();
+    renderApp("/feed/mirror-1");
+    expect(await screen.findByText("Short")).toBeInTheDocument();
+    expect(screen.queryByTestId("ignored-hint")).not.toBeInTheDocument();
+
+    const form = await openSettings(user);
+    expect(within(form).getByTestId("overrides-foreign")).toHaveTextContent("bob's default");
+    expect(within(form).getAllByText("Using bob's default.")).toHaveLength(3);
+    expect(within(form).queryByText(/Using the default/)).not.toBeInTheDocument();
+    expect(within(form).getByLabelText("Metadata language")).toHaveAttribute(
+      "placeholder",
+      "bob's default",
+    );
+    expect(defaultsAsked).toBe(0);
+  });
+
   it("saves only the changed settings and shows rejected engine options per key", async () => {
     const calls: { method: string; path: string; body?: unknown }[] = [];
     server.use(...handlers(calls));
