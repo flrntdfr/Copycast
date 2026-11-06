@@ -93,6 +93,7 @@ from copycast.application.services.light_refresh import (
     LIGHT_REFRESH_DEADLINE_SECONDS,
     LightRefreshResult,
 )
+from copycast.application.services.scoped import ScopedContext
 from copycast.domain.enums import (
     ArchiveState,
     FeedKind,
@@ -343,8 +344,21 @@ class Services:
         return await _keys.authenticate_api_key(self.ctx, secret)
 
     # users
-    async def login(self, body: LoginRequest, *, user_agent: str | None = None) -> IssuedSession:
-        return await _auth.login(self.ctx, body, user_agent=user_agent)
+    async def login(
+        self,
+        body: LoginRequest,
+        *,
+        user_agent: str | None = None,
+        scheme: str | None = None,
+        presented_token: str | None = None,
+    ) -> IssuedSession:
+        return await _auth.login(
+            self.ctx,
+            body,
+            user_agent=user_agent,
+            scheme=scheme,
+            presented_token=presented_token,
+        )
 
     async def logout(self, token: str | None) -> None:
         await _auth.logout(self.ctx, token)
@@ -354,6 +368,9 @@ class Services:
 
     async def authenticate_session(self, token: str) -> Principal | None:
         return await _auth.authenticate_session(self.ctx, token)
+
+    async def sync_users(self) -> None:
+        await _auth.sync_users(self.ctx)
 
     # mirror defaults
     async def get_mirror_defaults(self) -> MirrorDefaults:
@@ -373,6 +390,14 @@ class Services:
         await _engine.delete_engine_cookies(self.ctx, name)
 
 
+def services_for(base: ServiceContext, principal: Principal) -> Services:
+    """The services acting as ``principal``: SYSTEM gets ``base`` itself, anyone else a
+    :class:`ScopedContext` whose units of work carry their :class:`Scope`."""
+    if principal.is_system:
+        return Services(base)
+    return Services(ScopedContext(base, principal))
+
+
 def build_services(container: ServiceContext) -> Services:
     """Bind every capability to ``container`` (``copycast.app.Container.services``)."""
     missing = sorted(CAPABILITY_NAMES - set(CAPABILITIES) - {"subscribe_events"})
@@ -388,4 +413,5 @@ __all__ = [
     "Services",
     "build_services",
     "delete_episode",
+    "services_for",
 ]

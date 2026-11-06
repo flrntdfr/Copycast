@@ -716,6 +716,14 @@ class Container:
         )
         return services
 
+    def services_for(self, principal: Principal) -> Services:
+        """The services acting as ``principal`` (``Principal.SYSTEM``: :attr:`services`)."""
+        if principal.is_system:
+            return self.services
+        services_for = _load("copycast.application.services", "services_for")
+        scoped: Services = services_for(self, principal)
+        return scoped
+
     async def aclose(self) -> None:
         """Close the unit-of-work factory and dispose the database engine if ever created."""
         factory = self._memo.pop("uow_factory", None)

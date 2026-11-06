@@ -79,7 +79,9 @@ async def main(settings: Settings, *, engine: Engine | None = None) -> int:
 
 async def _serve(container: Container, settings: Settings) -> int:
     worker_id = default_worker_id()
-    await container.services.ensure_default_bucket()
+    await container.services.sync_users()
+    for owner in container.users.usernames():
+        await container.services.ensure_default_bucket(owner)
     await _upgrade_chapters(container.layout)
     version = await asyncio.to_thread(container.engine.version)
     async with uow_of(container.uow_factory()) as uow:
