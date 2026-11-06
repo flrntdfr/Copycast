@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -30,6 +31,7 @@ import httpx
 import pytest
 
 from copycast.application.capabilities import ACCESS, Access, tool_capabilities
+from copycast.domain.enums import AssetKind, AssetState
 from tests.integration.conftest import running, settings_with
 from tests.support.audio import TINY_MP3
 from tests.support.users import login, users_auth
@@ -93,6 +95,8 @@ CAPABILITY_LESS: dict[str, str] = {
     "list_buckets": "member",
     "download_feed_object": "owner_of_feed",
     "resume_mirror": "owner_of_feed",
+    "play_item_media": "owner_of_feed",
+    "play_item_asset": "owner_of_feed",
 }
 """Capability-less ``/api`` routes by operation id, and how the matrix treats each.
 
@@ -101,7 +105,18 @@ CAPABILITY_LESS: dict[str, str] = {
 CAPABILITY_LESS_BODIES: dict[str, dict[str, Any] | None] = {
     "download_feed_object": None,
     "resume_mirror": None,
+    "play_item_media": None,
+    "play_item_asset": None,
 }
+
+ASSET_SLOT = "0a1b2c3d4e5f"
+"""The slot of the PDF attachment this module's ``world`` gives Bob's archived item, so the
+``play_item_asset`` route has a real asset name to try."""
+
+
+def asset_name(item_id: str) -> str:
+    return f"{item_id}.attachment.{ASSET_SLOT}.pdf"
+
 
 DESTRUCTIVE_LAST: tuple[str, ...] = (
     "clear_feed",
@@ -141,6 +156,7 @@ def bob_ids(world: World) -> dict[str, str]:
         "job_id": world.job_id,
         "bucket_id": world.bucket_id,
         "path": "feed.json",
+        "name": asset_name(world.item_id),
     }
 
 
@@ -158,6 +174,7 @@ def ghost_ids() -> dict[str, str]:
         "job_id": GHOST_JOB,
         "bucket_id": "nobody-s-later-abcdef",
         "path": "feed.json",
+        "name": asset_name("fedcba9876543210"),
     }
 
 
@@ -245,6 +262,31 @@ async def mint_key(client: httpx.AsyncClient) -> dict[str, str]:
     created = await client.post("/api/keys", json={"name": "matrix", "scope": "full"})
     assert created.status_code == 201, created.text
     return {"Authorization": f"Bearer {created.json()['secret']}"}
+
+
+@pytest.fixture
+async def world(world: World, users_container: Any) -> World:
+    """The shared world, plus a PDF attachment (object and row) on Bob's archived item, so
+    ``play_item_asset`` is tried on a name that exists for Bob."""
+    container = users_container
+    layout = container.layout
+    feed_id, item_id = world.bucket_id, world.item_id
+    key = layout.attachment_key(feed_id, item_id, ASSET_SLOT, "pdf")
+    body = b"%PDF-1.4 Bob's notes"
+    layout.store.put_bytes(key, body, content_type="application/pdf")
+    async with container.uow_factory() as uow:
+        await uow.assets.upsert(
+            feed_id,
+            item_id,
+            AssetKind.attachment,
+            local_path=layout.relative(feed_id, key),
+            mime="application/pdf",
+            size_bytes=len(body),
+            state=AssetState.archived,
+            fetched_at=datetime.now(UTC),
+            slot=ASSET_SLOT,
+        )
+    return world
 
 
 # --------------------------------------------------------------------------- guards
@@ -343,6 +385,40 @@ async def test_alice_cannot_retarget_bobs_mirror_nor_probe_with_it(
     assert len(engine.records.listings) == listings_before, "no Engine call for a hidden Mirror"
     for owner in ("alice", "bob", "root"):
         assert users_container.sources.cached(token=None, url=target, owner=owner) is None
+
+
+# --------------------------------------------------------------------------- U10 play routes
+
+
+async def test_alice_cannot_play_bobs_item_nor_count_a_download(
+    world: World,
+    alice_client: httpx.AsyncClient,
+    bob_client: httpx.AsyncClient,
+    root_client: httpx.AsyncClient,
+) -> None:
+    """The web player's routes (spec §1.13) answer 404 to Alice on Bob's item, for GET and
+    HEAD, inline or as a download, media or asset, exactly like an item nobody has; Bob and
+    root play it; Alice's tries count no download."""
+    base = f"/api/feeds/{world.bucket_id}/items/{world.item_id}"
+    ghost = "/api/feeds/nobody-s-later-abcdef/items/fedcba9876543210"
+    paths = ("/media", "/media?download=1", f"/assets/{asset_name(world.item_id)}")
+    ghost_paths = ("/media", "/media?download=1", f"/assets/{asset_name('fedcba9876543210')}")
+    real = [world.bucket_id, world.item_id]
+    fake = ["nobody-s-later-abcdef", "fedcba9876543210"]
+    for suffix, ghost_suffix in zip(paths, ghost_paths, strict=True):
+        for method in ("GET", "HEAD"):
+            hidden = await alice_client.request(method, base + suffix)
+            assert hidden.status_code == 404, f"{method} {suffix}: {hidden.status_code}"
+            if method == "GET":
+                missing = await alice_client.get(ghost + ghost_suffix)
+                assert normalised(hidden, real) == normalised(missing, fake), suffix
+            for client in (bob_client, root_client):
+                played = await client.request(method, base + suffix)
+                assert played.status_code == 200, f"{method} {suffix}: {played.text[:200]}"
+    item = (await bob_client.get(base)).json()
+    before = item["download_count"]
+    await alice_client.get(base + "/media")
+    assert (await bob_client.get(base)).json()["download_count"] == before
 
 
 # --------------------------------------------------------------------------- member
@@ -459,9 +535,6 @@ async def test_engine_options_are_an_admins_to_set_or_change(
 # --------------------------------------------------------------------------- uploads
 
 
-@pytest.mark.xfail(
-    strict=True, reason="uploads ownership (get_upload NotFound) is group D's, spec §3.8"
-)
 async def test_alice_cannot_read_bobs_upload(world: World, alice_client: httpx.AsyncClient) -> None:
     response = await alice_client.get(f"/api/uploads/{world.upload_id}")
     assert response.status_code == 404

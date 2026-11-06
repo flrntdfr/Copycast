@@ -80,6 +80,8 @@ export const EXTRA_OPS = {
   resume_mirror: ["post", "/api/mirrors/{feed_id}/resume"],
   download_feed_object: ["get", "/api/feeds/{feed_id}/objects/{path}"],
   health_ready: ["get", "/healthz/ready"],
+  play_item_media: ["get", "/api/feeds/{feed_id}/items/{item_id}/media"],
+  play_item_asset: ["get", "/api/feeds/{feed_id}/items/{item_id}/assets/{name}"],
 } as const satisfies Record<string, Op>;
 
 export function opOf<C extends Capability>(capability: C): (typeof OPS)[C] {
