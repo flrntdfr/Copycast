@@ -1,5 +1,6 @@
 import type { FeedSummary } from "@/components/common/FeedLink";
 import { FeedLink } from "@/components/common/FeedLink";
+import { OwnerBadge } from "@/features/session/OwnerBadge";
 import { RelativeTime } from "@/components/common/RelativeTime";
 import { SkeletonRows } from "@/components/common/SkeletonRows";
 import type { JobRead } from "@/api/types";
@@ -69,8 +70,15 @@ export function JobsTable({
                   </span>
                 ) : null}
               </TableCell>
-              <TableCell className="max-w-[12rem] truncate">
-                {job.feed_id ? <FeedLink feedId={job.feed_id} feed={feeds.get(job.feed_id)} /> : ""}
+              <TableCell className="max-w-[16rem] truncate">
+                {job.feed_id ? (
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <FeedLink feedId={job.feed_id} feed={feeds.get(job.feed_id)} />
+                    <OwnerBadge feed={feeds.get(job.feed_id)} className="shrink-0" />
+                  </span>
+                ) : (
+                  ""
+                )}
               </TableCell>
               <TableCell className="hidden tabular-nums md:table-cell">
                 {job.started_at ? formatElapsed(elapsedMs(job.started_at, job.finished_at)) : ""}

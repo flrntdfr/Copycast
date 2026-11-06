@@ -1,6 +1,7 @@
 import { AlertTriangle } from "lucide-react";
 
 import { $api, asError } from "@/api/client";
+import { useIsAdmin } from "@/api/session";
 import { PageHeader } from "@/components/common/PageHeader";
 import { PageSpinner } from "@/components/common/PageSpinner";
 import { RelativeTime } from "@/components/common/RelativeTime";
@@ -11,9 +12,13 @@ import { cn } from "@/lib/utils";
 
 export const REPOSITORY_URL = "https://github.com/flrntdfr/Copycast";
 
-/** App and engine versions, ffmpeg, layout, totals, worker heartbeat. */
+/**
+ * The app version, base URL, the User's totals and the worker heartbeat; for Admins also the
+ * Engine page: the engine and ffmpeg versions and the Object store layout.
+ */
 export function AboutPage() {
   const about = $api.useQuery("get", "/api/about");
+  const admin = useIsAdmin();
   const ready = useWorkerStatus();
 
   if (about.isPending) return <PageSpinner />;
@@ -43,29 +48,37 @@ export function AboutPage() {
         }
       />
       <dl className="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-[max-content_1fr]">
-        <dt className="text-muted-foreground">Engine</dt>
-        <dd data-testid="about-engine">
-          {info.engine.name} {info.engine.version} ({info.engine.channel})
-          {info.engine.release_date ? `, released ${formatDate(info.engine.release_date)}` : ""}
-          {info.engine.git_head ? (
-            <span className="font-mono text-xs text-muted-foreground">
-              {" "}
-              · {info.engine.git_head}
-            </span>
-          ) : null}
-        </dd>
-        <dt className="text-muted-foreground">ffmpeg</dt>
-        <dd>
-          {info.ffmpeg_version ?? (
-            <span className="inline-flex items-center gap-1 text-warning-foreground">
-              <AlertTriangle className="size-3.5" aria-hidden /> missing
-            </span>
-          )}
-        </dd>
+        {admin ? (
+          <>
+            <dt className="text-muted-foreground">Engine</dt>
+            <dd data-testid="about-engine">
+              {info.engine.name} {info.engine.version} ({info.engine.channel})
+              {info.engine.release_date ? `, released ${formatDate(info.engine.release_date)}` : ""}
+              {info.engine.git_head ? (
+                <span className="font-mono text-xs text-muted-foreground">
+                  {" "}
+                  · {info.engine.git_head}
+                </span>
+              ) : null}
+            </dd>
+            <dt className="text-muted-foreground">ffmpeg</dt>
+            <dd data-testid="about-ffmpeg">
+              {info.ffmpeg_version ?? (
+                <span className="inline-flex items-center gap-1 text-warning-foreground">
+                  <AlertTriangle className="size-3.5" aria-hidden /> missing
+                </span>
+              )}
+            </dd>
+          </>
+        ) : null}
         <dt className="text-muted-foreground">Base URL</dt>
         <dd className="font-mono text-xs break-all">{info.base_url}</dd>
-        <dt className="text-muted-foreground">Layout version</dt>
-        <dd>{info.layout_version}</dd>
+        {admin ? (
+          <>
+            <dt className="text-muted-foreground">Layout version</dt>
+            <dd data-testid="about-layout">{info.layout_version}</dd>
+          </>
+        ) : null}
         <dt className="text-muted-foreground">Totals</dt>
         <dd>
           {formatNumber(totals.feeds)} feeds · {formatNumber(totals.episodes)} Episodes ·{" "}
@@ -87,7 +100,7 @@ export function AboutPage() {
           )}
         </dd>
       </dl>
-      {!info.ffmpeg_version ? (
+      {admin && !info.ffmpeg_version ? (
         <Alert variant="destructive" className="mt-6">
           <AlertTriangle />
           <AlertTitle>ffmpeg is missing</AlertTitle>

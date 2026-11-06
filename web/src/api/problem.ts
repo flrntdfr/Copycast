@@ -1,5 +1,6 @@
 /** RFC 9457 problem details as the API emits them (`urn:copycast:problem:<slug>` types). */
 import type { Problem } from "./types";
+import { formatBytes } from "@/lib/format";
 
 export const PROBLEM_TYPE_PREFIX = "urn:copycast:problem:";
 
@@ -20,6 +21,13 @@ export type ProblemSlug =
   | "http-error"
   | "network"
   | "aborted"
+  | "unauthorized"
+  | "login-failed"
+  | "login-locked"
+  | "login-busy"
+  | "https-required"
+  | "over-quota"
+  | "forbidden"
   | (string & {});
 
 export interface ValidationIssue {
@@ -36,6 +44,11 @@ export interface ProblemExtensions {
   keys?: string[];
   scope?: string;
   errors?: ValidationIssue[];
+  /** `over-quota`: the Owner's usage and quota in bytes. */
+  used_bytes?: number;
+  quota_bytes?: number;
+  /** `login-locked`, `login-busy`: seconds before the next try. */
+  retry_after?: number;
 }
 
 export class ApiProblem extends Error {
@@ -104,6 +117,9 @@ const EXTENSION_KEYS: (keyof ProblemExtensions)[] = [
   "keys",
   "scope",
   "errors",
+  "used_bytes",
+  "quota_bytes",
+  "retry_after",
 ];
 
 /** Build an ApiProblem from a response body (problem+json, FastAPI validation, or anything). */
@@ -200,6 +216,16 @@ export function describeProblem(error: unknown): { title: string; description?: 
             ),
           )
           .join("\n"),
+      };
+    }
+    if (error.slug === "over-quota") {
+      const { used_bytes: used, quota_bytes: quota } = error.extensions;
+      return {
+        title: "Over quota",
+        description:
+          typeof used === "number" && typeof quota === "number"
+            ? `${formatBytes(used)} of ${formatBytes(quota)} used: free some space first`
+            : (error.detail ?? undefined),
       };
     }
     if (error.slug === "network")

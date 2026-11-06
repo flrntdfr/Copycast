@@ -24,6 +24,7 @@ import type { MirrorRead } from "@/api/types";
 import { Artwork } from "@/components/common/Artwork";
 import { FeedUrlField } from "@/components/common/FeedUrlField";
 import { HealthDot } from "@/components/common/HealthDot";
+import { OwnerBadge } from "@/features/session/OwnerBadge";
 import { RelativeTime } from "@/components/common/RelativeTime";
 import { ServiceBadge } from "@/components/common/ServiceBadge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -181,6 +182,7 @@ export function MirrorHeader({
           <div className="flex flex-wrap items-center gap-2">
             <EditableTitle mirror={mirror} />
             <ServiceBadge service={mirror.service} sourceKind={mirror.source_kind} />
+            <OwnerBadge feed={mirror} />
           </div>
           <a
             href={mirror.source_url}
@@ -211,6 +213,7 @@ export function MirrorHeader({
               {counts ? ` · ${formatNumber(counts.available ?? 0)} Available` : ""}
               {counts?.delisted ? ` · ${formatNumber(counts.delisted)} Delisted` : ""}
               {counts?.wanted ? ` · ${formatNumber(counts.wanted)} queued` : ""}
+              {counts?.blocked ? ` · ${formatNumber(counts.blocked)} over quota` : ""}
               {counts?.failed ? ` · ${formatNumber(counts.failed)} failed` : ""}
               {` · ${formatBytes(mirror.storage_bytes)}`}
             </span>

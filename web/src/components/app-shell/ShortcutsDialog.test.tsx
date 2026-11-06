@@ -2,9 +2,11 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { storageKey } from "@/lib/storage";
+
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { renderWithProviders } from "@/test/render";
-import { PLAYER_STORAGE_KEY, getPlayerState, resetPlayerForTests } from "@/stores/player";
+import { getPlayerState, resetPlayerForTests } from "@/stores/player";
 
 describe("ShortcutsDialog", () => {
   beforeEach(() => {
@@ -22,7 +24,7 @@ describe("ShortcutsDialog", () => {
     expect(toggle).toBeChecked();
     await user.click(toggle);
     expect(getPlayerState().shortcuts).toBe(false);
-    expect(JSON.parse(window.localStorage.getItem(PLAYER_STORAGE_KEY) ?? "{}")).toMatchObject({
+    expect(JSON.parse(window.localStorage.getItem(storageKey("player")) ?? "{}")).toMatchObject({
       shortcuts: false,
     });
     expect(dialog).toHaveTextContent("outside a field or a control that uses the key itself");

@@ -1,10 +1,11 @@
+import { storageKey } from "@/lib/storage";
+
 /**
- * Where you are in each Episode, remembered per browser (the server copy comes later).
+ * Where you are in each Episode, remembered per browser and User (the server copy comes later).
  * An LRU of the most recently heard Episodes in localStorage, keyed by item id; reads and
  * writes tolerate missing or corrupt JSON and a storage that throws.
  */
 
-export const LISTENING_STORAGE_KEY = "copycast.listening.v1";
 export const LISTENING_MAX_ENTRIES = 500;
 /** Under this many seconds in, an Episode starts over. */
 export const RESUME_MIN_SECONDS = 10;
@@ -43,7 +44,7 @@ function isEntry(value: unknown): value is ListeningEntry {
 
 function readAll(): ListeningMap {
   try {
-    const raw = window.localStorage.getItem(LISTENING_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey("listening.v1"));
     if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
@@ -76,7 +77,7 @@ export function writeListening(itemId: string, entry: ListeningEntry): void {
     }
   }
   try {
-    window.localStorage.setItem(LISTENING_STORAGE_KEY, JSON.stringify(kept));
+    window.localStorage.setItem(storageKey("listening.v1"), JSON.stringify(kept));
   } catch {
     // Storage may be full or unavailable; playback still works.
   }

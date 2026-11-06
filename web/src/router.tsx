@@ -8,12 +8,18 @@ import { PageSpinner } from "@/components/common/PageSpinner";
 
 export interface RouterContext {
   queryClient: QueryClient;
+  /** Whether the shell opens the event stream (tests turn it off). */
+  events: boolean;
 }
 
-export function createAppRouter(queryClient: QueryClient, history?: RouterHistory) {
+export function createAppRouter(
+  queryClient: QueryClient,
+  history?: RouterHistory,
+  { events = true }: { events?: boolean } = {},
+) {
   return createRouter({
     routeTree,
-    context: { queryClient },
+    context: { queryClient, events },
     history,
     defaultPreload: "intent",
     defaultPreloadStaleTime: 0,

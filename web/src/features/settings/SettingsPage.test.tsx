@@ -4,7 +4,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import type { EngineCookiesWrite, MirrorDefaults } from "@/api/types";
-import { about, cookieFile, engineCookies, mirrorDefaults } from "@/test/factories";
+import { about, cookieFile, engineCookies, me, mirrorDefaults } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
@@ -44,7 +44,7 @@ describe("Settings page: Authentications", () => {
     const user = userEvent.setup();
     renderApp("/settings");
 
-    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your settings" })).toBeInTheDocument();
     const youtube = await screen.findByTestId("service-youtube");
     expect(youtube).toHaveAttribute("data-authenticated", "false");
     expect(screen.getByTestId("service-mixcloud")).toHaveAttribute("data-authenticated", "false");
@@ -60,7 +60,7 @@ describe("Settings page: Authentications", () => {
     await waitFor(() => expect(state.written).toEqual([{ content: COOKIES, name: "youtube.txt" }]));
     await waitFor(() => expect(youtube).toHaveAttribute("data-authenticated", "true"));
     expect(screen.getByTestId("cookie-file-youtube")).toHaveTextContent(
-      "data/engine/cookies/youtube.txt",
+      "users/copycast/cookie-files/youtube.txt",
     );
     expect(await screen.findByText("Cookie file stored")).toBeInTheDocument();
 
@@ -153,7 +153,7 @@ describe("Settings page: layout", () => {
     renderApp("/settings");
 
     expect(await screen.findByRole("heading", { name: /Authentications/ })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /Mirrors/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Your Defaults/ })).toBeInTheDocument();
     const opml = screen.getByRole("region", { name: "Podcast apps" });
     expect(opml).toHaveTextContent("Overcast, Pocket Casts or AntennaPod");
     const link = within(opml).getByRole("link", { name: "Export OPML" });
@@ -162,5 +162,22 @@ describe("Settings page: layout", () => {
 
     // Every Feed's storage lives on its own bucket page now.
     expect(screen.queryByRole("table", { name: "Buckets" })).not.toBeInTheDocument();
+  });
+
+  it("shows a Member their own Cookie file paths", async () => {
+    server.use(
+      ...baseHandlers(),
+      http.get("/api/me", () =>
+        HttpResponse.json(me({ username: "alice", admin: false, auth_mode: "users" })),
+      ),
+      http.get("/api/engine/cookies", () =>
+        HttpResponse.json(engineCookies({ files: [cookieFile({ name: "youtube" })] })),
+      ),
+      http.get("/api/settings/defaults", () => HttpResponse.json(mirrorDefaults())),
+    );
+    renderApp("/settings");
+    expect(await screen.findByTestId("cookie-file-youtube")).toHaveTextContent(
+      "users/alice/cookie-files/youtube.txt",
+    );
   });
 });

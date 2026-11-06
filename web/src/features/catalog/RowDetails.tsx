@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatBytes, formatDateTime, formatNumber } from "@/lib/format";
 import { useFetchMetadata } from "./mutations";
 import { assetKindLabel } from "@/lib/labels";
+import { assetUrlOf } from "./media-urls";
 
 /** RSS descriptions are HTML; show them as text. */
 export function plainText(html: string | null | undefined): string {
@@ -100,8 +101,9 @@ export function RowDetails({ item }: { item: ItemRead }) {
                 const text = [assetKindLabel(asset.kind), asset.language, asset.format]
                   .filter(Boolean)
                   .join(" ");
-                return asset.url ? (
-                  <a key={asset.id} href={asset.url} target="_blank" rel="noreferrer">
+                const href = assetUrlOf(asset);
+                return href ? (
+                  <a key={asset.id} href={href} target="_blank" rel="noreferrer">
                     <Badge variant="outline">{text}</Badge>
                   </a>
                 ) : (

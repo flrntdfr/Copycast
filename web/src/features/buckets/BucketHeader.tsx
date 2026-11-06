@@ -11,6 +11,7 @@ import { formatMegabytes } from "@/lib/format";
 import { count } from "@/lib/labels";
 import { useFeedObjects } from "./FeedObjectsTable";
 import { PurgeDialog } from "./PurgeDialog";
+import { OwnerBadge } from "@/features/session/OwnerBadge";
 
 /**
  * The bucket page's header for any Feed: icon, name, service, then how many files the bucket
@@ -46,6 +47,7 @@ export function BucketHeader({ feed }: { feed: FeedRead }) {
           ) : (
             <ServiceBadge service={feed.service} sourceKind={feed.source_kind} />
           )}
+          <OwnerBadge feed={feed} />
         </div>
         <p className="text-sm text-muted-foreground tabular-nums" data-testid="bucket-summary">
           {objects.data

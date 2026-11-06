@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { storageKey } from "@/lib/storage";
+
 import {
   LISTENING_MAX_ENTRIES,
-  LISTENING_STORAGE_KEY,
   readListening,
   resumeAt,
   writeListening,
@@ -43,24 +44,26 @@ describe("listening storage", () => {
     expect(readListening(`item-${LISTENING_MAX_ENTRIES}`)).toMatchObject({
       t: LISTENING_MAX_ENTRIES,
     });
-    const stored = JSON.parse(window.localStorage.getItem(LISTENING_STORAGE_KEY) ?? "{}") as object;
+    const stored = JSON.parse(
+      window.localStorage.getItem(storageKey("listening.v1")) ?? "{}",
+    ) as object;
     expect(Object.keys(stored)).toHaveLength(LISTENING_MAX_ENTRIES);
   });
 
   it("tolerates corrupt JSON and drops invalid entries", () => {
-    window.localStorage.setItem(LISTENING_STORAGE_KEY, "{oops");
+    window.localStorage.setItem(storageKey("listening.v1"), "{oops");
     expect(readListening("a")).toBeNull();
     writeListening("a", entry());
     expect(readListening("a")).toEqual(entry());
 
     window.localStorage.setItem(
-      LISTENING_STORAGE_KEY,
+      storageKey("listening.v1"),
       JSON.stringify({ a: { t: "x" }, b: entry({ d: null }), c: entry({ d: -1 }) }),
     );
     expect(readListening("a")).toBeNull();
     expect(readListening("b")).toEqual(entry({ d: null }));
     expect(readListening("c")).toBeNull();
-    window.localStorage.setItem(LISTENING_STORAGE_KEY, "[1, 2]");
+    window.localStorage.setItem(storageKey("listening.v1"), "[1, 2]");
     expect(readListening("0")).toBeNull();
   });
 

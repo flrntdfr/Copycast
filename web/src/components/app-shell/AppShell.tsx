@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { CommandPalette } from "./CommandPalette";
 import { AddSourceDialog } from "@/features/add-source/AddSourceDialog";
+import { UserMenu, UserSheetSection } from "@/features/session/UserMenu";
 import { JobsIndicator } from "./JobsIndicator";
 import { PlayerBar } from "./PlayerBar";
 import { StatusIndicator } from "./StatusIndicator";
@@ -117,6 +118,7 @@ export function AppShell() {
               <nav className="flex flex-col gap-1 px-2" aria-label="Main">
                 {links(() => setMenuOpen(false))}
               </nav>
+              <UserSheetSection onSignOut={() => setMenuOpen(false)} />
             </SheetContent>
           </Sheet>
           <Link
@@ -150,6 +152,7 @@ export function AppShell() {
               <TooltipContent>Command palette (⌘K)</TooltipContent>
             </Tooltip>
             <StatusIndicator />
+            <UserMenu className="hidden md:inline-flex" />
           </div>
         </div>
       </header>

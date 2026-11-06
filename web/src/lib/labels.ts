@@ -3,6 +3,7 @@ import type {
   ArchiveState,
   AssetKind,
   BackfillMode,
+  BlockedReason,
   ErrorKind,
   FeedObjectKind,
   HealthStatus,
@@ -164,6 +165,14 @@ export const LIVE_STATUSES_WITHOUT_RECORDING: readonly LiveStatus[] = [
 
 /** Why a stream flagged in the Catalog is not archived yet (the badge's tooltip). */
 export const LIVE_HINT = "Archived once the recording is published";
+
+/** Why a wanted Catalog item waits instead of archiving (`ItemRead.blocked_reason`). */
+export const blockedReasonLabel = label<BlockedReason>({
+  quota: "Over quota",
+});
+
+/** The Over quota badge's tooltip. */
+export const OVER_QUOTA_HINT = "Over quota: retries automatically when you free space";
 
 export const healthStatusLabel = label<HealthStatus>({
   ok: "Healthy",

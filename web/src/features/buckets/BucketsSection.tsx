@@ -9,16 +9,17 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Skeleton } from "@/components/ui/skeleton";
 import type { MirrorsSort } from "@/features/mirrors/MirrorsTable";
 import { formatMegabytes } from "@/lib/format";
+import { storageKey } from "@/lib/storage";
 import { count } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { BucketCard } from "./BucketCard";
 
-/** Where the box remembers whether it was left open ("1") or closed ("0"). */
-export const BUCKETS_OPEN_KEY = "copycast.buckets.open";
+/** Where the box remembers whether it was left open ("1") or closed ("0"), per User. */
+export const BUCKETS_OPEN_NAME = "buckets.open";
 
 function readRemembered(): boolean {
   try {
-    return window.localStorage.getItem(BUCKETS_OPEN_KEY) === "1";
+    return window.localStorage.getItem(storageKey(BUCKETS_OPEN_NAME)) === "1";
   } catch {
     return false;
   }
@@ -26,7 +27,7 @@ function readRemembered(): boolean {
 
 function remember(open: boolean): void {
   try {
-    window.localStorage.setItem(BUCKETS_OPEN_KEY, open ? "1" : "0");
+    window.localStorage.setItem(storageKey(BUCKETS_OPEN_NAME), open ? "1" : "0");
   } catch {
     // Storage unavailable: the state lives for this page only.
   }

@@ -2,14 +2,24 @@ import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 
 import { $api } from "@/api/client";
+import { useMe } from "@/api/session";
 import { isBucket, type BucketRead } from "@/api/types";
 
-/** The default Local feed when listed, else the one named "Copycast", else the first. */
-export function pickDefaultBucket(buckets: readonly BucketRead[]): BucketRead | null {
+/**
+ * Where "Send to Local feed" pushes: the User's own default Local feed, else their own one named
+ * "Copycast", else their first. An Admin lists every User's Local feeds (one default each), so
+ * only `username`'s count while they have any.
+ */
+export function pickDefaultBucket(
+  buckets: readonly BucketRead[],
+  username?: string | null,
+): BucketRead | null {
+  const own = username ? buckets.filter((bucket) => bucket.owner === username) : [];
+  const pool = own.length > 0 ? own : buckets;
   return (
-    buckets.find((bucket) => bucket.is_default) ??
-    buckets.find((bucket) => bucket.name.toLowerCase() === "copycast") ??
-    buckets[0] ??
+    pool.find((bucket) => bucket.is_default) ??
+    pool.find((bucket) => bucket.name.toLowerCase() === "copycast") ??
+    pool[0] ??
     null
   );
 }
@@ -28,7 +38,7 @@ export function useSendToBucket() {
       void navigate({ to: "/feed/$feedId", params: { feedId: request.bucket_id } });
     },
   });
-  const target = pickDefaultBucket(candidates);
+  const target = pickDefaultBucket(candidates, useMe()?.username);
   return {
     buckets: candidates,
     target,

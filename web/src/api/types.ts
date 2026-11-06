@@ -70,6 +70,8 @@ export type StatusMeter = Schemas["StatusMeter"];
 export type LoginRequest = Schemas["LoginRequest"];
 
 export type ArchiveState = Schemas["ArchiveState"];
+export type AuthMode = Schemas["AuthMode"];
+export type BlockedReason = Schemas["BlockedReason"];
 export type AssetKind = Schemas["AssetKind"];
 export type AssetState = Schemas["AssetState"];
 export type BackfillMode = Schemas["BackfillMode"];

@@ -4,7 +4,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import type { BucketRead, BucketUpdate, RequestCreate } from "@/api/types";
-import { bucket, item } from "@/test/factories";
+import { bucket, item, problem } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
@@ -157,13 +157,18 @@ describe("Local feed page", () => {
 
   it("uploads the picked files in natural name order and adds them to the Local feed", async () => {
     const staged: string[] = [];
+    const sizes: (number | undefined)[] = [];
     const put: { id: string; body: string }[] = [];
     let added: unknown = null;
     server.use(
       ...handlers(),
       http.post("/api/uploads", async ({ request }) => {
-        const { filename } = (await request.json()) as { filename: string };
+        const { filename, size_bytes } = (await request.json()) as {
+          filename: string;
+          size_bytes?: number;
+        };
         staged.push(filename);
+        sizes.push(size_bytes);
         const id = `u${staged.length}`;
         return HttpResponse.json(
           {
@@ -198,6 +203,8 @@ describe("Local feed page", () => {
     const dialog = await screen.findByRole("dialog", { name: "Upload to Copycast" });
     await waitFor(() => expect(added).toEqual({ upload_ids: ["u1", "u2", "u3"] }));
     expect(staged).toEqual(["Part 1.mp3", "part 2.mp3", "Part 10.mp3"]);
+    // Each file declares its size, so the quota is checked before any byte is sent.
+    expect(sizes).toEqual([14, 14, 15]);
     // Each PUT carries the file's own bytes.
     expect(put).toEqual([
       { id: "u1", body: "ID3 Part 1.mp3" },
@@ -205,6 +212,59 @@ describe("Local feed page", () => {
       { id: "u3", body: "ID3 Part 10.mp3" },
     ]);
     expect(await within(dialog).findByText("Done")).toBeInTheDocument();
+  });
+
+  it("marks a file Over quota when create_upload or its PUT answers 507", async () => {
+    const put: string[] = [];
+    let added: unknown = null;
+    server.use(
+      ...handlers(),
+      http.post("/api/uploads", async ({ request }) => {
+        const { filename } = (await request.json()) as { filename: string };
+        if (filename === "Part 3.mp3")
+          return HttpResponse.json(
+            problem("over-quota", 507, { used_bytes: 10_000_000_000, quota_bytes: 10_000_000_000 }),
+            { status: 507 },
+          );
+        const id = filename === "Part 1.mp3" ? "u1" : "u2";
+        return HttpResponse.json(
+          {
+            id,
+            filename,
+            state: "pending",
+            upload_url: `http://public.example/uploads/${id}/token`,
+            size_bytes: null,
+            tags: null,
+            created_at: "2026-10-27T00:00:00Z",
+          },
+          { status: 201 },
+        );
+      }),
+      http.put("/uploads/:id/:token", ({ params }) => {
+        put.push(String(params.id));
+        if (params.id === "u2")
+          return HttpResponse.json(problem("over-quota", 507), { status: 507 });
+        return HttpResponse.json({ id: params.id, state: "received" });
+      }),
+      http.post("/api/buckets/:bucketId/uploads", async ({ request }) => {
+        added = await request.json();
+        return HttpResponse.json(copycast);
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/feed/bucket-1");
+    await screen.findByRole("heading", { name: "Copycast" });
+    const files = ["Part 1.mp3", "Part 2.mp3", "Part 3.mp3"].map(
+      (name) => new File([`ID3 ${name}`], name, { type: "audio/mpeg" }),
+    );
+    await user.upload(screen.getByLabelText("Audio files to upload"), files);
+
+    const dialog = await screen.findByRole("dialog", { name: "Upload to Copycast" });
+    await waitFor(() => expect(added).toEqual({ upload_ids: ["u1"] }));
+    expect(put).toEqual(["u1", "u2"]);
+    expect(within(dialog).getAllByTestId("upload-over-quota")).toHaveLength(2);
+    expect(within(dialog).getAllByLabelText("Over quota")).toHaveLength(2);
+    expect(await within(dialog).findByText("2 files over quota")).toBeInTheDocument();
   });
 
   it("offers Delete for a Local feed that is not the default", async () => {

@@ -8,14 +8,25 @@ export interface FeedSummary {
   id: string;
   kind: FeedKind;
   title: string;
+  owner?: string;
+  owner_removed?: boolean | null;
 }
 
-/** Feed titles and kinds by id from `list_feeds`, for links in Jobs and Requests. */
+/**
+ * Feed titles, kinds and owners by id from `list_feeds`, for links in Jobs and Requests (an
+ * Admin's list holds every Feed, so a job's owner is its Feed's).
+ */
 export function useFeedIndex(): Map<string, FeedSummary> {
   const { data } = $api.useQuery("get", "/api/feeds");
   const index = new Map<string, FeedSummary>();
   for (const feed of data?.feeds ?? []) {
-    index.set(feed.id, { id: feed.id, kind: feed.kind, title: feed.title });
+    index.set(feed.id, {
+      id: feed.id,
+      kind: feed.kind,
+      title: feed.title,
+      owner: feed.owner,
+      owner_removed: feed.owner_removed,
+    });
   }
   return index;
 }

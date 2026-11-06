@@ -4,7 +4,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import type { MirrorUpdate } from "@/api/types";
-import { item, job, mirror, problem, selectionResult } from "@/test/factories";
+import { item, job, me, mirror, problem, selectionResult } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
@@ -340,6 +340,20 @@ describe("Mirror page", () => {
     const rejected = await screen.findByRole("list", { name: "Rejected engine options" });
     expect(rejected).toHaveTextContent("outtmpl");
     expect(rejected).toHaveTextContent("not allowed for a feed");
+  });
+
+  it("hides the Engine options from a Member", async () => {
+    server.use(
+      ...handlers(),
+      http.get("/api/me", () =>
+        HttpResponse.json(me({ username: "alice", admin: false, auth_mode: "users" })),
+      ),
+    );
+    const user = userEvent.setup();
+    renderApp("/feed/mirror-1");
+    const form = await openSettings(user);
+    expect(within(form).getByLabelText("Source URL")).toBeInTheDocument();
+    expect(within(form).queryByLabelText("Engine options")).toBeNull();
   });
 
   it("offers Ephemeral and Archive, with Backfill as Archive's switch", async () => {

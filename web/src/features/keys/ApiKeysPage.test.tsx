@@ -60,6 +60,7 @@ describe("MCP page", () => {
 
     expect(await screen.findByRole("heading", { name: "MCP" })).toBeInTheDocument();
     expect(screen.getByText("Authentication is off")).toBeInTheDocument();
+    expect(screen.getByText(/\[\[auth\.users\]\] in copycast\.toml/)).toBeInTheDocument();
     const rows = await screen.findAllByTestId("key-row");
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("Claude Code");

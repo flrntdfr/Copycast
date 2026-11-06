@@ -7,7 +7,8 @@ import type { StorageSummary } from "@/api/types";
 import { bucket, mirror } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
-import { BUCKETS_OPEN_KEY } from "./BucketsSection";
+import { BUCKETS_OPEN_NAME } from "./BucketsSection";
+import { storageKey } from "@/lib/storage";
 
 const podcast = mirror({ id: "mirror-1", title: "Example Podcast", storage_bytes: 12_345_678 });
 const copycast = bucket({
@@ -92,12 +93,12 @@ describe("Buckets on the Feeds page", () => {
       expect(card).not.toHaveTextContent(/Synced|Episode/);
       expect(card.querySelector("[data-sync]")).toBeNull();
     }
-    expect(window.localStorage.getItem(BUCKETS_OPEN_KEY)).toBe("1");
+    expect(window.localStorage.getItem(storageKey(BUCKETS_OPEN_NAME))).toBe("1");
 
     await user.click(header);
     expect(header).toHaveAttribute("aria-expanded", "false");
     await waitFor(() => expect(screen.queryAllByTestId("bucket-card")).toHaveLength(0));
-    expect(window.localStorage.getItem(BUCKETS_OPEN_KEY)).toBe("0");
+    expect(window.localStorage.getItem(storageKey(BUCKETS_OPEN_NAME))).toBe("0");
   });
 
   it("shows the Feeds' own sizes while the files are being counted", async () => {

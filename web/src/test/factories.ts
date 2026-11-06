@@ -2,6 +2,7 @@
 import type {
   AboutRead,
   ApiKeyRead,
+  ComponentStatus,
   CookieServiceRead,
   EngineCookieFileRead,
   EngineCookiesRead,
@@ -125,6 +126,7 @@ export function item(overrides: Partial<ItemRead> = {}): ItemRead {
             bytes: 4_407,
             mime: "audio/mp4",
             ext: "m4a",
+            play_url: `http://localhost:8080/api/feeds/${feedId}/items/${id}/media`,
           }
         : null,
     public_media_url: `http://localhost:8080/feeds/${feedId}/media/${id}.m4a`,
@@ -380,6 +382,31 @@ export function problem(
     detail: `Problem ${slug}`,
     instance: null,
     ...extra,
+  };
+}
+
+/**
+ * The status popover's Storage row (`id: "quota"`): 3.2 GB of 10 GB by default; pass
+ * `quota_bytes: null` for an unlimited User, `facts` for an Admin's per-User lines.
+ */
+export function storageComponent(
+  overrides: Partial<ComponentStatus> & { used_bytes?: number; quota_bytes?: number | null } = {},
+): ComponentStatus {
+  const {
+    used_bytes: used = 3_200_000_000,
+    quota_bytes: quota = 10_000_000_000,
+    ...rest
+  } = overrides;
+  const ratio = quota == null ? null : quota > 0 ? used / quota : 1;
+  const state = ratio == null ? "ok" : ratio >= 1 ? "error" : ratio >= 0.9 ? "warn" : "ok";
+  return {
+    id: "quota",
+    name: "Storage",
+    state,
+    summary: "",
+    facts: [],
+    meter: { used_bytes: used, quota_bytes: quota, ratio },
+    ...rest,
   };
 }
 

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { AddRequestForm } from "@/features/buckets/AddRequestForm";
 import { UploadFilesButton } from "@/features/buckets/UploadFilesDialog";
 import { LocalFeedSettingsDialog } from "./LocalFeedSettingsDialog";
+import { OwnerBadge } from "@/features/session/OwnerBadge";
 import { formatMegabytes } from "@/lib/format";
 import { count } from "@/lib/labels";
 
@@ -54,6 +55,7 @@ export function LocalFeedHeader({
             <Badge variant="secondary" className="font-normal">
               Local
             </Badge>
+            <OwnerBadge feed={feed} />
           </div>
           <p className="text-sm text-muted-foreground tabular-nums">
             {count(feed.episode_count, "Episode")} · {formatMegabytes(feed.storage_bytes)}

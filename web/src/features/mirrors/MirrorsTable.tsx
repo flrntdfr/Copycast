@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/table";
 import { LocalFeedRowActions, MirrorRowActions } from "./MirrorRowActions";
 import { useRunningRefreshFeedIds } from "@/features/jobs/useRunningJobs";
+import { OwnerBadge } from "@/features/session/OwnerBadge";
 import { formatNumber } from "@/lib/format";
 import { HEALTH_DOT_CLASS } from "@/lib/health";
 import { cn } from "@/lib/utils";
@@ -81,6 +82,7 @@ function MirrorRow({ mirror, refreshing }: { mirror: MirrorRead; refreshing: boo
         >
           {mirror.title}
         </Link>
+        <OwnerBadge feed={mirror} className="mt-1" />
         {/* From `lg` up the Last Refresh column says so. */}
         {mirror.paused ? (
           <Badge variant="outline" className="mt-1 lg:hidden">
@@ -150,6 +152,7 @@ function LocalFeedRow({ feed }: { feed: BucketRead }) {
         >
           {feed.name}
         </Link>
+        <OwnerBadge feed={feed} className="mt-1" />
       </TableCell>
       <TableCell className="hidden md:table-cell">
         <Badge variant="secondary" className="font-normal">

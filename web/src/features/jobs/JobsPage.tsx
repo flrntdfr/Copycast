@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { JobsTable } from "./JobsTable";
 import { RunningJobCard } from "./RunningJobCard";
 import { useInvalidateFeed } from "@/features/feeds/mutations";
+import { OwnerBadge } from "@/features/session/OwnerBadge";
 import { jobKindLabel, jobTriggerLabel } from "@/lib/labels";
 
 /** Running Cards, the queue and the recent history; `job` events keep it current. */
@@ -112,6 +113,7 @@ export function JobsPage() {
                             ·
                           </span>
                           <FeedLink feedId={job.feed_id} feed={feeds.get(job.feed_id)} />
+                          <OwnerBadge feed={feeds.get(job.feed_id)} />
                         </>
                       ) : null}
                       {job.attempt > 0 ? (

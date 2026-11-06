@@ -14,6 +14,11 @@ export function formatBytes(bytes: number | null | undefined, digits = 1): strin
   return `${value.toFixed(value >= 100 ? 0 : digits)} ${UNITS[unit]}`;
 }
 
+/** "3.2 GB", "10 GB", "512 MB": decimal units, one decimal place unless it is a zero. */
+export function formatSize(bytes: number | null | undefined): string {
+  return formatBytes(bytes).replace(/\.0 /, " ");
+}
+
 export function formatSpeed(bps: number | null | undefined): string {
   if (bps == null || !Number.isFinite(bps)) return "";
   return `${formatBytes(bps)}/s`;
