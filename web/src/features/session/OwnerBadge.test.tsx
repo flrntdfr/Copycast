@@ -88,7 +88,7 @@ describe("owner labels", () => {
     );
     renderApp("/feed/m-emilia");
     const heading = await screen.findByRole("heading", { level: 1, name: "Hers" });
-    const header = heading.closest("header") as HTMLElement;
+    const header = heading.closest("header")!;
     expect(within(header).getByTestId("owner-badge")).toHaveTextContent("emilia");
   });
 });
