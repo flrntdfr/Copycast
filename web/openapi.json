@@ -5937,7 +5937,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "MirrorDefaults",
-        "description": "Operator defaults applied to every Mirror whose own value is null.\n\nStored under the data directory (``engine/defaults.json``), edited on the\nSettings page; a Mirror overrides a value by setting its own, and resets\nto the default by clearing it."
+        "description": "A User's Defaults, applied to every one of their Mirrors whose own value is null.\n\nStored in the Object store at ``users/{username}/defaults.json``, edited on\nthe Settings page; a Mirror overrides a value by setting its own, and resets\nto the default by clearing it."
       },
       "MirrorRead": {
         "properties": {

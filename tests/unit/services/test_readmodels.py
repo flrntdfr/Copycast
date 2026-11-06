@@ -318,6 +318,12 @@ def test_reads_carry_the_owner_and_the_blocked_reason() -> None:
     assert readmodels.item_read(item_row(), Urls()).blocked_reason is None
 
 
+def test_a_blocked_reason_shows_only_while_the_item_is_wanted() -> None:
+    for state in ("deleted", "available", "archived", "failed"):
+        row = item_row(archive_state=state, blocked_reason="quota", blocked_bytes=10)
+        assert readmodels.item_read(row, Urls()).blocked_reason is None, state
+
+
 def test_asset_read_names_the_archived_file() -> None:
     read = readmodels.asset_read(asset_row(), Urls())
     assert read.name == "0123456789abcdef.transcript.en.mirrored.vtt"

@@ -872,10 +872,10 @@ class ArchiveFlagUpdate(RequestModel):
 
 
 class MirrorDefaults(RequestModel):
-    """Operator defaults applied to every Mirror whose own value is null.
+    """A User's Defaults, applied to every one of their Mirrors whose own value is null.
 
-    Stored under the data directory (``engine/defaults.json``), edited on the
-    Settings page; a Mirror overrides a value by setting its own, and resets
+    Stored in the Object store at ``users/{username}/defaults.json``, edited on
+    the Settings page; a Mirror overrides a value by setting its own, and resets
     to the default by clearing it.
     """
 

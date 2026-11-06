@@ -302,7 +302,11 @@ def item_read(
         live_status=LiveStatus(item.live_status) if item.live_status else None,
         attempt_count=item.attempt_count,
         last_error=item.last_error,
-        blocked_reason=BlockedReason(item.blocked_reason) if item.blocked_reason else None,
+        blocked_reason=(
+            BlockedReason(item.blocked_reason)
+            if item.blocked_reason and item.archive_state == ArchiveState.wanted
+            else None
+        ),
         media=media,
         public_media_url=urls.media_url(item.feed_id, item.id, item.public_ext),
         artwork_url=item.artwork_url,
