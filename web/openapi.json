@@ -317,7 +317,7 @@
         "tags": [
           "feeds"
         ],
-        "summary": "How many files every Feed keeps in its bucket, and their total size",
+        "summary": "How many files each of your own Feeds keeps in its bucket, and their total size",
         "operationId": "storage_summary",
         "responses": {
           "200": {

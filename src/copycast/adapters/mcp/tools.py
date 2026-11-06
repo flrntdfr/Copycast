@@ -193,8 +193,9 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         return await services().list_feed_objects(feed_id)
 
     async def storage_summary() -> StorageSummary:
-        """How many files every Feed keeps in its bucket and their total size (one listing
-        of the Object store), plus the totals; a Feed that keeps nothing counts zeros."""
+        """How many files each of your own Feeds keeps in its bucket and their total size
+        (one listing of the Object store), plus the totals; a Feed that keeps nothing
+        counts zeros."""
         return await services().storage_summary()
 
     async def delete_feed(feed_id: str, confirm: bool = False) -> dict[str, Any]:
