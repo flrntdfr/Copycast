@@ -64,6 +64,10 @@ export type MirrorDefaults = Schemas["MirrorDefaults"];
 export type VideoSearchPage = Schemas["VideoSearchPage"];
 export type VideoSearchResult = Schemas["VideoSearchResult"];
 export type EngineCookiesWrite = Schemas["EngineCookiesWrite"];
+export type MeRead = Schemas["MeRead"];
+export type QuotaStatus = Schemas["QuotaStatus"];
+export type StatusMeter = Schemas["StatusMeter"];
+export type LoginRequest = Schemas["LoginRequest"];
 
 export type ArchiveState = Schemas["ArchiveState"];
 export type AssetKind = Schemas["AssetKind"];

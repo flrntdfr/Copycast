@@ -14,7 +14,7 @@ const feed = mirror({
   service: "Podcast RSS",
   storage_bytes: 12_345_678,
   episode_count: 3,
-  counts: { listed: 3, available: 2, delisted: 1, wanted: 0, archived: 3, failed: 0 },
+  counts: { listed: 3, available: 2, delisted: 1, wanted: 0, archived: 3, failed: 0, blocked: 0 },
   engine_options: { format: "bestaudio" },
   last_light_refresh_at: "2024-01-15T09:30:00Z",
 });

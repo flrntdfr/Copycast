@@ -68,6 +68,9 @@ export const OPS = {
   delete_engine_cookies: ["delete", "/api/engine/cookies"],
   get_mirror_defaults: ["get", "/api/settings/defaults"],
   set_mirror_defaults: ["put", "/api/settings/defaults"],
+  login: ["post", "/auth/login"],
+  logout: ["post", "/auth/logout"],
+  get_me: ["get", "/api/me"],
 } as const satisfies Record<string, Op>;
 
 export type Capability = keyof typeof OPS;

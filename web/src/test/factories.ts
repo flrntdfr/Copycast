@@ -10,10 +10,12 @@ import type {
   MirrorDefaults,
   ItemRead,
   JobRead,
+  MeRead,
   MirrorRead,
   ProbeCandidate,
   ProbeResult,
   Problem,
+  QuotaStatus,
   ReadyRead,
   RequestRead,
   SelectionResult,
@@ -32,6 +34,8 @@ export function mirror(overrides: Partial<MirrorRead> = {}): MirrorRead {
   return {
     id,
     kind: "mirror",
+    owner: "copycast",
+    owner_removed: false,
     title: "Example Podcast",
     description: null,
     artwork_url: null,
@@ -61,7 +65,7 @@ export function mirror(overrides: Partial<MirrorRead> = {}): MirrorRead {
     last_light_refresh_at: null,
     last_error: null,
     health: { status: "ok", reason: null },
-    counts: { listed: 3, available: 2, delisted: 0, wanted: 0, archived: 3, failed: 0 },
+    counts: { listed: 3, available: 2, delisted: 0, wanted: 0, archived: 3, failed: 0, blocked: 0 },
     selection: null,
     ...overrides,
   };
@@ -72,6 +76,8 @@ export function bucket(overrides: Partial<BucketRead> = {}): BucketRead {
   return {
     id,
     kind: "bucket",
+    owner: "copycast",
+    owner_removed: false,
     title: "Copycast",
     name: "Copycast",
     description: null,
@@ -237,6 +243,7 @@ export function about(overrides: Partial<AboutRead> = {}): AboutRead {
     layout_version: "1",
     totals: { feeds: 2, episodes: 42, storage_bytes: 1_500_000_000 },
     auth_enabled: false,
+    auth_mode: "open",
     ...overrides,
   };
 }
@@ -244,11 +251,37 @@ export function about(overrides: Partial<AboutRead> = {}): AboutRead {
 export function apiKey(overrides: Partial<ApiKeyRead> = {}): ApiKeyRead {
   return {
     id: overrides.id ?? `00000000-0000-4000-8000-${(++sequence).toString().padStart(12, "0")}`,
+    owner: "copycast",
     name: "Claude Code",
     scope: "write",
     prefix: "cck_a1b2c3d4",
     created_at: "2024-01-15T09:00:00Z",
     last_used_at: null,
+    ...overrides,
+  };
+}
+
+export function quotaStatus(overrides: Partial<QuotaStatus> = {}): QuotaStatus {
+  return {
+    username: "copycast",
+    used_bytes: 1_500_000_000,
+    quota_bytes: null,
+    state: "ok",
+    removed: false,
+    ...overrides,
+  };
+}
+
+/** The signed-in User; the default is open mode's implicit Admin. */
+export function me(overrides: Partial<MeRead> = {}): MeRead {
+  const username = overrides.username ?? "copycast";
+  return {
+    username,
+    admin: true,
+    auth_mode: "open",
+    via: "open",
+    totp: false,
+    quota: quotaStatus({ username }),
     ...overrides,
   };
 }

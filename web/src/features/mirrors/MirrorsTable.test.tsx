@@ -13,7 +13,7 @@ const feed = mirror({
   title: "Example Podcast",
   service: "Podcast RSS",
   episode_count: 3,
-  counts: { listed: 3, available: 2, delisted: 1, wanted: 0, archived: 3, failed: 0 },
+  counts: { listed: 3, available: 2, delisted: 1, wanted: 0, archived: 3, failed: 0, blocked: 0 },
 });
 const watchLater = mirror({
   id: "mirror-wl",
