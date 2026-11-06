@@ -216,9 +216,14 @@ describe("Local feed page", () => {
 
   it("marks a file Over quota when create_upload or its PUT answers 507", async () => {
     const put: string[] = [];
+    const deleted: string[] = [];
     let added: unknown = null;
     server.use(
       ...handlers(),
+      http.delete("/api/uploads/:id", ({ params }) => {
+        deleted.push(String(params.id));
+        return new HttpResponse(null, { status: 204 });
+      }),
       http.post("/api/uploads", async ({ request }) => {
         const { filename } = (await request.json()) as { filename: string };
         if (filename === "Part 3.mp3")
@@ -243,7 +248,14 @@ describe("Local feed page", () => {
       http.put("/uploads/:id/:token", ({ params }) => {
         put.push(String(params.id));
         if (params.id === "u2")
-          return HttpResponse.json(problem("over-quota", 507), { status: 507 });
+          return HttpResponse.json(
+            problem("over-quota", 507, {
+              used_bytes: 0,
+              quota_bytes: 10,
+              detail: "over quota: 15 B do not fit in the 10 B left",
+            }),
+            { status: 507 },
+          );
         return HttpResponse.json({ id: params.id, state: "received" });
       }),
       http.post("/api/buckets/:bucketId/uploads", async ({ request }) => {
@@ -265,12 +277,26 @@ describe("Local feed page", () => {
     expect(within(dialog).getAllByTestId("upload-over-quota")).toHaveLength(2);
     expect(within(dialog).getAllByLabelText("Over quota")).toHaveLength(2);
     expect(await within(dialog).findByText("2 files over quota")).toBeInTheDocument();
+    // The full Owner frees space first; the refused PUT says what did not fit, and its
+    // staged upload is given up so it holds no room (Part 3 was never staged).
+    expect(
+      within(dialog).getByText("Over quota: free some space, then upload it again"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("over quota: 15 B do not fit in the 10 B left"),
+    ).toBeInTheDocument();
+    expect(deleted).toEqual(["u2"]);
   });
 
   it("marks every uploaded file when the batch does not fit, and says why", async () => {
     let added = 0;
+    const deleted: string[] = [];
     server.use(
       ...handlers(),
+      http.delete("/api/uploads/:id", ({ params }) => {
+        deleted.push(String(params.id));
+        return new HttpResponse(null, { status: 204 });
+      }),
       http.post("/api/uploads", async ({ request }) => {
         const { filename } = (await request.json()) as { filename: string };
         const id = `u-${filename}`;
@@ -316,11 +342,14 @@ describe("Local feed page", () => {
     expect(within(dialog).queryByLabelText("Uploaded")).not.toBeInTheDocument();
     expect(within(dialog).getAllByTestId("upload-over-quota")).toHaveLength(3);
     expect(within(dialog).queryByText("Done")).not.toBeInTheDocument();
-    // Nothing is used: the server's reason, not "free some space first".
-    expect(
-      await screen.findByText("over quota: 238.0 kB do not fit in the 200.0 kB left"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/free some space first/)).not.toBeInTheDocument();
+    // Nothing is used: the server's reason on every file and in the toast, not "free some
+    // space first".
+    const reason = "over quota: 238.0 kB do not fit in the 200.0 kB left";
+    expect(within(dialog).getAllByText(reason)).toHaveLength(3);
+    expect(await screen.findAllByText(reason)).toHaveLength(4);
+    expect(screen.queryByText(/free some space/)).not.toBeInTheDocument();
+    // The refused batch is given up, so it stops holding room until uploaded again.
+    expect(deleted.sort()).toEqual(["u-Part 1.mp3", "u-Part 2.mp3", "u-Part 3.mp3"]);
   });
 
   it("offers no upload on another User's Local feed, which only they can fill", async () => {

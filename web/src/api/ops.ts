@@ -50,6 +50,7 @@ export const OPS = {
   create_upload: ["post", "/api/uploads"],
   put_upload: ["put", "/uploads/{upload_id}/{token}"],
   get_upload: ["get", "/api/uploads/{upload_id}"],
+  delete_upload: ["delete", "/api/uploads/{upload_id}"],
   create_serial_bucket: ["post", "/api/serial-buckets"],
   add_uploads: ["post", "/api/buckets/{bucket_id}/uploads"],
   list_jobs: ["get", "/api/jobs"],

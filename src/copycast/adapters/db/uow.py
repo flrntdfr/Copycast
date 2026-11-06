@@ -31,6 +31,7 @@ from copycast.adapters.db.repositories import (
     QuotaRepository,
     RequestRepository,
     SessionRepository,
+    StagedUploadRepository,
     TelemetryRepository,
     UserRepository,
 )
@@ -101,6 +102,7 @@ class UnitOfWork:
         self.sessions = SessionRepository(session)
         self.login_attempts = LoginAttemptRepository(session)
         self.quota = QuotaRepository(session)
+        self.staged_uploads = StagedUploadRepository(session)
 
     # ------------------------------------------------------------------ hooks
 

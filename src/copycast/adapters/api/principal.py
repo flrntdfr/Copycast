@@ -94,29 +94,36 @@ class PrincipalMiddleware:
         await self.app(scope, receive, send)
 
     async def resolve(self, scope: Scope, path: str) -> Principal | None:
-        users = self.container.users
-        if users.mode is AuthMode.open:
-            return users.open_principal()
-        headers = Headers(scope=scope)
-        # The container's services act as SYSTEM: the capabilities that resolve
-        # credentials are internal.
-        services = self.container.services
-        token = read_session_token(headers, self.container.settings)
-        if token is not None:
-            principal = await services.authenticate_session(token)
-            if principal is not None:
-                return principal
-        if not path.startswith(API_PREFIX + "/"):
-            return None
-        secret = bearer_token(headers)
-        if secret is None or not looks_like_api_key(secret):
-            return None
-        key = await services.authenticate_api_key(secret)
-        if key is None:
-            return None
-        return users.principal(
-            key.owner, via=PrincipalVia.api_key, api_key_id=key.id, key_scope=key.scope
-        )
+        return await resolve_principal(self.container, Headers(scope=scope), path)
+
+
+async def resolve_principal(
+    container: ApiContainer, headers: Headers, path: str
+) -> Principal | None:
+    """The Principal a request's credentials resolve to now (see the module docstring);
+    the event stream calls it again while open, so a signed-out session ends it."""
+    users = container.users
+    if users.mode is AuthMode.open:
+        return users.open_principal()
+    # The container's services act as SYSTEM: the capabilities that resolve
+    # credentials are internal.
+    services = container.services
+    token = read_session_token(headers, container.settings)
+    if token is not None:
+        principal = await services.authenticate_session(token)
+        if principal is not None:
+            return principal
+    if not path.startswith(API_PREFIX + "/"):
+        return None
+    secret = bearer_token(headers)
+    if secret is None or not looks_like_api_key(secret):
+        return None
+    key = await services.authenticate_api_key(secret)
+    if key is None:
+        return None
+    return users.principal(
+        key.owner, via=PrincipalVia.api_key, api_key_id=key.id, key_scope=key.scope
+    )
 
 
 __all__ = [
@@ -125,5 +132,6 @@ __all__ = [
     "bearer_token",
     "principal_of",
     "requires_principal",
+    "resolve_principal",
     "unauthenticated_response",
 ]

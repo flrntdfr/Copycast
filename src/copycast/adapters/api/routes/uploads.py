@@ -4,7 +4,8 @@
 ``PUT /uploads/{id}/{token}`` (outside ``/api``: the token is the credential,
 so an agent holding only an API key can ``curl -T`` the file) receives the
 bytes; ``POST /api/serial-buckets`` turns received uploads into a Bucket in
-the given order. Each of them answers ``507 over-quota`` (with ``used_bytes`` and
+the given order; ``DELETE /api/uploads/{id}`` gives a staged upload up. Those that
+stage, receive or add answer ``507 over-quota`` (with ``used_bytes`` and
 ``quota_bytes``) when the Owner's quota has no room for the file or the batch.
 """
 
@@ -52,6 +53,19 @@ async def create_upload(services: ServicesDep, body: UploadCreate) -> UploadRead
 )
 async def get_upload(services: ServicesDep, upload_id: str) -> UploadRead:
     return await services.get_upload(upload_id)
+
+
+@router.delete(
+    "/uploads/{upload_id}",
+    operation_id="delete_upload",
+    openapi_extra={"x-capability": "delete_upload"},
+    status_code=204,
+    responses=problem_responses(404),
+    summary="Give up a staged upload and the room it holds",
+)
+async def delete_upload(services: ServicesDep, upload_id: str) -> Response:
+    await services.delete_upload(upload_id)
+    return Response(status_code=204)
 
 
 @router.post(

@@ -108,6 +108,37 @@ def test_legacy_keys_a_rollback_changed_are_named_at_every_start(layout: Layout)
     assert MARKER_KEY in warning["hint"] and "users/florent/" in warning["hint"]
 
 
+def test_legacy_keys_a_rollback_deleted_are_named_at_every_start(layout: Layout) -> None:
+    """Regression: cookies deleted under 2.x after a rollback came back on re-upgrade
+    with no word (only newer keys were reported)."""
+    _seed_legacy(layout)
+    migrate_legacy_settings(layout, "florent")
+    # 2.3.0 rolled back onto this store; the operator removed every cookie file there
+    # (``delete_engine_cookies``: the files and the jar go).
+    layout.store.delete_prefix(layout.cookie_files_prefix())
+    layout.store.delete([layout.cookies_key()])
+
+    with structlog.testing.capture_logs() as events:
+        again = migrate_legacy_settings(layout, "florent")
+
+    removed = sorted(
+        [
+            layout.cookies_key(),
+            layout.cookie_file_key("youtube.txt"),
+            layout.cookie_file_key("twitch.txt"),
+        ]
+    )
+    assert again.already_done and sorted(again.legacy_removed) == removed
+    assert again.legacy_newer == []
+    assert _text(layout, "users/florent/cookie-files/youtube.txt") == YOUTUBE, "kept"
+    (warning,) = [e for e in events if e["event"] == "user_settings.legacy_removed_since_copy"]
+    assert warning["log_level"] == "warning" and warning["owner"] == "florent"
+    assert sorted(warning["keys"]) == removed
+    assert MARKER_KEY in warning["hint"] and "users/florent/" in warning["hint"]
+    # Untouched legacy keys are no news.
+    assert layout.defaults_key() not in again.legacy_removed
+
+
 def test_a_target_already_present_is_kept_and_reported(layout: Layout) -> None:
     legacy = _seed_legacy(layout)
     layout.store.put_bytes("users/florent/defaults.json", '{"language": "de"}\n')

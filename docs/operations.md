@@ -328,8 +328,11 @@ asset that does not exist. No answer tells a stranger what this server mirrors
 ([ADR 0022](adr/0022-public-artwork-under-opaque-tokens.md)).
 
 **The operator pair on `/feeds`.** In legacy mode the operator pair still opens every feed, as
-in 2.x, so a podcast app subscribed with it keeps working. In users mode it opens nothing
-(there is no operator password any more): subscribe with each feed's own URL.
+in 2.x, so a podcast app subscribed with it keeps working. It is throttled like a sign-in,
+on the same counter: a wrong operator password on `/feeds` counts as a failed login, and
+while the name is locked even the right pair answers 401 (podcast apps using it fail until the
+lock ends, at most 15 minutes). In users mode it opens nothing (there is no operator password
+any more): subscribe with each feed's own URL.
 
 **Media keys.** A player streaming an enclosure (iOS AVPlayer in Overcast) sends no
 credentials and never answers a challenge, so while authentication is on a feed publishes its
@@ -461,7 +464,11 @@ Once a User is **Over quota**:
   so does a podcast app's first play of an Ephemeral Episode (no `Retry-After`, with one generic
   detail);
 - an Upload that does not fit is refused when it is created with its size, when its bytes
-  arrive (the partial file is discarded) or when a batch is added;
+  arrive (the partial file is discarded) or when a batch is added. Staged Uploads not yet
+  added count against the room left: a received one by its size, a pending one by its
+  declared size for an hour, and not at all once its PUT failed or was refused. The web app
+  gives up the uploads it could not add (`DELETE /api/uploads/{id}`, the MCP tool
+  `delete_upload`), so uploading them again after freeing space works at once;
 - Refreshes, Light Refreshes, Backfill and Follow keep queuing: feeds always answer, and the
   archive job blocks what does not fit;
 - running jobs finish, and nothing is deleted on the User's behalf. Retention (autoprune,
@@ -495,6 +502,7 @@ feeds/<feed_id>/source/            verbatim Source XML or the last engine listin
 feeds/<feed_id>/media/             audio, <item_id>.info.json, <item_id>.item.xml (original RSS item)
 feeds/<feed_id>/assets/            Artwork, chapters, transcripts, Attachments
 uploads/<upload_id>/               a staged Upload (upload.json, file.<ext>), swept after 24 h
+                                   (counted per Owner in Postgres, table staged_uploads)
 ```
 
 Defaults and Cookie files belong to each User. Every Engine call made for a Feed (Refresh,
@@ -509,7 +517,8 @@ under 3.0 is not in them. The way back is not automatic either: before upgrading
 after a rollback, delete `users/.legacy-settings-copied` and the copies under `users/<owner>/`
 (`defaults.json`, `cookies.txt`, `cookie-files/`), or 3.0 keeps using the copies of the first
 upgrade; each start logs `user_settings.legacy_newer_than_copy` for a legacy key changed after
-the copy. `copycast users reassign OLD NEW` moves `users/OLD/` to `users/NEW/` with the Feeds;
+the copy and `user_settings.legacy_removed_since_copy` for one deleted since (cookies removed
+under 2.x stay in use under 3.0 until removed there too). `copycast users reassign OLD NEW` moves `users/OLD/` to `users/NEW/` with the Feeds;
 a file NEW already has stays OLD's and is reported. OLD's API keys stay OLD's (they stop
 working while OLD is not configured); `--move-keys` moves them too, for the same person under
 a new name only, since whoever holds them then acts as NEW. `copycast rebuild` needs
@@ -653,8 +662,8 @@ Owner, per-user Defaults and Cookie files, and storage quotas
 [ADR 0028](adr/0028-feeds-are-private-to-their-owner.md),
 [ADR 0029](adr/0029-storage-quotas.md)). Migration 0017 runs when the api or the worker
 starts (whichever wins the migration lock; both hand it the same owner) and gives every
-existing Feed and API key to the owner of existing data ("Switching to users mode"). The api
-and the worker also **copy** `engine/defaults.json` and the Cookie files to `users/<owner>/`;
+existing Feed and API key to the owner of existing data ("Switching to users mode");
+migration 0018 adds the empty `staged_uploads` table. The api and the worker also **copy** `engine/defaults.json` and the Cookie files to `users/<owner>/`;
 the `engine/` keys stay, for a rollback.
 
 **What podcast apps see: nothing.** Feed ids, feed URLs, pairs, media keys and enclosure URLs
@@ -674,7 +683,7 @@ a server switched to users mode (below).
 | Dashboards reading the status component `storage` by its name | renamed "Object store" (its id `storage` is unchanged); the new `quota` component is named "Storage" | read components by id |
 | Anything reading `engine/defaults.json` or `engine/cookies*` | Defaults and Cookie files are per User under `users/<username>/`; the `engine/` keys are copied once and no longer read (a later release deletes them) | read `users/<username>/` |
 | Members (users mode) | `engine_options`, purge and rebuild are Admin-only (`403`); another User's Feed is `404` | — |
-| A rollback to 2.3.0 | the schema is at 0017, which 2.3.0 refuses, and settings changed under 3.0 are not in `engine/` | restore the dump, then the old tag ("Rolling back to 2.3.0" below) |
+| A rollback to 2.3.0 | the schema is at 0018, which 2.3.0 refuses, and settings changed under 3.0 are not in `engine/` | restore the dump, then the old tag ("Rolling back to 2.3.0" below) |
 
 In legacy mode the browser's Basic prompt is replaced by the login page: sign in with
 `auth.username` and the operator password.
@@ -687,6 +696,7 @@ In legacy mode the browser's Basic prompt is replaced by the login page: sign in
 | 401 | `unauthorized` | `/api` without a session or a key (no `WWW-Authenticate` challenge) |
 | 401 | `login-failed` | any refused sign-in: "wrong username, password or code" |
 | 403 | `forbidden` | an Admin-only capability for a Member, a key on a route it may not use, a key scope too narrow |
+| 413 | `payload-too-large` | an `/auth` request body over 16 KiB (refused before it is read) |
 | 429 | `login-locked` | a username locked after 5 failures; `retry_after` and `Retry-After` |
 | 503 | `login-busy` | every password-hash slot busy; `Retry-After: 5` |
 | 507 | `over-quota` | a manual archive, an Upload or a first play of an Over quota User; `used_bytes` and `quota_bytes` on `/api` only |
@@ -741,8 +751,8 @@ Only if 3.0.0 misbehaves: whatever changed under 3.0 (new Feeds, Defaults, Cooki
 sessions) is lost.
 
 1. `docker compose stop api worker`.
-2. Restore the dump into a fresh database (2.3.0 refuses a schema at 0017, and `pg_restore
-   --clean` alone would leave 0017's tables behind):
+2. Restore the dump into a fresh database (2.3.0 refuses a schema at 0018, and `pg_restore
+   --clean` alone would leave the tables of 0017 and 0018 behind):
    `docker compose exec postgres sh -c 'dropdb -U copycast copycast && createdb -U copycast -O copycast copycast'`,
    then `docker compose exec -T postgres pg_restore -U copycast -d copycast < copycast-2.3.0.dump`.
 3. The `engine/` keys are still in place (3.0 only copied them); if they were changed by hand,
@@ -753,7 +763,10 @@ sessions) is lost.
 6. Before upgrading to 3.0 again, delete `users/.legacy-settings-copied` and the copies under
    `users/<owner>/` (`defaults.json`, `cookies.txt`, `cookie-files/`), so the next start copies
    what 2.3.0 has now. Otherwise 3.0 keeps the copies of the first upgrade and logs
-   `user_settings.legacy_newer_than_copy` for each legacy key changed since.
+   `user_settings.legacy_newer_than_copy` for each legacy key changed since, and
+   `user_settings.legacy_removed_since_copy` for each one deleted since. This matters most
+   for cookies removed under 2.3.0 (a compromised account's, say): without this step 3.0
+   goes on fetching with their copies under `users/<owner>/`.
 
 ## Upgrading to 2.3.0
 

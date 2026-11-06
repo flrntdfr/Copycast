@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -229,3 +230,125 @@ async def test_the_scheduler_sweeps_expired_uploads(
     tick = await Scheduler(container).tick()
     assert tick.swept_uploads
     assert layout.store.list(f"{layout.uploads_prefix()}{staged['id']}/") == []
+
+
+def token_of(staged: dict[str, Any]) -> str:
+    return urlsplit(staged["upload_url"]).path.rsplit("/", 1)[1]
+
+
+async def test_a_failed_or_refused_put_gives_its_declared_size_back(
+    client: httpx.AsyncClient, container: Container, tmp_path: Path
+) -> None:
+    """Regression: a PUT that failed or was refused kept holding its declared size for
+    24 h, so uploading the same file again was refused (507) with nothing used."""
+    body = tagged_mp3(tmp_path, "a.mp3", title="A")
+    set_quota(container, len(body) + 10)
+
+    # A PUT whose connection drops half-way.
+    dropped = await stage(client, "a.mp3", size_bytes=len(body))
+
+    async def half_then_gone() -> AsyncIterator[bytes]:
+        yield body[: len(body) // 2]
+        raise ConnectionResetError("client went away")
+
+    with pytest.raises(ConnectionResetError):
+        await container.services.put_upload(dropped["id"], token_of(dropped), half_then_gone())
+    # A PUT refused as over quota (the file is larger than it declared).
+    refused = await stage(client, "a.mp3", size_bytes=len(body))
+    over_quota(await put(client, refused, body + b"\0" * 64))
+    # Neither holds room now: the same file stages, uploads and is added.
+    retry = await stage(client, "a.mp3", size_bytes=len(body))
+    assert (await put(client, retry, body)).status_code == 200
+    bucket_id = (await container.services.ensure_default_bucket()).id
+    added = await client.post(
+        api(f"/buckets/{bucket_id}/uploads"), json={"upload_ids": [retry["id"]]}
+    )
+    assert added.status_code == 200, added.text
+    # The failed ones are still pending (a later PUT may still come), with no file.
+    for staged in (dropped, refused):
+        again = (await client.get(api(f"/uploads/{staged['id']}"))).json()
+        assert again["state"] == "pending"
+
+
+async def test_a_put_that_never_comes_stops_holding_room(
+    client: httpx.AsyncClient, container: Container, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_quota(container, 1_000)
+    await stage(client, "never-sent.mp3", size_bytes=1_000)  # the tab was closed
+    over_quota(await client.post(api("/uploads"), json={"filename": "b.mp3", "size_bytes": 1}))
+    monkeypatch.setattr(uploads_service, "PENDING_HOLD", timedelta(0))
+    assert (await stage(client, "b.mp3", size_bytes=1_000))["state"] == "pending"
+
+
+async def test_a_deleted_upload_gives_its_room_back(
+    world: World,
+    alice_client: httpx.AsyncClient,
+    bob_client: httpx.AsyncClient,
+    root_client: httpx.AsyncClient,
+    users_container: Container,
+    tmp_path: Path,
+) -> None:
+    body = tagged_mp3(tmp_path, "a.mp3", title="A")
+    set_quota(users_container, len(body) + 1_000)  # bob's world uses a few bytes
+    mine = await received(bob_client, "a.mp3", body)
+    second = {"filename": "b.mp3", "size_bytes": len(body)}
+    over_quota(await bob_client.post(api("/uploads"), json=second))
+    # Another User's upload is 404 to delete; an Admin may delete anyone's.
+    assert (await alice_client.delete(api(f"/uploads/{mine['id']}"))).status_code == 404
+    assert (await bob_client.delete(api(f"/uploads/{mine['id']}"))).status_code == 204
+    assert (await bob_client.get(api(f"/uploads/{mine['id']}"))).status_code == 404
+    prefix = f"{users_container.layout.uploads_prefix()}{mine['id']}/"
+    assert users_container.layout.store.list(prefix) == []
+    assert (await bob_client.delete(api(f"/uploads/{mine['id']}"))).status_code == 404
+    again = await received(bob_client, "a.mp3", body)
+    assert (await root_client.delete(api(f"/uploads/{again['id']}"))).status_code == 204
+
+
+async def test_staging_never_lists_the_object_stores_uploads(
+    client: httpx.AsyncClient,
+    container: Container,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: every create_upload (and each PUT, twice) listed and read every staged
+    upload of every User to count the caller's."""
+    set_quota(container, 10**9)
+    for n in range(3):
+        await received(client, f"{n}.mp3", tagged_mp3(tmp_path, f"{n}.mp3", title=str(n)))
+    store = container.layout.store
+    calls: list[str] = []
+
+    def no_listing(prefix: str) -> Any:
+        calls.append(prefix)
+        raise AssertionError(f"listed {prefix}")
+
+    monkeypatch.setattr(store, "list_dirs", no_listing)
+    body = tagged_mp3(tmp_path, "x.mp3", title="X")
+    staged = await stage(client, "x.mp3", size_bytes=len(body))
+    assert (await put(client, staged, body)).status_code == 200
+    assert calls == []
+
+
+async def test_parallel_creates_cannot_pass_the_staged_limit(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(uploads_service, "MAX_STAGED_UPLOADS", 2)
+    answers = await asyncio.gather(
+        *(client.post(api("/uploads"), json={"filename": f"{n}.mp3"}) for n in range(8))
+    )
+    assert sorted(a.status_code for a in answers) == [201, 201] + [409] * 6
+
+
+async def test_the_sweep_drops_the_rows_of_what_it_removes(
+    client: httpx.AsyncClient, container: Container
+) -> None:
+    set_quota(container, 1_000)
+    staged = await stage(client, "old.mp3", size_bytes=1_000)
+    layout = container.layout
+    key = f"{layout.uploads_prefix()}{staged['id']}/upload.json"
+    meta = layout.read_json(key)
+    meta["created_at"] = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
+    layout.store.put_bytes(key, json.dumps(meta), content_type="application/json")
+    assert (await Scheduler(container).tick()).swept_uploads
+    # Its row went with it: the room it held is free at once.
+    assert (await stage(client, "new.mp3", size_bytes=1_000))["state"] == "pending"

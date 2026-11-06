@@ -11,6 +11,12 @@ session of its Owner or of an Admin (the bucket page links it). In legacy mode t
 operator pair opens every feed, as before 3.0; in users mode there is no operator
 pair, and a Feed whose Owner is no longer configured opens to no pair and no key.
 
+The operator password is also the legacy Admin's sign-in password, so a pair naming
+``auth.username`` is throttled like a sign-in: it claims an attempt on the legacy
+owner's ``login_attempts`` row before the password is compared (the same row
+``POST /auth/login`` counts on), a right password resets the row, and while the name is
+locked even the right pair is refused, with the same 401 as any other refusal.
+
 Every refusal is a 401 problem+json with a ``Basic`` challenge, which is what makes
 Overcast and AntennaPod prompt for the pair, and one and the same answer
 (:data:`FEED_UNAUTHORIZED`) for a missing pair, a wrong pair, another feed's pair, a
@@ -23,6 +29,7 @@ from __future__ import annotations
 import base64
 import binascii
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, Request
@@ -36,7 +43,10 @@ from copycast.domain.credentials import constant_time_equals, feed_media_key
 from copycast.domain.enums import AuthMode
 from copycast.domain.exceptions import Unauthorized
 from copycast.domain.urls import ART_PATH_PREFIX, COPYCAST_ARTWORK_PATH
+from copycast.logging import get_logger
 from copycast.settings import AuthSettings
+
+log = get_logger(__name__)
 
 HEALTH_PATH = "/healthz"
 """Never gated: compose healthchecks and Kubernetes probes send no credentials."""
@@ -84,6 +94,37 @@ def is_operator(auth: AuthSettings, credentials: BasicCredentials | None) -> boo
     user_ok = constant_time_equals(credentials.username, auth.username)
     pass_ok = constant_time_equals(credentials.password, auth.password)
     return user_ok and pass_ok
+
+
+def names_operator(auth: AuthSettings, credentials: BasicCredentials | None) -> bool:
+    """Whether a pair is an attempt at the legacy operator password: legacy mode and the
+    username is ``auth.username`` (only then does the password decide anything)."""
+    return (
+        credentials is not None
+        and auth.password is not None
+        and auth.mode is AuthMode.legacy
+        and constant_time_equals(credentials.username, auth.username)
+    )
+
+
+async def _operator_pair_opens(container: ApiContainer, credentials: BasicCredentials) -> bool:
+    """Check a pair naming the operator under the sign-in throttle (see the module
+    docstring): True for the right password while the name is not locked."""
+    auth = container.settings.auth
+    owner = auth.legacy_owner
+    now = datetime.now(UTC)
+    async with container.uow_factory() as uow:
+        claim = await uow.login_attempts.claim(owner, now)
+        ok = claim.allowed and is_operator(auth, credentials)
+        if ok:
+            await uow.login_attempts.reset(owner)
+    if not ok:
+        log.info(
+            "auth.feed_operator_refused",
+            username=owner,
+            locked=not claim.allowed or claim.locked_until is not None,
+        )
+    return ok
 
 
 ROBOTS_PATH = "/robots.txt"
@@ -137,8 +178,10 @@ async def require_feed_access(
     principal = principal_of(request.scope) if request.url.path.endswith(".xml") else None
     if credentials is None and key is None and principal is None:
         raise Unauthorized(FEED_UNAUTHORIZED)
-    if is_operator(auth, credentials):
-        return
+    if names_operator(auth, credentials):
+        assert credentials is not None
+        if await _operator_pair_opens(container, credentials):
+            return
     async with container.uow_factory() as uow:
         feed = await uow.feeds.get(feed_id)
         known = feed is not None and container.users.is_configured(feed.owner)
@@ -172,6 +215,7 @@ __all__ = [
     "FeedAccess",
     "is_operator",
     "is_public_artwork",
+    "names_operator",
     "parse_basic",
     "require_feed_access",
     "unauthorized_response",

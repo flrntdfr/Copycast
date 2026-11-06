@@ -168,16 +168,16 @@ class Scheduler:
         return released
 
     async def _due_upload_sweep(self, now: datetime) -> bool:
-        """Expired staged uploads removed once per ``UPLOAD_SWEEP_INTERVAL``, not only when
-        someone next stages one; a failure is logged and retried at the next interval."""
+        """Expired staged uploads (and their ``staged_uploads`` rows) removed once per
+        ``UPLOAD_SWEEP_INTERVAL``; a failure is logged and retried at the next interval."""
         last = self._uploads_swept_at
         if last is not None and now - last < UPLOAD_SWEEP_INTERVAL:
             return False
         self._uploads_swept_at = now
         layout = self._container.layout
         try:
-            await asyncio.to_thread(
-                sweep_expired_uploads, layout.store, layout.uploads_prefix(), now
+            await sweep_expired_uploads(
+                layout.store, layout.uploads_prefix(), self._container.uow_factory, now
             )
         except Exception as exc:
             log.warning("scheduler.upload_sweep_failed", error=str(exc))

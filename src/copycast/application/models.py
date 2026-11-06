@@ -1111,7 +1111,7 @@ class LoginRequest(RequestModel):
 
     username: str = Field(min_length=1, max_length=256)
     password: str = Field(min_length=1, max_length=1024)
-    totp: str | None = Field(default=None, description="6 digits; spaces ignored")
+    totp: str | None = Field(default=None, max_length=32, description="6 digits; spaces ignored")
 
     @field_validator("username")
     @classmethod

@@ -32,6 +32,7 @@ from copycast.adapters.api.events import EventHub, psycopg_conninfo
 from copycast.adapters.api.health import create_health_router
 from copycast.adapters.api.middleware import (
     AccessLogMiddleware,
+    AuthBodyLimitMiddleware,
     NoRobotsMiddleware,
     NoStoreJsonMiddleware,
     RequestContextMiddleware,
@@ -219,6 +220,8 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
     install_exception_handlers(app)
     # Innermost: runs right before routing, inside the request-id and gzip layers.
     app.add_middleware(PrincipalMiddleware, container=container)
+    # Inside the guard (a cross-site POST is refused unread), ahead of every /auth route.
+    app.add_middleware(AuthBodyLimitMiddleware)
     # Ahead of authentication and every route, whether auth is on or off.
     app.add_middleware(
         CrossSiteGuardMiddleware,

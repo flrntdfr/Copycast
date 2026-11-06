@@ -11,6 +11,7 @@ from copycast.adapters.db.models.keys import ApiKey
 from copycast.adapters.db.models.requests import Request, RequestItem
 from copycast.adapters.db.models.secrets import InstanceSecret
 from copycast.adapters.db.models.telemetry import EngineVersion, RefreshRun, WorkerHeartbeat
+from copycast.adapters.db.models.uploads import StagedUpload
 from copycast.adapters.db.models.users import LoginAttempt, Session, User
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "Request",
     "RequestItem",
     "Session",
+    "StagedUpload",
     "User",
     "WorkerHeartbeat",
 ]

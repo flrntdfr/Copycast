@@ -105,7 +105,11 @@ password, never a fast digest of it, computed once at startup on the hash limite
 users no longer configured, and expired sessions, are deleted at every start.
 
 **The operator pair on `/feeds`.** Legacy mode keeps it: `auth.username` and `auth.password`
-still open every feed, as in 2.3.0, so podcast apps subscribed with it keep working. Users
+still open every feed, as in 2.3.0, so podcast apps subscribed with it keep working. Since
+the operator password is also the legacy Admin's sign-in password, a pair naming
+`auth.username` claims an attempt on that name's `login_attempts` row before the password is
+compared (3.0.0-rc.1): the lockout covers `/feeds` too, and a locked name refuses even the
+right pair. Users
 mode drops it: there is no plaintext password to compare, and an argon2 verify per feed fetch
 would be a CPU sink. A feed opens with its own pair or media key (ADR 0011, ADR 0020), and
 `/feeds/{id}.xml` also with the session of its owner or of an Admin.

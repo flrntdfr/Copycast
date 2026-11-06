@@ -24,7 +24,10 @@ A legacy key written after the marker can only come from a 2.x image run after a
 (3.0 never writes them). It is not copied (that could undo edits made under 3.0), but
 every start says so: ``user_settings.legacy_newer_than_copy`` names the keys and how to
 copy them again (delete the marker and the owner's copies; the rollback in
-``docs/operations.md``), so stale cookies never fail fetches without a word.
+``docs/operations.md``), so stale cookies never fail fetches without a word. A key the
+marker records as copied that is gone now was deleted by such a 2.x run (all of a User's
+cookies removed after a compromised account, say): 3.0 still fetches with its copy, so
+every start names those too, in ``user_settings.legacy_removed_since_copy``.
 
 :func:`move_user_settings` is the Object store half of ``copycast users reassign OLD NEW``:
 ``users/OLD/`` moves to ``users/NEW/``, and whatever NEW already has wins.
@@ -60,6 +63,9 @@ class MoveReport:
     legacy_newer: list[str] = field(default_factory=list[str])
     """With ``already_done``: the legacy keys written after the marker (a 2.x run after a
     rollback), which were not copied."""
+    legacy_removed: list[str] = field(default_factory=list[str])
+    """With ``already_done``: the legacy keys the marker records as copied that no longer
+    exist (deleted by a 2.x run after a rollback); their copies are still in use."""
 
 
 def legacy_pairs(layout: Layout, owner: str) -> list[tuple[str, str]]:
@@ -89,7 +95,8 @@ def migrate_legacy_settings(layout: Layout, owner: str) -> MoveReport:
     store = layout.store
     marker = store.head(MARKER_KEY)
     if marker is not None:
-        return MoveReport(already_done=True, legacy_newer=_legacy_newer(layout, marker))
+        newer, removed = _legacy_changed(layout, marker)
+        return MoveReport(already_done=True, legacy_newer=newer, legacy_removed=removed)
     copied: list[str] = []
     conflicts: list[str] = []
     for source, target in legacy_pairs(layout, owner):
@@ -122,8 +129,9 @@ def migrate_legacy_settings(layout: Layout, owner: str) -> MoveReport:
     return MoveReport(copied=copied, conflicts=conflicts)
 
 
-def _legacy_newer(layout: Layout, marker: StoredObject) -> list[str]:
-    """The legacy keys written after ``marker`` (warned about, never fatal)."""
+def _legacy_changed(layout: Layout, marker: StoredObject) -> tuple[list[str], list[str]]:
+    """The legacy keys written after ``marker``, and those it records as copied that are
+    gone (each warned about, never fatal)."""
     try:
         sources = [
             layout.defaults_key(),
@@ -136,11 +144,14 @@ def _legacy_newer(layout: Layout, marker: StoredObject) -> list[str]:
             if (found := layout.store.head(source)) is not None
             and found.last_modified > marker.last_modified
         ]
+        recorded: Any = layout.read_json(MARKER_KEY)
+        fields = cast("dict[str, object]", recorded) if isinstance(recorded, dict) else {}
+        named = fields.get("owner")
+        owner = named if isinstance(named, str) and named else "{owner}"
+        copied: Any = fields.get("copied")
+        listed = cast("list[object]", copied) if isinstance(copied, list) else []
+        removed = [key for key in listed if isinstance(key, str) and layout.store.head(key) is None]
         if newer:
-            recorded: Any = layout.read_json(MARKER_KEY)
-            fields = cast("dict[str, object]", recorded) if isinstance(recorded, dict) else {}
-            named = fields.get("owner")
-            owner = named if isinstance(named, str) and named else "{owner}"
             log.warning(
                 "user_settings.legacy_newer_than_copy",
                 keys=newer,
@@ -152,10 +163,23 @@ def _legacy_newer(layout: Layout, marker: StoredObject) -> list[str]:
                     "restart (or set them again under 3.0)"
                 ),
             )
-        return newer
+        if removed:
+            log.warning(
+                "user_settings.legacy_removed_since_copy",
+                keys=removed,
+                owner=owner,
+                hint=(
+                    f"a 2.x image deleted these after 3.0 copied them to users/{owner}/; 3.0 "
+                    f"still uses its copies under users/{owner}/. If they should be gone, "
+                    f"remove them under 3.0 too (Settings, Cookie files) or delete "
+                    f"{MARKER_KEY} and users/{owner}/defaults.json, cookies.txt and "
+                    "cookie-files/, then restart"
+                ),
+            )
+        return newer, removed
     except Exception as exc:  # a check, not the copy: never fatal
         log.warning("user_settings.legacy_check_failed", error=str(exc))
-        return []
+        return [], []
 
 
 def move_user_settings(layout: Layout, old: str, new: str) -> MoveReport:

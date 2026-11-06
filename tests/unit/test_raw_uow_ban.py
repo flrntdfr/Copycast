@@ -26,6 +26,8 @@ MODULE = "<module>"
 UOW_FACTORY_ALLOWED: frozenset[tuple[str, str]] = frozenset(
     {
         ("api/auth.py", "require_feed_access"),
+        # The legacy operator pair claims a sign-in attempt (login_attempts) on /feeds.
+        ("api/auth.py", "_operator_pair_opens"),
         ("api/deps.py", "refuse_during_rebuild"),
         ("api/health.py", "_worker_seen_at"),
         ("api/routes/public.py", "asset"),
@@ -59,7 +61,9 @@ SYSTEM_DEP_ALLOWED: frozenset[tuple[str, str]] = frozenset(
 CONTAINER_SERVICES_ALLOWED: frozenset[tuple[str, str]] = frozenset(
     {
         ("api/deps.py", "get_system_services"),
-        ("api/principal.py", "resolve"),  # authenticate_session, authenticate_api_key
+        # authenticate_session, authenticate_api_key: the middleware, and an open event
+        # stream checking its session again.
+        ("api/principal.py", "resolve_principal"),
         ("api/app.py", "lifespan"),  # the startup steps
         ("mcp/auth.py", "verify_token"),  # ApiKeyVerifier: authenticate_api_key
     }

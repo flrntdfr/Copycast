@@ -11,12 +11,17 @@ every change first carries the jar back into the files. A jar stored before file
 existed shows as the file ``cookies``. The capabilities act on the caller's own files
 only, Admins included; the pre-3.0 ``engine/`` keys are copied once to the owner of
 existing data (``adapters.storage.user_settings``) and no longer read.
+
+A User holds at most :data:`MAX_COOKIE_FILES` files of :data:`MAX_COOKIE_BYTES` in all
+(409 past either), checked under the Owner's quota lock so parallel calls cannot add past
+it: every change loads them all, and they sit outside the storage quota.
 """
 
 from __future__ import annotations
 
 import asyncio
 import stat
+from typing import Final
 
 from copycast.application.capabilities import capability
 from copycast.application.models import (
@@ -37,13 +42,18 @@ from copycast.domain.cookies import (
     services_for,
     split_cookie_jar,
 )
-from copycast.domain.exceptions import NotFound
+from copycast.domain.exceptions import Conflict, NotFound
+from copycast.domain.quota import format_size
 from copycast.logging import get_logger
 
 log = get_logger(__name__)
 
 COOKIES_MODE = stat.S_IRUSR | stat.S_IWUSR
 LEGACY_NAME = "cookies"
+MAX_COOKIE_FILES: Final = 32
+"""Cookie files one User may hold (one per site or session is the use)."""
+MAX_COOKIE_BYTES: Final = 4 * 1024 * 1024
+"""Their total size: each change loads every one of them, and the merged jar."""
 
 
 def _text(store: ObjectStorePort, key: str) -> str | None:
@@ -73,6 +83,26 @@ class _Store:
         if not listed:
             return {LEGACY_NAME: self.jar} if self.store.head(self.jar) is not None else {}
         return {o.name.removesuffix(".txt"): o.key for o in listed}
+
+    def check_room(self, name: str, content: str) -> None:
+        """Conflict when storing ``content`` as ``name`` would pass either limit."""
+        sizes = {
+            o.name.removesuffix(".txt"): o.size
+            for o in self.store.list(self.folder)
+            if o.name.endswith(".txt")
+        }
+        if name not in sizes and len(sizes) >= MAX_COOKIE_FILES:
+            raise Conflict(
+                f"{len(sizes)} cookie files are stored, the most one User may hold; "
+                "remove one, or replace a file by storing it under the same name"
+            )
+        total = sum(size for other, size in sizes.items() if other != name)
+        total += len(content.encode("utf-8"))
+        if total > MAX_COOKIE_BYTES:
+            raise Conflict(
+                f"cookie files are limited to {format_size(MAX_COOKIE_BYTES)} in all; "
+                f"this one would make {format_size(total)}: remove one first"
+            )
 
     def load(self) -> dict[str, str]:
         files = {name: _text(self.store, key) for name, key in self.keys().items()}
@@ -195,12 +225,16 @@ async def set_engine_cookies(ctx: ServiceContext, body: EngineCookiesWrite) -> E
     store = _store(ctx, owner)
 
     def _add() -> EngineCookiesRead:
+        store.check_room(name, body.content)
         files = store.synced()
         files[name] = body.content
         store.save(files)
         return store.read()
 
-    read = await asyncio.to_thread(_add)
+    # Under the Owner's lock: parallel calls each see what the previous one stored.
+    async with ctx.uow_factory() as uow:
+        await uow.quota.lock_owner(owner)
+        read = await asyncio.to_thread(_add)
     log.info(
         "engine.cookies_stored",
         owner=owner,
@@ -229,6 +263,8 @@ async def delete_engine_cookies(ctx: ServiceContext, name: str | None = None) ->
 
 __all__ = [
     "COOKIES_MODE",
+    "MAX_COOKIE_BYTES",
+    "MAX_COOKIE_FILES",
     "cookie_jar_key",
     "cookie_store",
     "delete_engine_cookies",

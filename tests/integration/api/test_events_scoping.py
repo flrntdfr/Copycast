@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from copycast.adapters.api.events import Envelope, EventHub, Subscription, event_feed_id
+from copycast.adapters.api.routes import events as events_routes
 from copycast.app import Container
 from copycast.domain.enums import PrincipalVia
 from copycast.domain.users import Principal
@@ -23,6 +24,7 @@ from tests.integration.api.test_events import parse_frames
 from tests.support.factories import EPOCH, listing, listing_item
 from tests.support.fake_engine import FakeEngine
 from tests.support.paths import EVENTS_PATH
+from tests.support.users import session_headers
 from tests.support.world import World
 
 pytestmark = pytest.mark.integration
@@ -218,3 +220,21 @@ async def test_a_deleted_feeds_event_still_reaches_its_owner_only(
     gone = [e for e in bobs if e.name == "feed" and getattr(e.event, "reason", "") == "deleted"]
     assert gone and gone[0].owner == "bob" and event_feed_id(gone[0].event) == feed_id
     assert not alices
+
+
+async def test_a_stream_ends_once_its_session_is_signed_out(
+    users_app: Any, users_client_factory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: an open stream kept delivering a User's events after their sign-out."""
+    monkeypatch.setattr(events_routes, "RECHECK_SECONDS", 0.05)
+    hub = hub_of(users_app)
+    assert await hub.wait_connected()
+    async with users_client_factory() as client:
+        session = await session_headers(client, "alice")
+        stream = asyncio.create_task(client.get(EVENTS_PATH, headers=session))
+        await asyncio.sleep(0.3)
+        assert hub.subscriber_count == 1 and not stream.done(), "open while signed in"
+        assert (await client.post("/auth/logout", headers=session)).status_code == 204
+        ended = await asyncio.wait_for(stream, 5)
+        assert ended.status_code == 200
+        assert hub.subscriber_count == 0

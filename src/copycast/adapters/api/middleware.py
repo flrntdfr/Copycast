@@ -1,4 +1,5 @@
-"""Pure ASGI middleware: request ids, ``Cache-Control: no-store`` on JSON, the request log.
+"""Pure ASGI middleware: request ids, ``Cache-Control: no-store`` on JSON, the request log,
+and the body cap of the unauthenticated ``/auth`` routes.
 
 All of them wrap ``send`` rather than using ``BaseHTTPMiddleware`` so streaming
 responses (SSE, media) and background tasks keep their exact semantics.
@@ -11,8 +12,10 @@ import uuid
 from typing import Any
 
 from starlette.datastructures import Headers, MutableHeaders
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from copycast.adapters.api.problems import PROBLEM_MEDIA_TYPE, build_problem
 from copycast.logging import bind_context, get_logger, redact_text, unbind_context
 
 REQUEST_ID_HEADER = "x-request-id"
@@ -106,6 +109,87 @@ class NoStoreJsonMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_no_store)
+
+
+AUTH_BODY_PREFIX = "/auth/"
+AUTH_BODY_LIMIT = 16 * 1024
+"""Bytes a ``/auth`` request body may have: a login is a username (256 characters), a
+password (1024) and a code, JSON-escaped; anything longer is no sign-in."""
+TOO_LARGE_SLUG = "payload-too-large"
+
+
+class AuthBodyLimitMiddleware:
+    """Refuse an ``/auth`` request body over :data:`AUTH_BODY_LIMIT` with 413, unread.
+
+    ``POST /auth/login`` is the one route that parses a body before any credential, and
+    neither uvicorn nor FastAPI caps one: a client could make the api buffer and
+    ``json.loads`` gigabytes. A declared ``Content-Length`` over the cap is refused at
+    once; otherwise the body (chunked or not) is read here up to the cap, refused as soon
+    as it goes past it, and handed to the route from this buffer.
+    """
+
+    def __init__(
+        self, app: ASGIApp, *, prefix: str = AUTH_BODY_PREFIX, limit: int = AUTH_BODY_LIMIT
+    ) -> None:
+        self.app = app
+        self.prefix = prefix
+        self.limit = limit
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = str(scope.get("path", ""))
+        if scope["type"] != "http" or not path.startswith(self.prefix):
+            await self.app(scope, receive, send)
+            return
+        declared = _int_or_none(Headers(scope=scope).get("content-length"))
+        if declared is not None and declared > self.limit:
+            await self._refuse(scope, receive, send, path)
+            return
+        chunks: list[bytes] = []
+        size = 0
+        more = True
+        while more:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            body: bytes = message.get("body", b"")
+            size += len(body)
+            if size > self.limit:
+                await self._refuse(scope, receive, send, path)
+                return
+            chunks.append(body)
+            more = bool(message.get("more_body", False))
+        buffered: Message | None = {
+            "type": "http.request",
+            "body": b"".join(chunks),
+            "more_body": False,
+        }
+
+        async def replay() -> Message:
+            nonlocal buffered
+            if buffered is not None:
+                message, buffered = buffered, None
+                return message
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+    async def _refuse(self, scope: Scope, receive: Receive, send: Send, path: str) -> None:
+        log.warning("http.body_too_large", path=redact_text(path), limit=self.limit)
+        problem = build_problem(
+            None,
+            status=413,
+            slug=TOO_LARGE_SLUG,
+            detail=f"a request body here is limited to {self.limit} bytes",
+        )
+        body = problem.model_dump(mode="json", exclude_none=True)
+        body["instance"] = path
+        response = JSONResponse(
+            body,
+            status_code=413,
+            media_type=PROBLEM_MEDIA_TYPE,
+            headers={"Cache-Control": "no-store", "Connection": "close"},
+        )
+        await response(scope, receive, send)
 
 
 ACCESS_LOG_EVENT = "http.request"
@@ -240,12 +324,16 @@ class AccessLogMiddleware:
 __all__ = [
     "ACCESS_LOG_EVENT",
     "ACCESS_LOG_SKIP_PREFIX",
+    "AUTH_BODY_LIMIT",
+    "AUTH_BODY_PREFIX",
     "LOGGED_VALUE_MAX",
     "NO_STORE_TYPES",
     "REQUEST_ID_HEADER",
     "REQUEST_ID_MAX_LEN",
     "ROBOTS_TAG",
+    "TOO_LARGE_SLUG",
     "AccessLogMiddleware",
+    "AuthBodyLimitMiddleware",
     "NoRobotsMiddleware",
     "NoStoreJsonMiddleware",
     "RequestContextMiddleware",

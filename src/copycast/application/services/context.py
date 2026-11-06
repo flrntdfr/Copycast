@@ -751,6 +751,39 @@ class LoginAttemptRepositoryPort(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class StagedUsage:
+    """What one Owner holds staged under ``uploads/``: how many uploads, and their bytes."""
+
+    count: int = 0
+    bytes: int = 0
+
+
+class StagedUploadRepositoryPort(Protocol):
+    """The account of staged uploads (``staged_uploads``); the uploads live in the store."""
+
+    async def add(self, upload_id: str, owner: str, *, declared: int, now: datetime) -> None: ...
+    async def usage(
+        self,
+        owner: str,
+        *,
+        live_after: datetime,
+        held_after: datetime,
+        exclude: str | None = None,
+    ) -> StagedUsage:
+        """``owner``'s uploads created after ``live_after``, with a received one's size and
+        a pending one's declared size while it was created after ``held_after``."""
+        ...
+
+    async def receive(self, upload_id: str, owner: str, *, size: int, now: datetime) -> None: ...
+    async def release(self, upload_id: str) -> None:
+        """A pending upload's declared size no longer counts (its PUT failed)."""
+        ...
+
+    async def delete(self, upload_ids: Collection[str]) -> int: ...
+    async def delete_expired(self, before: datetime) -> int: ...
+
+
 class QuotaRepositoryPort(Protocol):
     async def lock_owner(self, owner: str) -> None:
         """Serialise quota admission for ``owner`` until the transaction ends (a check
@@ -922,6 +955,8 @@ class UnitOfWorkPort(Protocol):
     def instance_secrets(self) -> InstanceSecretRepositoryPort: ...
     @property
     def quota(self) -> QuotaRepositoryPort: ...
+    @property
+    def staged_uploads(self) -> StagedUploadRepositoryPort: ...
     @property
     def layout(self) -> LayoutPort: ...
 
@@ -1158,6 +1193,8 @@ __all__ = [
     "SessionRow",
     "SourceGateway",
     "SourceSnapshot",
+    "StagedUploadRepositoryPort",
+    "StagedUsage",
     "TelemetryRepositoryPort",
     "UnitOfWorkFactoryPort",
     "UnitOfWorkPort",

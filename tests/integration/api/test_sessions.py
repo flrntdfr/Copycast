@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -73,6 +74,21 @@ async def scalar(container: Container, sql: str, **params: Any) -> Any:
 async def execute(container: Container, sql: str, **params: Any) -> None:
     async with container.uow_factory() as uow:
         await uow.session.execute(text(sql), params)  # type: ignore[attr-defined]
+
+
+# The app's clock against Postgres's: the app (on the host) writes lock and session times
+# with its own clock, while Postgres's now() runs in the container, whose clock drifts a
+# few ms from the host's. Tests that check those times read and write them on the app's
+# clock only; they run with it skewed both ways to prove they never compare it with now().
+CLOCK_SKEWS = pytest.mark.parametrize("skew", [0.0, 1.5, -1.5], ids=["same", "ahead", "behind"])
+
+
+def skew_app_clock(monkeypatch: pytest.MonkeyPatch, skew: float) -> None:
+    monkeypatch.setattr(auth_service, "_now", lambda: datetime.now(UTC) + timedelta(seconds=skew))
+
+
+def app_now() -> datetime:
+    return auth_service._now()  # pyright: ignore[reportPrivateUsage]
 
 
 # --------------------------------------------------------------------------- the boundary
@@ -180,9 +196,14 @@ def test_the_lock_schedule(failures: int, seconds: int) -> None:
     assert auth_service.lock_seconds(40) == auth_service.LOCK_MAX_SECONDS == 900
 
 
+@CLOCK_SKEWS
 async def test_five_failures_lock_the_name_known_or_not(
-    users_client: httpx.AsyncClient, users_container: Container
+    users_client: httpx.AsyncClient,
+    users_container: Container,
+    monkeypatch: pytest.MonkeyPatch,
+    skew: float,
 ) -> None:
+    skew_app_clock(monkeypatch, skew)
     for name in ("alice", "nobody"):
         for n in range(1, 6):
             response = await attempt(users_client, name, "wrong-password")
@@ -196,19 +217,19 @@ async def test_five_failures_lock_the_name_known_or_not(
     assert (await attempt(users_client, "alice", USERS["alice"].password)).status_code == 429
     assert (await attempt(users_client, "bob", USERS["bob"].password)).status_code == 204
 
-    # The lock over, one more failure locks for twice as long.
+    # The lock over, one more failure locks for twice as long (times on the app's clock).
     await execute(
         users_container,
-        "UPDATE login_attempts SET locked_until = now() - interval '1 second' "
-        "WHERE username = 'alice'",
+        "UPDATE login_attempts SET locked_until = :t WHERE username = 'alice'",
+        t=app_now() - timedelta(seconds=1),
     )
+    before = app_now()
     assert (await attempt(users_client, "alice", "wrong-password")).status_code == 401
-    seconds = await scalar(
-        users_container,
-        "SELECT extract(epoch FROM locked_until - now()) FROM login_attempts "
-        "WHERE username = 'alice'",
+    after = app_now()
+    locked_until = await scalar(
+        users_container, "SELECT locked_until FROM login_attempts WHERE username = 'alice'"
     )
-    assert 55 <= float(seconds) <= 60
+    assert before + timedelta(seconds=60) <= locked_until <= after + timedelta(seconds=60)
     # A success after the lock resets the count.
     await execute(users_container, "UPDATE login_attempts SET locked_until = NULL")
     assert (await attempt(users_client, "alice", USERS["alice"].password)).status_code == 204
@@ -282,6 +303,21 @@ async def test_an_unknown_typed_name_is_never_stored_in_clear(
     # Another unknown name gets a key of its own.
     assert (await attempt(users_client, "someone-else", "x")).status_code == 401
     assert await scalar(users_container, "SELECT count(*) FROM login_attempts") == 2
+
+
+async def test_a_login_body_over_the_cap_is_refused_unread(
+    users_client: httpx.AsyncClient, users_container: Container
+) -> None:
+    """Regression: POST /auth/login read and parsed a body of any size (64 MiB: 422)."""
+    huge = b'{"username": "alice", "password": "' + b"x" * (64 * 1024 * 1024) + b'"}'
+    response = await users_client.post("/auth/login", content=huge)
+    assert response.status_code == 413
+    assert problem(response)["type"] == "urn:copycast:problem:payload-too-large"
+    too_long_code = await attempt(users_client, "alice", USERS["alice"].password, "1" * 33)
+    assert too_long_code.status_code == 422
+    # Neither counted a failure, and a sign-in of ordinary size still works.
+    assert await scalar(users_container, "SELECT count(*) FROM login_attempts") == 0
+    assert (await attempt(users_client, "alice", USERS["alice"].password)).status_code == 204
 
 
 async def test_logins_prune_stale_attempts_now_and_then(
@@ -408,9 +444,14 @@ async def test_a_login_ends_the_session_it_came_with(
     assert await scalar(users_container, "SELECT count(*) FROM sessions") == 1
 
 
+@CLOCK_SKEWS
 async def test_sessions_slide_and_expire(
-    users_client: httpx.AsyncClient, users_container: Container
+    users_client: httpx.AsyncClient,
+    users_container: Container,
+    monkeypatch: pytest.MonkeyPatch,
+    skew: float,
 ) -> None:
+    skew_app_clock(monkeypatch, skew)
     response = await login(users_client, "alice")
     digest = session_digest(cookie_value(response))
     stored = await scalar(
@@ -430,23 +471,24 @@ async def test_sessions_slide_and_expire(
         d=digest,
     )
     assert float(days) < 1.01
-    # Seen more than a minute ago: the expiry slides to session_days from now.
+    # Seen more than a minute ago: the expiry slides to session_days from now (the app's).
     await execute(
         users_container,
         "UPDATE sessions SET last_seen_at = now() - interval '2 minutes' WHERE id_hash = :d",
         d=digest,
     )
+    before = app_now()
     assert (await users_client.get(api("/feeds"))).status_code == 200
-    days = await scalar(
-        users_container,
-        "SELECT extract(epoch FROM expires_at - now()) / 86400 FROM sessions WHERE id_hash = :d",
-        d=digest,
+    after = app_now()
+    expires_at = await scalar(
+        users_container, "SELECT expires_at FROM sessions WHERE id_hash = :d", d=digest
     )
-    assert 29.9 < float(days) <= 30
+    assert before + timedelta(days=30) <= expires_at <= after + timedelta(days=30)
     # Expired: refused, and the row is gone.
     await execute(
         users_container,
-        "UPDATE sessions SET expires_at = now() - interval '1 second' WHERE id_hash = :d",
+        "UPDATE sessions SET expires_at = :t WHERE id_hash = :d",
+        t=app_now() - timedelta(seconds=1),
         d=digest,
     )
     assert (await users_client.get(api("/feeds"))).status_code == 401
@@ -708,3 +750,40 @@ async def test_a_renamed_legacy_operator_is_warned_about(settings: Settings, db:
             pass
     warnings = [e for e in events if e["event"] == "auth.removed_owner_has_feeds"]
     assert [(e["owner"], e["feeds"]) for e in warnings] == [("florent", 1)]
+
+
+async def test_legacy_operator_pairs_on_feeds_are_throttled_like_a_sign_in(
+    settings: Settings, db: str
+) -> None:
+    """Regression: the operator password could be guessed on /feeds at line speed.
+
+    A pair naming ``auth.username`` counts on the legacy owner's ``login_attempts`` row,
+    the one the login form counts on, before its password is compared.
+    """
+    right = httpx.BasicAuth("florent", LEGACY_PASSWORD)
+    wrong = httpx.BasicAuth("florent", "not-the-password")
+    async with running(legacy(settings)) as (container, client):
+        # The right pair passes the dependency: the feed does not exist (404).
+        assert (await client.get("/feeds/nope.xml", auth=right)).status_code == 404
+        for n in range(1, auth_service.LOCK_THRESHOLD + 1):
+            assert (await client.get("/feeds/nope.xml", auth=wrong)).status_code == 401, n
+        # Locked: the right pair gets the same 401, and so does the login form (429).
+        locked = await client.get("/feeds/nope.xml", auth=right)
+        assert locked.status_code == 401
+        assert locked.headers["www-authenticate"].startswith("Basic")
+        assert (await attempt(client, "florent", LEGACY_PASSWORD)).status_code == 429
+        count = await scalar(
+            container, "SELECT failed_count FROM login_attempts WHERE username = 'florent'"
+        )
+        assert count == auth_service.LOCK_THRESHOLD
+        # Another name is no operator attempt: compared as a feed pair, never counted.
+        other = httpx.BasicAuth("someone", LEGACY_PASSWORD)
+        assert (await client.get("/feeds/nope.xml", auth=other)).status_code == 401
+        # The lock over, the right pair opens again and resets the count.
+        await execute(
+            container,
+            "UPDATE login_attempts SET locked_until = :t",
+            t=app_now() - timedelta(seconds=1),
+        )
+        assert (await client.get("/feeds/nope.xml", auth=right)).status_code == 404
+        assert await scalar(container, "SELECT count(*) FROM login_attempts") == 0

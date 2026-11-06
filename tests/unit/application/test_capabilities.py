@@ -39,6 +39,7 @@ PLAN_TOOLS = {
     "prune_bucket",
     "create_upload",
     "get_upload",
+    "delete_upload",
     "create_serial_bucket",
     "add_uploads",
     "get_job",

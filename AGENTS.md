@@ -38,7 +38,7 @@ A Local feed an agent builds from Uploads in an order it decides (an audiobook's
 _Avoid_: playlist, audiobook feed, ordered Bucket
 
 **Upload**:
-One audio file staged for a Local feed: created with a one-time upload URL, received by an HTTP PUT of its bytes, read for its tags, and consumed (or swept after 24 h) once a Serial Bucket or `add_uploads` takes it. `add_uploads` orders a batch by natural file name and dates it by arrival (ADR 0018).
+One audio file staged for a Local feed: created with a one-time upload URL, received by an HTTP PUT of its bytes, read for its tags, and consumed (or swept after 24 h, or given up with `delete_upload`) once a Serial Bucket or `add_uploads` takes it. Each Owner's staged uploads are counted in `staged_uploads` (ADR 0029). `add_uploads` orders a batch by natural file name and dates it by arrival (ADR 0018).
 _Avoid_: Import, attachment (that is a show-notes file), file request
 
 **Request**:

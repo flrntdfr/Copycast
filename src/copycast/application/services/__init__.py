@@ -292,6 +292,9 @@ class Services:
     async def get_upload(self, upload_id: str) -> UploadRead:
         return await _uploads.get_upload(self.ctx, upload_id)
 
+    async def delete_upload(self, upload_id: str) -> None:
+        await _uploads.delete_upload(self.ctx, upload_id)
+
     async def create_serial_bucket(self, body: SerialBucketCreate) -> BucketRead:
         return await _uploads.create_serial_bucket(self.ctx, body)
 

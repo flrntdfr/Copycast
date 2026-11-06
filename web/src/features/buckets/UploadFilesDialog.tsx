@@ -3,6 +3,7 @@ import { useRef, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 
 import { ApiProblem, describeProblem, fetchClient } from "@/api/client";
+import { problemFromBody } from "@/api/problem";
 import type { BucketRead } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,24 +29,56 @@ type FileState =
   | { status: "uploading"; percent: number }
   | { status: "received"; uploadId: string }
   | { status: "failed"; error: string }
-  /** 507 from `create_upload` or the PUT: the User's quota has no room for this file. */
-  | { status: "over-quota" };
+  /**
+   * 507 from `create_upload`, the PUT or the batch: the User's quota has no room for this
+   * file. `detail` is the server's reason when the User is not full (the file, or the
+   * batch, does not fit what is left); without it they have to free space first.
+   */
+  | { status: "over-quota"; detail?: string };
 
 interface Entry {
   file: File;
   state: FileState;
 }
 
-/** The PUT answered 507 Insufficient Storage: the Owner is over quota. */
+/** The PUT answered 507 Insufficient Storage: the Owner's quota has no room for it. */
 export class OverQuotaUpload extends Error {
-  constructor() {
+  readonly problem: ApiProblem | null;
+
+  constructor(problem: ApiProblem | null = null) {
     super("Over quota");
     this.name = "OverQuotaUpload";
+    this.problem = problem;
   }
 }
 
 function isOverQuota(error: unknown): boolean {
   return error instanceof OverQuotaUpload || ApiProblem.slugOf(error) === "over-quota";
+}
+
+/** The file's state for an error: over quota (with the server's reason unless the Owner is
+ * simply full), else failed with the error's wording. */
+function failedState(error: unknown): FileState {
+  if (!isOverQuota(error)) return { status: "failed", error: errorText(error) };
+  const problem = error instanceof OverQuotaUpload ? error.problem : error;
+  if (!ApiProblem.is(problem)) return { status: "over-quota" };
+  const { used_bytes: used, quota_bytes: quota } = problem.extensions;
+  const full = typeof used === "number" && typeof quota === "number" && used >= quota;
+  return full || !problem.detail
+    ? { status: "over-quota" }
+    : { status: "over-quota", detail: problem.detail };
+}
+
+/** Give up staged uploads that will not be added, so they stop holding room; best effort
+ * (the server lets them expire after 24 h anyway). */
+async function discard(ids: string[]) {
+  await Promise.all(
+    ids.map((upload_id) =>
+      fetchClient
+        .DELETE("/api/uploads/{upload_id}", { params: { path: { upload_id } } })
+        .catch(() => undefined),
+    ),
+  );
 }
 
 /** PUT the bytes to the one-time upload URL, reporting progress; same origin, path only. */
@@ -58,12 +91,25 @@ function putFile(uploadUrl: string, file: File, onProgress: (percent: number) =>
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else if (xhr.status === 507) reject(new OverQuotaUpload());
+      else if (xhr.status === 507) reject(new OverQuotaUpload(problemOf(xhr)));
       else reject(new Error(problemTitle(xhr.responseText) ?? `HTTP ${xhr.status}`));
     };
     xhr.onerror = () => reject(new Error("Network error"));
     xhr.send(file);
   });
+}
+
+function problemOf(xhr: XMLHttpRequest): ApiProblem | null {
+  try {
+    const body: unknown = JSON.parse(xhr.responseText);
+    return problemFromBody(
+      body,
+      { status: xhr.status, statusText: xhr.statusText },
+      { method: "PUT", url: xhr.responseURL },
+    );
+  } catch {
+    return null;
+  }
 }
 
 function problemTitle(body: string): string | null {
@@ -99,11 +145,13 @@ export function UploadFilesButton({ bucket }: { bucket: BucketRead }) {
     const ids: string[] = [];
     for (const [index, file] of files.entries()) {
       update(index, { status: "uploading", percent: 0 });
+      let staged: string | undefined;
       try {
         // The size goes along so a file that cannot fit is refused before any byte is sent.
         const { data } = await fetchClient.POST("/api/uploads", {
           body: { filename: file.name, size_bytes: file.size },
         });
+        staged = data?.id;
         if (!data?.upload_url) throw new Error("No upload URL");
         await putFile(data.upload_url, file, (percent) =>
           update(index, { status: "uploading", percent }),
@@ -111,12 +159,9 @@ export function UploadFilesButton({ bucket }: { bucket: BucketRead }) {
         ids.push(data.id);
         update(index, { status: "received", uploadId: data.id });
       } catch (error) {
-        update(
-          index,
-          isOverQuota(error)
-            ? { status: "over-quota" }
-            : { status: "failed", error: errorText(error) },
-        );
+        // Staged but never received: nothing will add it, so it holds no room.
+        if (staged) await discard([staged]);
+        update(index, failedState(error));
       }
     }
     if (ids.length > 0) {
@@ -127,10 +172,10 @@ export function UploadFilesButton({ bucket }: { bucket: BucketRead }) {
         });
         toast.success(`Added ${count(ids.length, "Episode")} to ${bucket.name}`);
       } catch (error) {
-        // Nothing of the batch was added: every uploaded file says so, not "Uploaded".
-        const state: FileState = isOverQuota(error)
-          ? { status: "over-quota" }
-          : { status: "failed", error: errorText(error) };
+        // Nothing of the batch was added: every uploaded file says so, not "Uploaded", and
+        // is given up, so it stops counting against the quota until it is uploaded again.
+        await discard(ids);
+        const state = failedState(error);
         setEntries((current) =>
           current.map((entry) => (entry.state.status === "received" ? { ...entry, state } : entry)),
         );
@@ -212,7 +257,7 @@ export function UploadFilesButton({ bucket }: { bucket: BucketRead }) {
                 ) : null}
                 {state.status === "over-quota" ? (
                   <p className="pl-6 text-destructive" data-testid="upload-over-quota">
-                    Over quota: free some space, then upload it again
+                    {state.detail ?? "Over quota: free some space, then upload it again"}
                   </p>
                 ) : null}
               </li>

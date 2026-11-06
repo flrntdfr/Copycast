@@ -41,6 +41,7 @@ TITLES: dict[str, str] = {
     "https-required": "HTTPS required",
     "forbidden": "Forbidden",
     "over-quota": "Over quota",
+    "payload-too-large": "Request body too large",
     "cross-site-request": "Cross-site request refused",
     "unknown-host": "Unknown host name",
     "not-found": "Not found",

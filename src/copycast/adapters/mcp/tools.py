@@ -351,6 +351,11 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         """A staged upload: ``state`` (pending until its PUT, then received) and its tags."""
         return await services().get_upload(upload_id)
 
+    async def delete_upload(upload_id: str) -> None:
+        """Give up a staged upload (pending or received) that will not be added, so it
+        stops counting against the quota; unadded uploads otherwise expire after 24 h."""
+        await services().delete_upload(upload_id)
+
     async def create_serial_bucket(bucket: SerialBucketCreate) -> BucketRead:
         """Create a Bucket from received uploads, Episodes in exactly the order of ``episodes``.
 
@@ -437,6 +442,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         (prune_bucket, "prune_bucket", "prune_bucket", False),
         (create_upload, "create_upload", "create_upload", False),
         (get_upload, "get_upload", "get_upload", True),
+        (delete_upload, "delete_upload", "delete_upload", False),
         (create_serial_bucket, "create_serial_bucket", "create_serial_bucket", False),
         (add_uploads, "add_uploads", "add_uploads", False),
         (get_job, "get_job", "get_job", True),

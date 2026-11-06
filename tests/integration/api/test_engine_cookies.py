@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 
 from copycast.adapters.db.uow import uow_of
 from copycast.app import Container
+from copycast.application.services import engine as engine_service
 from copycast.domain.enums import JobTrigger, RefreshRunStatus
 from tests.support.factories import listing
 from tests.support.fake_engine import FakeEngine
@@ -173,3 +176,42 @@ async def test_status_crawlers_reflect_the_callers_own_cookie_files(
         # Refresh at all) never say the service is unlocked.
         for other in (bob, root):
             assert "cookies" not in (await youtube_fact(other) or "")
+
+
+async def test_cookie_files_are_capped_in_number_and_size(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: a Member could store any number of 1 MiB files, all loaded per change."""
+    monkeypatch.setattr(engine_service, "MAX_COOKIE_FILES", 2)
+    for name in ("one", "two"):
+        stored = await client.put(api("/engine/cookies"), json={"content": TWITCH, "name": name})
+        assert stored.status_code == 200, stored.text
+    third = await client.put(api("/engine/cookies"), json={"content": TWITCH, "name": "three"})
+    assert third.status_code == 409
+    assert "the most one User may hold" in third.json()["detail"]
+    # Replacing a file of the same name is no new file.
+    again = await client.put(api("/engine/cookies"), json={"content": COOKIES, "name": "two"})
+    assert again.status_code == 200
+
+    monkeypatch.setattr(engine_service, "MAX_COOKIE_FILES", 32)
+    monkeypatch.setattr(engine_service, "MAX_COOKIE_BYTES", len(COOKIES) + len(TWITCH) + 1)
+    too_big = await client.put(api("/engine/cookies"), json={"content": TWITCH, "name": "big"})
+    assert too_big.status_code == 409
+    assert [f["name"] for f in (await client.get(api("/engine/cookies"))).json()["files"]] == [
+        "one",
+        "two",
+    ]
+
+
+async def test_parallel_cookie_files_cannot_pass_the_cap(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(engine_service, "MAX_COOKIE_FILES", 2)
+    answers = await asyncio.gather(
+        *(
+            client.put(api("/engine/cookies"), json={"content": TWITCH, "name": f"file-{n}"})
+            for n in range(8)
+        )
+    )
+    assert sorted(a.status_code for a in answers) == [200, 200] + [409] * 6
+    assert len((await client.get(api("/engine/cookies"))).json()["files"]) == 2

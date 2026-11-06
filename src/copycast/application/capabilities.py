@@ -71,6 +71,7 @@ CAPABILITY_NAMES: Final[frozenset[str]] = frozenset(
         "create_upload",
         "put_upload",
         "get_upload",
+        "delete_upload",
         "create_serial_bucket",
         "add_uploads",
         # jobs
@@ -192,6 +193,7 @@ def _access_table() -> dict[str, Access]:
             "create_bucket",
             "create_upload",
             "get_upload",
+            "delete_upload",
             "create_serial_bucket",
             "list_jobs",
             "subscribe_events",

@@ -19,6 +19,7 @@ from copycast.adapters.db.repositories.requests import RequestRepository
 from copycast.adapters.db.repositories.secrets import InstanceSecretRepository
 from copycast.adapters.db.repositories.sessions import SessionRepository
 from copycast.adapters.db.repositories.telemetry import TelemetryRepository
+from copycast.adapters.db.repositories.uploads import StagedUploadRepository
 from copycast.adapters.db.repositories.users import UserRepository
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     "QuotaRepository",
     "RequestRepository",
     "SessionRepository",
+    "StagedUploadRepository",
     "TelemetryRepository",
     "UserRepository",
     "dedup_key",

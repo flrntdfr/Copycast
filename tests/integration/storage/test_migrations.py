@@ -42,8 +42,9 @@ EXPECTED_TABLES = {
     "users",
     "sessions",
     "login_attempts",
+    "staged_uploads",
 }
-HEAD = "0017"
+HEAD = "0018"
 
 
 def _table_names(conn: Connection) -> set[str]:
@@ -373,6 +374,18 @@ async def test_0016_creates_instance_secrets_and_its_downgrade_drops_it(
     assert await schema_is_current(db_engine)
 
 
+async def test_0018_creates_staged_uploads_and_its_downgrade_drops_it(
+    db_engine: AsyncEngine,
+) -> None:
+    async with db_engine.connect() as conn:
+        assert "staged_uploads" in await conn.run_sync(_table_names)
+    await downgrade_schema(db_engine, "0017")
+    async with db_engine.connect() as conn:
+        assert "staged_uploads" not in await conn.run_sync(_table_names)
+    await ensure_schema(db_engine)
+    assert await schema_is_current(db_engine)
+
+
 # --------------------------------------------------------------------------- 0017
 
 
@@ -519,7 +532,7 @@ async def test_0017_downgrade_refuses_shared_source(db_engine: AsyncEngine) -> N
         RuntimeError, match=r"several owners mirror the same Source .*m1 \(copycast\), m2 \(bob\)"
     ):
         await downgrade_schema(db_engine, "0016")
-    assert await current_revision(db_engine) == HEAD
+    assert await current_revision(db_engine) == "0017"  # 0018 went down; 0017 refused
     async with db_engine.begin() as conn:
         await conn.execute(text("DELETE FROM feeds WHERE id = 'm2'"))
     await downgrade_schema(db_engine, "0016")
@@ -544,7 +557,7 @@ async def test_0017_downgrade_refuses_two_default_local_feeds(db_engine: AsyncEn
             )
     with pytest.raises(RuntimeError, match="several default Local feeds"):
         await downgrade_schema(db_engine, "0016")
-    assert await current_revision(db_engine) == HEAD
+    assert await current_revision(db_engine) == "0017"  # 0018 went down; 0017 refused
 
 
 def _columns(conn: Connection, table: str) -> list[dict[str, Any]]:

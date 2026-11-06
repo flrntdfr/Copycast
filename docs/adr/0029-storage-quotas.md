@@ -54,10 +54,13 @@ that Feed, not its Owner's account.
 with 507 when it does not fit; the token `PUT` stops at the room left (and at the 4 GiB upload
 limit), discards the partial file and answers 507; `add_uploads` and `create_serial_bucket`
 check the whole batch before copying anything. Staged Uploads not yet added count against
-that room (a received one by its size, a pending one by its declared size), an Owner holds at
-most 1000 of them (409 beyond), and expired ones are swept hourly. The PUT's final check and
-the batch checks run under a per-Owner transaction lock (`pg_advisory_xact_lock`), so
-parallel PUTs or batches never overshoot.
+that room (a received one by its size, a pending one by its declared size for an hour while
+its PUT can still come, and not at all once that PUT failed or was refused), an Owner holds at
+most 1000 of them (409 beyond), `delete_upload` gives one up at once, and expired ones are
+swept hourly. Each Owner's staged uploads are counted from a `staged_uploads` row per upload
+(migration 0018), never by listing the Object store. `create_upload`, the PUT's final check
+and the batch checks run under a per-Owner transaction lock (`pg_advisory_xact_lock`), so
+parallel calls never overshoot.
 
 **Blocked items come back by themselves, without a storm.** Every scheduler tick (60 s), and
 at the end of a prune job that freed bytes, `release_if_room(owner)` runs for each Owner with
