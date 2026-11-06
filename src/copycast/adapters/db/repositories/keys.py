@@ -10,13 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from copycast.adapters.db.base import rows_affected, utcnow
 from copycast.adapters.db.models import ApiKey
+from copycast.application.services.context import Scope
 from copycast.domain.enums import KeyScope
 from copycast.domain.exceptions import NotFound
 
 
 class ApiKeyRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, scope: Scope = Scope.SYSTEM) -> None:
         self._session = session
+        self._scope = scope
 
     async def get(self, key_id: uuid.UUID) -> ApiKey | None:
         return await self._session.get(ApiKey, key_id)

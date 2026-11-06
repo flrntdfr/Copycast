@@ -13,12 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from copycast.adapters.db.base import rows_affected
 from copycast.adapters.db.models import EngineVersion, Feed, RefreshRun, WorkerHeartbeat
 from copycast.application.models import CrawlerStats
+from copycast.application.services.context import Scope
 from copycast.domain.enums import JobTrigger, RefreshRunStatus
 
 
 class TelemetryRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, scope: Scope = Scope.SYSTEM) -> None:
         self._session = session
+        self._scope = scope
 
     # ------------------------------------------------------------------ refresh runs
 

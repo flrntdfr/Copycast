@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from copycast.adapters.db.base import TZDateTime, refresh_loaded, rows_affected, utcnow
 from copycast.adapters.db.models import CatalogItem, Feed
 from copycast.application.models import CatalogCounts
+from copycast.application.services.context import Scope
 from copycast.domain.enums import ArchiveState, LiveStatus, Numbering, WantedReason
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import item_id as make_item_id
@@ -69,8 +70,9 @@ class ListingUpsert:
 
 
 class CatalogRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, scope: Scope = Scope.SYSTEM) -> None:
         self._session = session
+        self._scope = scope
 
     # ------------------------------------------------------------------ reads
 
@@ -203,6 +205,12 @@ class CatalogRepository:
                 func.count().filter(CatalogItem.archive_state == ArchiveState.wanted.value),
                 func.count().filter(archived),
                 func.count().filter(CatalogItem.archive_state == ArchiveState.failed.value),
+                func.count().filter(
+                    and_(
+                        CatalogItem.archive_state == ArchiveState.wanted.value,
+                        CatalogItem.blocked_reason.is_not(None),
+                    )
+                ),
             )
             .where(CatalogItem.feed_id.in_(ids))
             .group_by(CatalogItem.feed_id)
@@ -216,6 +224,7 @@ class CatalogRepository:
                 wanted=row[4],
                 archived=row[5],
                 failed=row[6],
+                blocked=row[7],
             )
         return counts
 

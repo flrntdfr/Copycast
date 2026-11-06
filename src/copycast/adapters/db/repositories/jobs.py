@@ -15,6 +15,7 @@ from sqlalchemy.orm import aliased
 from copycast.adapters.db.base import refresh_loaded, rows_affected
 from copycast.adapters.db.models import ACTIVE_STATUSES, Job, JobLogLine
 from copycast.application.models import QueueStats
+from copycast.application.services.context import Scope
 from copycast.domain.enums import ErrorKind, JobKind, JobStatus, JobTrigger, LogLevel
 from copycast.domain.exceptions import NotFound
 
@@ -51,8 +52,9 @@ def dedup_key(kind: JobKind, ident: str | uuid.UUID) -> str:
 
 
 class JobRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, scope: Scope = Scope.SYSTEM) -> None:
         self._session = session
+        self._scope = scope
 
     # ------------------------------------------------------------------ reads
 

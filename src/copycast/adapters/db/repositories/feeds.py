@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from copycast.adapters.db.base import rows_affected, utcnow
 from copycast.adapters.db.models import Asset, CatalogItem, Feed
 from copycast.application.models import Totals
-from copycast.application.services.context import DEFAULT_BUCKET_TITLE
+from copycast.application.services.context import DEFAULT_BUCKET_TITLE, Scope
 from copycast.domain.enums import ArchiveState, AssetState, BackfillMode, FeedKind
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import bucket_id
@@ -28,8 +28,9 @@ _SORT_COLUMNS = {
 
 
 class FeedRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, scope: Scope = Scope.SYSTEM) -> None:
         self._session = session
+        self._scope = scope
 
     # ------------------------------------------------------------------ reads
 
@@ -102,14 +103,20 @@ class FeedRepository:
         return int((await self._session.execute(stmt)).scalar_one())
 
     async def find_bucket(self, ident: str) -> Feed | None:
-        """A Bucket by id, else by case-insensitive name; ``None`` when neither matches."""
+        """A Bucket by id, else by case-insensitive name; ``None`` when neither matches.
+
+        By name, the actor's own Local feeds come first, then default ones, then the oldest.
+        """
         feed = await self.get(ident)
         if feed is not None and feed.kind == FeedKind.bucket:
             return feed
+        ordering: list[Any] = [Feed.is_default.desc(), Feed.created_at]
+        if self._scope.actor is not None:
+            ordering.insert(0, (Feed.owner == self._scope.actor).desc())
         result = await self._session.execute(
             select(Feed)
             .where(Feed.kind == FeedKind.bucket.value, func.lower(Feed.title) == ident.lower())
-            .order_by(Feed.is_default.desc(), Feed.created_at)
+            .order_by(*ordering)
             .limit(1)
         )
         return result.scalar_one_or_none()
@@ -192,6 +199,20 @@ class FeedRepository:
     # ------------------------------------------------------------------ writes
 
     async def add(self, feed: Feed) -> Feed:
+        """Insert ``feed``, owned by the scope's actor unless it names its Owner.
+
+        Only SYSTEM (startup, rebuild) creates a Feed for an explicit Owner: a User's
+        scope may not create one for somebody else, and a Feed always has an Owner.
+        """
+        actor = self._scope.actor
+        # Unset on a new row until stamped, whatever the column's type says.
+        owner: str | None = getattr(feed, "owner", None)
+        if owner is None:
+            if actor is None:
+                raise ValueError(f"feed {feed.id}: no owner and no actor to stamp")
+            feed.owner = actor
+        elif actor is not None and owner != actor:
+            raise ValueError(f"feed {feed.id}: owner {owner!r} is not the actor {actor!r}")
         self._session.add(feed)
         await self._session.flush()
         return feed

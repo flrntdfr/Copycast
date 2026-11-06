@@ -12,13 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from copycast.adapters.db.base import utcnow
 from copycast.adapters.db.models import Request, RequestItem
+from copycast.application.services.context import Scope
 from copycast.domain.enums import RequestedVia, RequestStatus
 from copycast.domain.exceptions import NotFound
 
 
 class RequestRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, scope: Scope = Scope.SYSTEM) -> None:
         self._session = session
+        self._scope = scope
 
     async def get(self, request_id: uuid.UUID) -> Request | None:
         return await self._session.get(Request, request_id)

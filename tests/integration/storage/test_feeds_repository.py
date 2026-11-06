@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from copycast.adapters.db.repositories import DEFAULT_BUCKET_TITLE, FeedRepository
 from copycast.adapters.db.uow import UnitOfWorkFactory
+from copycast.application.services.context import Scope
 from copycast.domain.enums import ArchiveState, AssetKind, AssetState, FeedKind
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import FEED_ID_RE
@@ -104,6 +105,41 @@ async def test_find_bucket_by_id_or_case_insensitive_name(uow_factory: UnitOfWor
         assert await uow.feeds.find_bucket(mirror.id) is None
         assert await uow.feeds.find_bucket("Test Podcast") is None
         assert await uow.feeds.find_bucket("unknown") is None
+
+
+async def test_add_stamps_the_actor_as_owner(uow_factory: UnitOfWorkFactory) -> None:
+    async with uow_factory() as uow:
+        await uow.users.ensure(["alice", "bob"])
+    async with uow_factory(Scope("alice", "alice")) as uow:
+        stamped = await uow.feeds.add(bucket_row("Mine", owner=None))
+        assert stamped.owner == "alice"
+        assert (await uow.feeds.add(bucket_row("Also", owner="alice"))).owner == "alice"
+        with pytest.raises(ValueError, match="is not the actor"):
+            await uow.feeds.add(bucket_row("Theirs", owner="bob"))
+    # SYSTEM creates for an explicit Owner only.
+    async with uow_factory() as uow:
+        assert (await uow.feeds.add(bucket_row("For bob", owner="bob"))).owner == "bob"
+        with pytest.raises(ValueError, match="no owner and no actor"):
+            await uow.feeds.add(bucket_row("Nobody's", owner=None))
+
+
+async def test_find_bucket_prefers_the_actors_own(uow_factory: UnitOfWorkFactory) -> None:
+    async with uow_factory() as uow:
+        await uow.users.ensure(["alice", "bob"])
+        bobs = await uow.feeds.add(bucket_row("Later", id="later-bobbbb", owner="bob"))
+        alices = await uow.feeds.add(bucket_row("Later", id="later-alicee", owner="alice"))
+        bob_default = await uow.feeds.ensure_default_bucket("bob")
+        alice_default = await uow.feeds.ensure_default_bucket("alice")
+    async with uow_factory(Scope("alice", "alice")) as uow:
+        found = await uow.feeds.find_bucket("later")
+        assert found is not None and found.id == alices.id
+        found = await uow.feeds.find_bucket(DEFAULT_BUCKET_TITLE)
+        assert found is not None and found.id == alice_default.id
+    async with uow_factory(Scope("bob", None)) as uow:
+        found = await uow.feeds.find_bucket("Later")
+        assert found is not None and found.id == bobs.id
+        found = await uow.feeds.find_bucket(DEFAULT_BUCKET_TITLE)
+        assert found is not None and found.id == bob_default.id
 
 
 async def test_list_sorting_and_kind_filter(uow_factory: UnitOfWorkFactory) -> None:
