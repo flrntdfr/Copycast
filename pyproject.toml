@@ -27,6 +27,8 @@ dependencies = [
     "mutagen==1.48.1",
     "obstore==0.11.1",
     "redis==8.1.0",
+    "argon2-cffi==25.1.0",
+    "segno==1.6.6",
 ]
 
 [project.scripts]
