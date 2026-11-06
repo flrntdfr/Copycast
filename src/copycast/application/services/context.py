@@ -767,8 +767,11 @@ class QuotaRepositoryPort(Protocol):
         ...
 
     async def owners_with_blocked(self) -> list[str]: ...
-    async def blocked_for_release(self, owner: str, *, limit: int) -> Sequence[ItemRow]:
-        """``owner``'s blocked items in archive priority, unknown sizes first, newest first."""
+    async def blocked_for_release(
+        self, owner: str, *, limit: int, max_bytes: int | None = None
+    ) -> Sequence[ItemRow]:
+        """``owner``'s blocked items in archive priority, unknown sizes first, newest first;
+        with ``max_bytes``, only those of unknown size or an estimate within it."""
         ...
 
     async def unblock(self, item_ids: Collection[str]) -> None:

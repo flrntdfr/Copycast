@@ -161,3 +161,35 @@ async def test_the_sweep_drops_blocks_left_on_items_no_longer_wanted(
         rows = {row.id: row for row in await unit.catalog.for_feed(bucket)}
     assert rows[first.id].blocked_reason is None
     assert [r.blocked_reason for r in rows.values() if r.id != first.id] == ["quota", "quota"]
+
+
+async def test_an_episode_larger_than_the_room_never_holds_back_the_rest(
+    container: Container,
+) -> None:
+    set_quota(container, 100 * MB)
+    await use_bytes(container, 10 * MB)  # 90 MB left, not over
+    bucket, ids = await blocked_bucket(container, 51, estimate=None, manual=frozenset({1}))
+    async with uow(container) as unit:
+        await unit.session.execute(
+            update(CatalogItem).where(CatalogItem.id == ids[1]).values(blocked_bytes=500 * MB)
+        )
+    scheduler = Scheduler(container)
+    assert (await scheduler.tick()).unblocked == RELEASE_PER_TICK
+    jobs = await archive_jobs(container, bucket)
+    assert len(jobs) == RELEASE_PER_TICK
+    assert ids[1] not in {job.item_id for job in jobs}  # type: ignore[attr-defined]
+    async with uow(container) as unit:
+        (large,) = await unit.catalog.get_many([ids[1]])
+        assert (large.blocked_reason, large.blocked_bytes) == ("quota", 500 * MB)
+
+
+async def test_a_removed_owners_blocked_items_stay_blocked(container: Container) -> None:
+    from copycast.adapters.db.models import Feed
+
+    bucket, _ = await blocked_bucket(container, 3, estimate=None)
+    await container.services.ensure_default_bucket("gone")  # a users row for the removed name
+    async with uow(container) as unit:
+        await unit.session.execute(update(Feed).where(Feed.id == bucket).values(owner="gone"))
+    for _ in range(2):
+        assert (await Scheduler(container).tick()).unblocked == 0
+    assert await archive_jobs(container, bucket) == []

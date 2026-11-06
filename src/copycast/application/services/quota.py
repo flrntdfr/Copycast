@@ -114,27 +114,32 @@ def wanted_priority(reason: str | None) -> int:
 async def release_if_room(uow: UnitOfWorkPort, users: UserDirectory, owner: str) -> int:
     """Re-queue the Owner's blocked items that fit; returns how many were released.
 
-    Nothing while the Owner is over. Otherwise at most :data:`RELEASE_PER_TICK` items,
-    in archive priority: one blocked with an unknown size (the Owner was over then) is
-    released; one whose estimate fits the budget left is released and spends it; the
-    walk stops at the first that does not fit, so the priority order holds and an item
-    too large for what is left costs no job and no extraction.
+    Nothing while the Owner is over, and nothing for a removed User (their Feeds are inert
+    until they are configured again or reassigned, §3.3). Otherwise at most
+    :data:`RELEASE_PER_TICK` items, in archive priority, among those that could fit at
+    all (the repository leaves out estimates above the room left): one blocked with an
+    unknown size (the Owner was over then) is released; one whose estimate fits the
+    budget left is released and spends it; one that no longer fits is skipped, so a
+    single large Episode never holds back the smaller ones behind it. An item too large
+    for what is left costs no job and no extraction; it is released once there is room.
     """
     from copycast.application.services.items import (  # items imports this module
         enqueue_archive,
     )
 
+    if not users.is_configured(owner):
+        return 0
     status = await quota_status(uow, users, owner)
     if status.state == "over":
         return 0
     budget = remaining(status.used_bytes, status.quota_bytes)
-    rows = await uow.quota.blocked_for_release(owner, limit=RELEASE_PER_TICK)
+    rows = await uow.quota.blocked_for_release(owner, limit=RELEASE_PER_TICK, max_bytes=budget)
     released: list[tuple[str, str, str | None]] = []
     for row in rows:
         size = row.blocked_bytes
         if size is not None and budget is not None:
             if size > budget:
-                break
+                continue
             budget -= size
         released.append((row.id, row.feed_id, row.wanted_reason))
     if not released:

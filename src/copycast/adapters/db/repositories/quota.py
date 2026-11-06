@@ -79,11 +79,20 @@ class QuotaRepository:
         )
         return list(result.scalars())
 
-    async def blocked_for_release(self, owner: str, *, limit: int) -> Sequence[CatalogItem]:
+    async def blocked_for_release(
+        self, owner: str, *, limit: int, max_bytes: int | None = None
+    ) -> Sequence[CatalogItem]:
         """``owner``'s blocked items in archive priority, unknown sizes first, newest first.
 
+        With ``max_bytes``, an item whose estimate is larger is left out, so items too
+        large for the room left never fill the ``limit`` and hide the ones that fit.
         Items of a Paused Feed stay where they are: a job would only be cancelled.
         """
+        fits = (
+            []
+            if max_bytes is None
+            else [(CatalogItem.blocked_bytes.is_(None)) | (CatalogItem.blocked_bytes <= max_bytes)]
+        )
         result = await self._session.execute(
             select(CatalogItem)
             .join(Feed, CatalogItem.feed_id == Feed.id)
@@ -92,6 +101,7 @@ class QuotaRepository:
                 Feed.paused.is_(False),
                 CatalogItem.blocked_reason.is_not(None),
                 CatalogItem.archive_state == ArchiveState.wanted.value,
+                *fits,
             )
             .order_by(
                 _priority(),

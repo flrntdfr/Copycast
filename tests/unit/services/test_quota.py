@@ -37,9 +37,16 @@ class FakeQuota:
     async def storage_by_owner(self) -> dict[str, int]:
         return dict(self.used)
 
-    async def blocked_for_release(self, owner: str, *, limit: int) -> list[Row]:
+    async def blocked_for_release(
+        self, owner: str, *, limit: int, max_bytes: int | None = None
+    ) -> list[Row]:
         self.limits.append(limit)
-        return self.blocked[:limit]
+        fits = [
+            row
+            for row in self.blocked
+            if max_bytes is None or row.blocked_bytes is None or row.blocked_bytes <= max_bytes
+        ]
+        return fits[:limit]
 
     async def unblock(self, item_ids: Collection[str]) -> None:
         self.unblocked.append(list(item_ids))
@@ -168,13 +175,37 @@ async def test_release_walks_in_order_within_the_budget() -> None:
     ]
     uow = unit(used=400, rows=rows)  # 600 left
     released = await quota.release_if_room(uow, USERS, "alice")  # type: ignore[arg-type]
-    assert released == 2, "the walk stops at the first item that does not fit"
-    assert uow.quota.unblocked == [["unknown", "small"]]
+    assert released == 3, "an item that no longer fits is skipped, the walk goes on"
+    assert uow.quota.unblocked == [["unknown", "small", "tiny"]]
     assert uow.quota.limits == [quota.RELEASE_PER_TICK]
-    assert uow.jobs.enqueued == [("unknown", 50), ("small", 100)]
-    assert [e.item_id for e in uow.events if isinstance(e, ItemEvent)] == ["unknown", "small"]
+    assert uow.jobs.enqueued == [("unknown", 50), ("small", 100), ("tiny", 200)]
+    assert [e.item_id for e in uow.events if isinstance(e, ItemEvent)] == [
+        "unknown",
+        "small",
+        "tiny",
+    ]
     assert not [e for e in uow.events if isinstance(e, JobEvent)]
     assert uow.notified == 1
+
+
+async def test_an_oversized_manual_item_never_holds_back_smaller_ones() -> None:
+    huge = [Row(f"huge{n}", blocked_bytes=500_000) for n in range(quota.RELEASE_PER_TICK)]
+    backfill = [
+        Row(f"b{n}", wanted_reason=WantedReason.backfill.value, blocked_bytes=None)
+        for n in range(3)
+    ]
+    uow = unit(used=100, rows=[*huge, *backfill])  # 900 left; each huge row is larger
+    released = await quota.release_if_room(uow, USERS, "alice")  # type: ignore[arg-type]
+    assert released == 3
+    assert uow.quota.unblocked == [["b0", "b1", "b2"]]
+    assert all(row.blocked_reason for row in huge)
+
+
+async def test_release_nothing_for_a_removed_owner() -> None:
+    rows = [Row("a", blocked_bytes=None)]
+    uow = unit(rows=rows)
+    assert await quota.release_if_room(uow, FakeUsers({"root": None}), "alice") == 0  # type: ignore[arg-type]
+    assert uow.quota.limits == [] and uow.jobs.enqueued == []
 
 
 async def test_release_nothing_while_over_and_everything_when_unlimited() -> None:
