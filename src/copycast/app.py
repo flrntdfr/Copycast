@@ -727,8 +727,23 @@ class Container:
 
     async def migrate_user_settings(self) -> None:
         """Copy the legacy Defaults and Cookie files to the owner of existing data's
-        ``users/{owner}/`` keys, once (api and worker start). Nothing to copy yet: every
-        User still reads the global keys."""
+        ``users/{owner}/`` keys, once (api and worker start, after preflight).
+
+        The legacy ``engine/`` keys stay (``adapters.storage.user_settings``). An Object
+        store error is fatal, like preflight: a ``SettingsError`` (one line, exit 2).
+        """
+        migrate = _load("copycast.adapters.storage.user_settings", "migrate_legacy_settings")
+        owner = self.users.owner_of_existing
+        try:
+            await asyncio.to_thread(migrate, self.layout, owner)
+        except SettingsError:
+            raise
+        except Exception as exc:
+            first = str(exc).splitlines()[0] if str(exc) else repr(exc)
+            raise SettingsError(
+                f"storage {self.settings.storage.url}: copying the Defaults and Cookie files "
+                f"to users/{owner}/ failed: {first}"
+            ) from exc
 
     async def schema_is_current(self) -> bool:
         current: bool = await _load("copycast.adapters.db.migrate", "schema_is_current")(
