@@ -154,8 +154,9 @@ def credential_digest(password_hash: str | None, totp_secret: str | None) -> byt
 
     SHA-256 of the password hash and the normalised TOTP secret (spaces and padding
     dropped, upper-cased), one per line. A new password or TOTP secret changes it, which
-    signs that User's sessions out at the next start. Legacy mode passes the operator
-    password itself as ``password_hash``: only this digest is ever stored.
+    signs that User's sessions out at the next start. Users mode only: legacy mode stores
+    a salted argon2 hash of the operator password instead (``UserDirectory``), since an
+    unsalted SHA-256 of a password is cheap to crack from a database dump.
     """
     totp = "".join((totp_secret or "").split()).rstrip("=").upper()
     return hashlib.sha256(f"{password_hash or ''}\n{totp}".encode()).digest()

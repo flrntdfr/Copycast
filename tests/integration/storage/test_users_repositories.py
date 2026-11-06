@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from copycast.adapters.db.uow import UnitOfWorkFactory
 from copycast.application.events import FeedEvent
-from copycast.application.services.context import Scope
+from copycast.application.services.auth import LOCK_THRESHOLD
+from copycast.application.services.context import AttemptClaim, Scope
 from copycast.domain.credentials import mint_session_token, session_digest
 from tests.integration.storage.conftest import OWNER, bucket_row, mirror_row
 
@@ -95,16 +97,26 @@ async def test_sessions(uow_factory: UnitOfWorkFactory) -> None:
         assert await uow.sessions.get(session_digest(tokens[0])) is None
 
 
-async def test_login_attempts_lock_from_the_fifth_failure(uow_factory: UnitOfWorkFactory) -> None:
+async def test_login_attempts_lock_from_the_fifth_claim(uow_factory: UnitOfWorkFactory) -> None:
     async with uow_factory() as uow:
         for _ in range(4):
-            assert await uow.login_attempts.record_failure("ghost", NOW) is None
-        assert await uow.login_attempts.record_failure("ghost", NOW) == NOW + timedelta(seconds=30)
-        assert await uow.login_attempts.record_failure("ghost", NOW) == NOW + timedelta(seconds=60)
+            assert await uow.login_attempts.claim("ghost", NOW) == AttemptClaim(True, None)
+        # The fifth attempt may still run, and locks the name for whoever comes next.
+        assert await uow.login_attempts.claim("ghost", NOW) == AttemptClaim(
+            True, NOW + timedelta(seconds=30)
+        )
+        # Locked: refused, and nothing more is counted.
+        assert await uow.login_attempts.claim("ghost", NOW) == AttemptClaim(
+            False, NOW + timedelta(seconds=30)
+        )
+        later = NOW + timedelta(seconds=31)
+        assert await uow.login_attempts.claim("ghost", later) == AttemptClaim(
+            True, later + timedelta(seconds=60)
+        )
         row = await uow.login_attempts.get("ghost")
         assert row is not None and row.failed_count == 6
-        await uow.login_attempts.record_failure("old", NOW - timedelta(hours=25))
-        await uow.login_attempts.record_failure("recent", NOW - timedelta(hours=1))
+        await uow.login_attempts.claim("old", NOW - timedelta(hours=25))
+        await uow.login_attempts.claim("recent", NOW - timedelta(hours=1))
     async with uow_factory() as uow:
         # Locked rows and recent rows stay; an old unlocked one goes.
         assert await uow.login_attempts.prune(NOW) == 1
@@ -112,6 +124,25 @@ async def test_login_attempts_lock_from_the_fifth_failure(uow_factory: UnitOfWor
         assert await uow.login_attempts.get("recent") is not None
         await uow.login_attempts.reset("ghost")
         assert await uow.login_attempts.get("ghost") is None
+
+
+async def test_concurrent_claims_never_pass_the_lock(uow_factory: UnitOfWorkFactory) -> None:
+    """Regression: the lock check and the count are one step, whatever the concurrency.
+
+    Each claim has its own transaction (as logins in several processes would); exactly
+    as many get through as the threshold allows, the rest see the lock.
+    """
+
+    async def claim() -> AttemptClaim:
+        async with uow_factory() as uow:
+            return await uow.login_attempts.claim("alice", NOW)
+
+    claims = await asyncio.gather(*(claim() for _ in range(18)))
+    assert sum(c.allowed for c in claims) == LOCK_THRESHOLD
+    assert all(c.locked_until == NOW + timedelta(seconds=30) for c in claims if not c.allowed)
+    async with uow_factory() as uow:
+        row = await uow.login_attempts.get("alice")
+        assert row is not None and row.failed_count == LOCK_THRESHOLD
 
 
 async def test_storage_per_owner(uow_factory: UnitOfWorkFactory) -> None:

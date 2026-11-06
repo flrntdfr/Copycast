@@ -7,14 +7,21 @@ and answer an unknown name and a wrong password alike: one 401 body, one argon2
 verify each (a dummy one for an unknown name, with the slowest configured
 parameters). Every verify runs on :data:`HASH_LIMITER`, two at a time, with at most
 :data:`HASH_QUEUE_MAX` logins waiting; past that a login is refused as busy before
-any verify. A TOTP code is good once: the step it matched is claimed per User.
+any verify. Holding its slot, a login first claims its attempt (the lock check and the
+failure count in one locked row, before the verify), so a burst of guesses, from any
+number of processes, never verifies more of them than the lock allows. An unknown name
+is counted under its HMAC (:func:`attempt_key`), never stored in clear. A TOTP code is
+good once: the step it matched is claimed per User.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import math
 import time
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final
@@ -27,7 +34,7 @@ from copycast.application.models import LoginRequest, MeRead
 from copycast.application.services.context import ServiceContext
 from copycast.application.services.quota import quota_status
 from copycast.application.users import UserDirectory
-from copycast.domain.credentials import mint_session_token, session_digest
+from copycast.domain.credentials import mint_session_token, new_instance_secret, session_digest
 from copycast.domain.enums import AuthMode, PrincipalVia
 from copycast.domain.exceptions import (
     HttpsRequired,
@@ -57,6 +64,12 @@ HASH_QUEUE_MAX: Final = 16
 HASH_WAIT_SECONDS: Final = 5.0
 """How long a login waits for a slot before it is refused as busy."""
 USER_AGENT_MAX_LEN: Final = 512
+LOGIN_ATTEMPTS_SECRET: Final = "login-attempts"
+"""The ``instance_secrets`` row unknown typed names are keyed with in ``login_attempts``."""
+UNKNOWN_NAME_PREFIX: Final = "?"
+"""Starts the ``login_attempts`` key of an unknown name; no username contains it."""
+PRUNE_EVERY_SECONDS: Final = 600.0
+"""How often a login also prunes stale ``login_attempts`` rows (startup prunes too)."""
 
 HASH_LIMITER: Final = anyio.CapacityLimiter(HASH_SLOTS)
 """The password-hash slots: never the default thread limiter, which FastAPI's sync
@@ -71,6 +84,12 @@ class _HashQueue:
     pending: int = 0
 
 
+class _Prune:
+    """When this process last pruned ``login_attempts`` from a login (monotonic seconds)."""
+
+    last: float | None = None
+
+
 def lock_seconds(failed_count: int) -> int:
     """How long a username stays locked after its ``failed_count``-th failure (0: not locked).
 
@@ -82,10 +101,22 @@ def lock_seconds(failed_count: int) -> int:
     return min(LOCK_BASE_SECONDS * 2**exponent, LOCK_MAX_SECONDS)
 
 
-async def run_hashing[T](fn: Callable[[], T]) -> T:
-    """Run one argon2 computation on a :data:`HASH_LIMITER` slot, in a thread.
+def attempt_key(secret: bytes, typed: str) -> str:
+    """The ``login_attempts`` key of a typed name that is no User.
 
-    Raises ``LoginBusy`` without running ``fn`` when :data:`HASH_QUEUE_MAX` logins are
+    ``?`` and 32 hex digits of its HMAC-SHA256 under the instance secret: the name (perhaps
+    a password typed into the wrong field) is never stored, yet every process counts it
+    under one key, so an unknown name locks exactly like a known one.
+    """
+    mac = hmac.new(secret, typed.encode("utf-8"), hashlib.sha256).hexdigest()
+    return UNKNOWN_NAME_PREFIX + mac[:32]
+
+
+@asynccontextmanager
+async def hash_slot() -> AsyncGenerator[None]:
+    """Hold one :data:`HASH_LIMITER` slot for the block (a login's claim and verify).
+
+    Raises ``LoginBusy`` before the block runs when :data:`HASH_QUEUE_MAX` logins are
     already waiting, or when no slot frees up within :data:`HASH_WAIT_SECONDS`.
     """
     if _HashQueue.pending >= HASH_SLOTS + HASH_QUEUE_MAX:
@@ -102,11 +133,35 @@ async def run_hashing[T](fn: Callable[[], T]) -> T:
                 HASH_LIMITER.release_on_behalf_of(borrower)
             raise LoginBusy()
         try:
-            return await anyio.to_thread.run_sync(fn, limiter=_HASH_THREADS)
+            yield
         finally:
             HASH_LIMITER.release_on_behalf_of(borrower)
     finally:
         _HashQueue.pending -= 1
+
+
+async def _in_thread[T](fn: Callable[[], T]) -> T:
+    """Run ``fn`` on a hash thread; the caller holds a :func:`hash_slot`."""
+    return await anyio.to_thread.run_sync(fn, limiter=_HASH_THREADS)
+
+
+async def run_hashing[T](fn: Callable[[], T]) -> T:
+    """Run one argon2 computation on a :data:`HASH_LIMITER` slot, in a thread.
+
+    Raises ``LoginBusy`` without running ``fn`` when :data:`HASH_QUEUE_MAX` logins are
+    already waiting, or when no slot frees up within :data:`HASH_WAIT_SECONDS`.
+    """
+    async with hash_slot():
+        return await _in_thread(fn)
+
+
+def _prune_due() -> bool:
+    """Whether this login should also prune stale attempts (every :data:`PRUNE_EVERY_SECONDS`)."""
+    now = time.monotonic()
+    if _Prune.last is not None and now - _Prune.last < PRUNE_EVERY_SECONDS:
+        return False
+    _Prune.last = now
+    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,16 +210,28 @@ async def login(
         raise HttpsRequired(ctx.settings.base_url)
     typed = body.username.strip().lower()
     username = users.login_username(typed)
-    key = username or typed
-    now = _now()
-    async with ctx.uow_factory() as uow:
-        attempt = await uow.login_attempts.get(key)
-    if attempt is not None and attempt.locked_until is not None and attempt.locked_until > now:
-        await run_hashing(lambda: users.hasher.dummy_verify(body.password))
-        retry_after = max(1, math.ceil((attempt.locked_until - now).total_seconds()))
-        raise LoginLocked(retry_after)
+    # The slot first: a busy answer counts nothing. Then the claim, atomic with the lock
+    # check, so only as many attempts as the lock allows ever reach a verify.
+    async with hash_slot():
+        now = _now()
+        async with ctx.uow_factory() as uow:
+            if username is not None:
+                key = username
+            else:
+                secret = await uow.instance_secrets.get_or_create(
+                    LOGIN_ATTEMPTS_SECRET, new_instance_secret
+                )
+                key = attempt_key(secret, typed)
+            claim = await uow.login_attempts.claim(key, now)
+            if _prune_due():
+                await uow.login_attempts.prune(now)
+        if not claim.allowed:
+            await _in_thread(lambda: users.hasher.dummy_verify(body.password))
+            locked_until = claim.locked_until or now
+            retry_after = max(1, math.ceil((locked_until - now).total_seconds()))
+            raise LoginLocked(retry_after)
+        ok = await _in_thread(lambda: _verify(users, username, body.password))
 
-    ok = await run_hashing(lambda: _verify(users, username, body.password))
     user = users.get(username) if username is not None else None
     if ok and user is not None and users.admin_login_refused(user):
         log.warning("auth.login_refused", reason="admin_without_totp", username=user.username)
@@ -172,10 +239,9 @@ async def login(
     if ok and user is not None and user.totp_key is not None:
         ok = await _claim_totp(ctx, user.username, user.totp_key, body.totp)
     if not ok or user is None:
-        async with ctx.uow_factory() as uow:
-            locked_until = await uow.login_attempts.record_failure(key, _now())
-        # A typed name that is no User is never logged: it may be a password.
-        log.info("auth.login_failed", username=username, locked=locked_until is not None)
+        # Counted already, by the claim. A typed name that is no User is never logged:
+        # it may be a password.
+        log.info("auth.login_failed", username=username, locked=claim.locked_until is not None)
         raise LoginFailed()
 
     token = mint_session_token()
@@ -222,7 +288,6 @@ async def get_me(ctx: ServiceContext) -> MeRead:
     principal = ctx.principal
     if principal.username is None:
         raise Unauthorized()
-    user = ctx.users.get(principal.username)
     async with ctx.uow_factory() as uow:
         quota = await quota_status(uow, ctx.users, principal.username)
     return MeRead(
@@ -230,7 +295,9 @@ async def get_me(ctx: ServiceContext) -> MeRead:
         admin=principal.admin,
         auth_mode=ctx.users.mode,
         via=principal.via,
-        totp=user is not None and user.totp_key is not None,
+        # Never through users.get(): in legacy mode that may hash the operator password,
+        # and this runs on the event loop.
+        totp=ctx.users.has_totp(principal.username),
         quota=quota,
     )
 
@@ -268,18 +335,22 @@ async def sync_users(ctx: ServiceContext) -> None:
     their last TOTP step: the digest cannot tell which half changed, and a reset only
     lets the current code count once more); deletes the sessions of Users no longer
     configured, expired sessions and stale login attempts. Then logs the directory's
-    warnings and, in users mode, one warning per Owner of Feeds who is not configured.
+    warnings and, outside open mode, one warning per Owner of Feeds who is not configured
+    (a removed User, or the previous legacy owner after ``auth.username`` changed).
+
+    The credential check runs on the hash limiter: in legacy mode the stored fingerprint
+    is an argon2 hash of the operator password, checked by a verify, and the operator
+    password is hashed here once, so no request ever hashes it on the event loop.
     """
     users = ctx.users
     configured = users.usernames()
-    now = _now()
     async with ctx.uow_factory() as uow:
         await uow.users.ensure(configured)
         stored = await uow.users.credential_digests()
-        for name in configured:
-            digest = users.credential_digest(name)
-            if digest is None or stored.get(name) == digest:
-                continue
+    changed = await run_hashing(lambda: users.changed_credentials(stored))
+    now = _now()
+    async with ctx.uow_factory() as uow:
+        for name, digest in changed.items():
             ended = await uow.sessions.delete_for_user(name)
             await uow.users.set_credential_digest(name, digest, reset_totp=True)
             if stored.get(name) is not None:
@@ -288,7 +359,7 @@ async def sync_users(ctx: ServiceContext) -> None:
         expired = await uow.sessions.delete_expired(now)
         pruned = await uow.login_attempts.prune(now)
         owners: dict[str, int] = {}
-        if users.mode is AuthMode.users:
+        if users.mode is not AuthMode.open:
             for feed in await uow.feeds.list():
                 if not users.is_configured(feed.owner):
                     owners[feed.owner] = owners.get(feed.owner, 0) + 1
@@ -307,8 +378,18 @@ async def sync_users(ctx: ServiceContext) -> None:
             "auth.removed_owner_has_feeds",
             owner=owner,
             feeds=count,
-            hint=f"configure the user, or run: copycast users reassign {owner} <new>",
+            hint=_reassign_hint(users, owner),
         )
+
+
+def _reassign_hint(users: UserDirectory, owner: str) -> str:
+    """How an operator gives ``owner``'s Feeds a configured Owner again."""
+    if users.mode is AuthMode.users:
+        return f"configure the user, or run: copycast users reassign {owner} <new>"
+    # Legacy: auth.username changed (or a password was set after an open-mode upgrade
+    # with another name); every Feed pair, media key and API key of `owner` answers 401.
+    (current,) = users.usernames()
+    return f"set auth.username back to {owner}, or run: copycast users reassign {owner} {current}"
 
 
 __all__ = [
@@ -319,10 +400,15 @@ __all__ = [
     "LOCK_BASE_SECONDS",
     "LOCK_MAX_SECONDS",
     "LOCK_THRESHOLD",
+    "LOGIN_ATTEMPTS_SECRET",
+    "PRUNE_EVERY_SECONDS",
     "SESSION_TOUCH_SECONDS",
+    "UNKNOWN_NAME_PREFIX",
     "IssuedSession",
+    "attempt_key",
     "authenticate_session",
     "get_me",
+    "hash_slot",
     "lock_seconds",
     "login",
     "logout",

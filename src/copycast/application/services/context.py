@@ -681,6 +681,12 @@ class ApiKeyRepositoryPort(Protocol):
     async def touch(self, key_id: uuid.UUID, at: datetime | None = None) -> None: ...
 
 
+class InstanceSecretRepositoryPort(Protocol):
+    async def get_or_create(self, name: str, mint: Callable[[], bytes]) -> bytes:
+        """The installation's secret called ``name``, minted with ``mint`` when absent."""
+        ...
+
+
 class UserRepositoryPort(Protocol):
     async def ensure(self, usernames: Iterable[str]) -> None:
         """Insert the missing ``users`` rows; never deletes one."""
@@ -717,10 +723,26 @@ class SessionRepositoryPort(Protocol):
     async def delete_for_user(self, username: str) -> int: ...
 
 
+@dataclass(frozen=True, slots=True)
+class AttemptClaim:
+    """What :meth:`LoginAttemptRepositoryPort.claim` decided for one sign-in attempt."""
+
+    allowed: bool
+    """True: the attempt was counted as a failure up front and may run its verify."""
+    locked_until: datetime | None
+    """Refused: the lock in force. Allowed: the lock the attempt leaves if it fails."""
+
+
 class LoginAttemptRepositoryPort(Protocol):
     async def get(self, username: str) -> LoginAttemptRow | None: ...
-    async def record_failure(self, username: str, now: datetime) -> datetime | None:
-        """Count a failure; returns ``locked_until`` once the lock threshold is reached."""
+    async def claim(self, username: str, now: datetime) -> AttemptClaim:
+        """Atomically check the lock and count one failure before the verify runs.
+
+        Refused (nothing counted) while ``locked_until > now``; otherwise the count goes
+        up by one and, from the lock threshold on, the lock is set at once, so concurrent
+        attempts (in any process) never verify more guesses than the threshold allows.
+        A success then resets the row.
+        """
         ...
 
     async def reset(self, username: str) -> None: ...
@@ -888,6 +910,8 @@ class UnitOfWorkPort(Protocol):
     def sessions(self) -> SessionRepositoryPort: ...
     @property
     def login_attempts(self) -> LoginAttemptRepositoryPort: ...
+    @property
+    def instance_secrets(self) -> InstanceSecretRepositoryPort: ...
     @property
     def quota(self) -> QuotaRepositoryPort: ...
     @property
@@ -1090,12 +1114,14 @@ __all__ = [
     "AssetNameLike",
     "AssetRepositoryPort",
     "AssetRow",
+    "AttemptClaim",
     "CatalogRepositoryPort",
     "FeedRepositoryPort",
     "FeedRow",
     "FeedSort",
     "HeartbeatRow",
     "Hook",
+    "InstanceSecretRepositoryPort",
     "ItemRow",
     "ItemSort",
     "JobRepositoryPort",

@@ -3,11 +3,14 @@
 Roles and quotas always come from here, never from Postgres: ``users`` rows only
 name Owners for the foreign keys. Open mode has one implicit Admin and no credential;
 legacy mode one Admin whose password is the operator password (hashed lazily, so every
-login runs exactly one argon2 verify); users mode the ``[[auth.users]]`` list.
+login runs exactly one argon2 verify; ``sync_users`` does it at startup, off the event
+loop); users mode the ``[[auth.users]]`` list. The operator password never reaches
+Postgres except as a salted argon2 hash (``credential_digest``).
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cached_property
 from urllib.parse import urlsplit
@@ -105,14 +108,63 @@ class UserDirectory:
         return owner if typed in {self._login_name, owner} else None
 
     def credential_digest(self, username: str) -> bytes | None:
-        """The fingerprint of ``username``'s configured credentials; None without any."""
+        """The fingerprint of ``username``'s configured credentials; None without any.
+
+        Users mode: SHA-256 of the configured argon2 hash and TOTP secret. Legacy mode: an
+        argon2id hash of the operator password (salted and slow, so a database reader
+        cannot crack it cheaply): computing it hashes, so run it on the hash limiter.
+        """
         if self.mode is AuthMode.open or not self.is_configured(username):
             return None
         if self.mode is AuthMode.legacy:
-            return credential_digest(self._settings.auth.password, None)
+            legacy_hash = self._legacy_hash
+            return None if legacy_hash is None else legacy_hash.encode("ascii")
         config = self._settings.auth.user(username)
         assert config is not None
         return credential_digest(config.password_hash, config.totp_secret)
+
+    def credential_matches(self, username: str, stored: bytes | None) -> bool:
+        """Whether ``stored`` is still the fingerprint of ``username``'s credentials.
+
+        Legacy mode verifies the operator password against the stored argon2 hash (run it
+        on the hash limiter); users mode compares digests.
+        """
+        if stored is None or self.mode is AuthMode.open or not self.is_configured(username):
+            return False
+        if self.mode is AuthMode.legacy:
+            password = self._settings.auth.password
+            phc = stored.decode("ascii", errors="replace")
+            return (
+                password is not None
+                and phc.startswith("$argon2id$")
+                and self.hasher.verify(phc, password)
+            )
+        return stored == self.credential_digest(username)
+
+    def changed_credentials(self, stored: Mapping[str, bytes | None]) -> dict[str, bytes]:
+        """The new fingerprint of every configured User whose ``stored`` one no longer
+        matches (``sync_users``). Hashes in legacy mode: run it on the hash limiter.
+
+        Legacy mode also hashes the operator password here, once per process, so that no
+        later call (``users()``, ``get()``) ever hashes it on the event loop.
+        """
+        if self.mode is AuthMode.legacy:
+            _ = self._legacy_hash
+        changed: dict[str, bytes] = {}
+        for name in self.usernames():
+            if self.credential_matches(name, stored.get(name)):
+                continue
+            digest = self.credential_digest(name)
+            if digest is not None:
+                changed[name] = digest
+        return changed
+
+    def has_totp(self, username: str) -> bool:
+        """Whether ``username`` signs in with a TOTP code; never hashes anything."""
+        if self.mode is not AuthMode.users:
+            return False
+        user = self._by_name.get(username)
+        return user is not None and user.totp_key is not None
 
     def get(self, username: str) -> DirectoryUser | None:
         if self.mode is AuthMode.users:

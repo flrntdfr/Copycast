@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from copycast.application.passwords import PasswordHasher, hash_parameters
@@ -53,10 +54,8 @@ def test_legacy_mode_hashes_the_operator_password_lazily() -> None:
     # The login name as configured (any case) and the owner slug both match.
     assert directory.login_name_matches(user, "florent")
     assert not directory.login_name_matches(user, "copycast")
-    assert directory.credential_digest("florent") == credential_digest(
-        "correct horse battery", None
-    )
     assert directory.credential_digest("nobody") is None
+    assert not directory.has_totp("florent")
     assert not directory.admin_login_refused(user)
     warnings = directory.startup_warnings()
     assert len(warnings) == 0  # "florent" is already the slug of "Florent"
@@ -134,6 +133,16 @@ def test_users_mode_reads_roles_quotas_and_totp_from_the_config() -> None:
         password_hash(USERS["root"].password), TOTP_SECRET
     )
     assert directory.credential_digest("removed") is None
+    digest = directory.credential_digest("root")
+    assert directory.credential_matches("root", digest)
+    assert not directory.credential_matches("root", b"stale")
+    assert not directory.credential_matches("root", None)
+    assert directory.changed_credentials({"root": digest, "alice": b"stale"}) == {
+        "alice": directory.credential_digest("alice"),
+        "bob": directory.credential_digest("bob"),
+    }
+    assert directory.has_totp("root") and not directory.has_totp("alice")
+    assert not directory.has_totp("removed")
     # Every hash uses the same parameters: no warning, and the dummy uses them.
     assert directory.startup_warnings() == []
     assert (directory.hasher.time_cost, directory.hasher.memory_cost) == (1, 1024)
@@ -185,3 +194,36 @@ def test_password_hasher_verifies_and_never_raises() -> None:
     assert hash_parameters("garbage") is None
     defaults = PasswordHasher.slowest(["garbage"])
     assert defaults.memory_cost == 65536
+
+
+def test_legacy_mode_never_stores_a_fast_digest_of_the_operator_password() -> None:
+    """Regression: the fingerprint is a salted argon2 hash, not SHA-256 of the password."""
+    password = "longenoughpw"
+    directory = UserDirectory(_settings(password=password))
+    digest = directory.credential_digest("copycast")
+    assert digest is not None
+    assert digest != credential_digest(password, None)
+    assert digest != hashlib.sha256(f"{password}\n".encode()).digest()
+    phc = digest.decode("ascii")
+    assert phc.startswith("$argon2id$") and PasswordHasher().verify(phc, password)
+    assert password.encode() not in digest
+    # A restart (a new directory, a new salt) still recognises it: sessions survive.
+    again = UserDirectory(_settings(password=password))
+    assert again.credential_matches("copycast", digest)
+    assert again.changed_credentials({"copycast": digest}) == {}
+    # A new password, or the 3.0-foundation SHA-256 digest, does not match.
+    changed = UserDirectory(_settings(password="another-password"))
+    assert not changed.credential_matches("copycast", digest)
+    assert not again.credential_matches("copycast", credential_digest(password, None))
+    assert set(changed.changed_credentials({"copycast": digest})) == {"copycast"}
+    assert not again.credential_matches("nobody", digest)
+
+
+def test_has_totp_never_hashes_the_legacy_password() -> None:
+    """Regression: get_me asks has_totp on the event loop; it must not run argon2."""
+    directory = UserDirectory(_settings(password="correct horse battery"))
+    assert not directory.has_totp("copycast")
+    assert "_legacy_hash" not in vars(directory)
+    # sync_users warms it (in a thread), so no later users()/get() hashes on the loop.
+    directory.changed_credentials({})
+    assert "_legacy_hash" in vars(directory)

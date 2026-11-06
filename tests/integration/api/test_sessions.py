@@ -6,6 +6,8 @@ the cheapest argon2 parameters (``tests.support.users``).
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import time
 from typing import Any
 from urllib.parse import urlsplit
@@ -15,10 +17,11 @@ import pytest
 import structlog
 from sqlalchemy import text
 
-from copycast.app import Container
+from copycast.app import Container, build_container
 from copycast.application.passwords import PasswordHasher
 from copycast.application.services import auth as auth_service
 from copycast.domain.credentials import session_digest
+from copycast.domain.enums import PrincipalVia
 from copycast.domain.totp import decode_secret, hotp, step_at
 from copycast.settings import Settings
 from tests.integration.api.conftest import running, settings_with
@@ -225,6 +228,82 @@ async def test_a_full_hash_queue_answers_busy_without_counting_a_failure(
     assert busy.headers["retry-after"] == "5"
     assert problem(busy)["type"] == "urn:copycast:problem:login-busy"
     assert await scalar(users_container, "SELECT count(*) FROM login_attempts") == 0
+
+
+async def test_a_burst_of_guesses_verifies_no_more_than_the_lock_allows(
+    users_client: httpx.AsyncClient, users_container: Container
+) -> None:
+    """Regression: the lock check, the verify and the count were not atomic.
+
+    Eighteen concurrent wrong passwords (every one the process lets wait for a hash
+    slot) used to all be verified and answered 401. Now each attempt is counted before
+    its verify, so only the threshold's worth runs; the rest see the lock at once.
+    """
+    burst = auth_service.HASH_SLOTS + auth_service.HASH_QUEUE_MAX
+    responses = await asyncio.gather(
+        *(attempt(users_client, "alice", f"guess-{n:02d}") for n in range(burst))
+    )
+    codes = sorted(response.status_code for response in responses)
+    assert codes == [401] * auth_service.LOCK_THRESHOLD + [429] * (
+        burst - auth_service.LOCK_THRESHOLD
+    )
+    count = await scalar(
+        users_container, "SELECT failed_count FROM login_attempts WHERE username = 'alice'"
+    )
+    assert count == auth_service.LOCK_THRESHOLD
+    # The right password, sent after the burst, does not get through the lock.
+    assert (await attempt(users_client, "alice", USERS["alice"].password)).status_code == 429
+
+
+async def test_a_burst_with_the_right_password_in_it_is_still_capped(
+    users_client: httpx.AsyncClient, users_container: Container
+) -> None:
+    """Four failures recorded: of a burst of guesses, one at most is verified."""
+    for _ in range(auth_service.LOCK_THRESHOLD - 1):
+        assert (await attempt(users_client, "alice", "wrong-password")).status_code == 401
+    guesses = [f"guess-{n:02d}" for n in range(9)] + [USERS["alice"].password]
+    responses = await asyncio.gather(*(attempt(users_client, "alice", g) for g in guesses))
+    verified = [r.status_code for r in responses if r.status_code != 429]
+    assert len(verified) == 1
+
+
+async def test_an_unknown_typed_name_is_never_stored_in_clear(
+    users_client: httpx.AsyncClient, users_container: Container
+) -> None:
+    typed = "Hunter2-Typed-In-The-Wrong-Field"
+    for _ in range(auth_service.LOCK_THRESHOLD):
+        assert (await attempt(users_client, typed, "x")).status_code == 401
+    # It still locks like any name, under a key that reveals nothing.
+    assert (await attempt(users_client, typed, "x")).status_code == 429
+    keys = await scalar(users_container, "SELECT array_agg(username) FROM login_attempts")
+    (key,) = keys
+    assert key.startswith(auth_service.UNKNOWN_NAME_PREFIX) and len(key) == 33
+    assert typed.lower() not in key and "hunter2" not in key
+    # Another unknown name gets a key of its own.
+    assert (await attempt(users_client, "someone-else", "x")).status_code == 401
+    assert await scalar(users_container, "SELECT count(*) FROM login_attempts") == 2
+
+
+async def test_logins_prune_stale_attempts_now_and_then(
+    users_client: httpx.AsyncClient, users_container: Container, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def seed_stale() -> None:
+        await execute(
+            users_container,
+            "INSERT INTO login_attempts (username, failed_count, updated_at) VALUES "
+            "('?stale', 1, now() - interval '25 hours')",
+        )
+
+    stale = "SELECT count(*) FROM login_attempts WHERE username = '?stale'"
+    # Pruned recently: a login leaves the stale row alone.
+    await seed_stale()
+    monkeypatch.setattr(auth_service._Prune, "last", time.monotonic())  # pyright: ignore[reportPrivateUsage]
+    assert (await attempt(users_client, "bob", "wrong-password")).status_code == 401
+    assert await scalar(users_container, stale) == 1
+    # Due: the next login prunes it, without waiting for a restart.
+    monkeypatch.setattr(auth_service._Prune, "last", None)  # pyright: ignore[reportPrivateUsage]
+    assert (await attempt(users_client, "bob", "wrong-password")).status_code == 401
+    assert await scalar(users_container, stale) == 0
 
 
 # --------------------------------------------------------------------------- TOTP and https
@@ -545,3 +624,75 @@ async def test_the_cross_site_guard_covers_sign_in_and_cookie_requests(
     )
     assert made.status_code == 201, made.text
     assert (await users_client.get(api("/me"), headers=session)).status_code == 200
+
+
+# --------------------------------------------------------------------------- legacy mode
+
+LEGACY_PASSWORD = "longenoughpw"
+
+
+def legacy(settings: Settings, password: str = LEGACY_PASSWORD, **auth: Any) -> Settings:
+    return settings_with(settings, auth={"username": "florent", "password": password, **auth})
+
+
+async def test_legacy_mode_keeps_only_an_argon2_hash_of_the_operator_password(
+    settings: Settings, db: str
+) -> None:
+    """Regression: an unsalted SHA-256 of the operator password was stored in Postgres."""
+    async with running(legacy(settings)) as (container, client):
+        stored = await scalar(
+            container, "SELECT credential_digest FROM users WHERE username = 'florent'"
+        )
+        assert bytes(stored).startswith(b"$argon2id$")
+        assert bytes(stored) != hashlib.sha256(f"{LEGACY_PASSWORD}\n".encode()).digest()
+        assert PasswordHasher().verify(bytes(stored).decode(), LEGACY_PASSWORD)
+        # Startup hashed the operator password off the event loop, once.
+        assert "_legacy_hash" in vars(container.users)
+        session = await session_headers(client, "florent", LEGACY_PASSWORD)
+    # A restart with the same password keeps the session and the stored hash.
+    async with running(legacy(settings)) as (container, client):
+        assert (await client.get(api("/me"), headers=session)).status_code == 200
+        again = await scalar(
+            container, "SELECT credential_digest FROM users WHERE username = 'florent'"
+        )
+        assert bytes(again) == bytes(stored)
+    # A new password signs it out.
+    async with running(legacy(settings, "a-new-password")) as (_, client):
+        assert (await client.get(api("/me"), headers=session)).status_code == 401
+
+
+async def test_get_me_never_hashes_the_legacy_password_on_the_event_loop(
+    settings: Settings, db: str
+) -> None:
+    """Regression: GET /api/me after a restart, before any login, ran argon2 in the loop."""
+    container = build_container(legacy(settings), engine=FakeEngine())
+    try:
+        principal = container.users.principal("florent", via=PrincipalVia.session)
+        assert principal is not None
+        me = await container.services_for(principal).get_me()
+        assert me.username == "florent" and me.totp is False
+        assert "_legacy_hash" not in vars(container.users)
+    finally:
+        await container.aclose()
+
+
+async def test_a_renamed_legacy_operator_is_warned_about(settings: Settings, db: str) -> None:
+    """Regression: Feeds of the previous legacy owner lost every credential silently."""
+    async with running(settings) as (_, client):  # open mode: the Owner is "copycast"
+        created = await client.post(api("/buckets"), json={"name": "Later"})
+        assert created.status_code == 201 and created.json()["owner"] == "copycast"
+    with structlog.testing.capture_logs() as events:
+        async with running(legacy(settings)):
+            pass
+    warnings = [e for e in events if e["event"] == "auth.removed_owner_has_feeds"]
+    assert len(warnings) == 1
+    assert warnings[0]["owner"] == "copycast" and warnings[0]["feeds"] == 2
+    assert warnings[0]["log_level"] == "warning"
+    assert "set auth.username back to copycast" in warnings[0]["hint"]
+    assert "copycast users reassign copycast florent" in warnings[0]["hint"]
+    # Back to the old name: copycast's Feeds are fine, florent's default is the orphan now.
+    with structlog.testing.capture_logs() as events:
+        async with running(legacy(settings, username="copycast")):
+            pass
+    warnings = [e for e in events if e["event"] == "auth.removed_owner_has_feeds"]
+    assert [(e["owner"], e["feeds"]) for e in warnings] == [("florent", 1)]
