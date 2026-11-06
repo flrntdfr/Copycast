@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import httpx
 import pytest
+import structlog
 
 from copycast.adapters.storage.layout import Layout
 from copycast.adapters.storage.user_settings import (
@@ -77,12 +79,33 @@ def test_the_marker_makes_a_second_run_a_no_op(layout: Layout) -> None:
 
     again = migrate_legacy_settings(layout, "florent")
 
-    assert again == MoveReport(copied=[], conflicts=[], already_done=True)
+    assert (again.copied, again.conflicts, again.already_done) == ([], [], True)
     assert _text(layout, "users/florent/defaults.json") == '{"language": "de"}\n'
     assert not layout.store.exists("users/florent/cookie-files/twitch.txt")
     # Even another owner gets nothing: the copy happened once for the whole instance.
     assert migrate_legacy_settings(layout, "alice").already_done is True
     assert not layout.store.has_any("users/alice/")
+
+
+def test_legacy_keys_a_rollback_changed_are_named_at_every_start(layout: Layout) -> None:
+    _seed_legacy(layout)
+    migrate_legacy_settings(layout, "florent")
+    quiet = migrate_legacy_settings(layout, "florent")
+    assert quiet.already_done and quiet.legacy_newer == []
+    # 2.3.0 rolled back onto this store: fresh cookies uploaded there, under engine/.
+    time.sleep(1.1)  # S3 keeps last_modified to the second
+    fresh = YOUTUBE.replace("secret-value", "fresh-value")
+    layout.store.put_bytes(layout.cookie_file_key("youtube.txt"), fresh)
+
+    with structlog.testing.capture_logs() as events:
+        again = migrate_legacy_settings(layout, "florent")
+
+    assert again.already_done and again.copied == []
+    assert again.legacy_newer == [layout.cookie_file_key("youtube.txt")]
+    assert _text(layout, "users/florent/cookie-files/youtube.txt") == YOUTUBE, "never copied"
+    (warning,) = [e for e in events if e["event"] == "user_settings.legacy_newer_than_copy"]
+    assert warning["log_level"] == "warning" and warning["owner"] == "florent"
+    assert MARKER_KEY in warning["hint"] and "users/florent/" in warning["hint"]
 
 
 def test_a_target_already_present_is_kept_and_reported(layout: Layout) -> None:
@@ -121,20 +144,20 @@ def test_racing_processes_copy_the_same_bytes(layout: Layout) -> None:
     legacy = _seed_legacy(layout)
     # Both processes look for the marker before either writes it.
     barrier = threading.Barrier(2)
-    real_exists = layout.store.exists
+    real_head = layout.store.head
 
-    def exists(key: str) -> bool:
-        found = real_exists(key)
+    def head(key: str) -> Any:
+        found = real_head(key)
         if key == MARKER_KEY:
             barrier.wait(timeout=5)
         return found
 
-    layout.store.exists = exists  # type: ignore[method-assign]
+    layout.store.head = head  # type: ignore[method-assign]
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
             reports = list(pool.map(lambda _: migrate_legacy_settings(layout, "florent"), (1, 2)))
     finally:
-        del layout.store.exists
+        del layout.store.head
 
     for report in reports:
         assert report.already_done is False
@@ -188,6 +211,7 @@ async def test_an_object_store_error_is_fatal(
     def broken(key: str) -> bool:
         raise OSError(f"connection refused while reading {key}\nsecond line")
 
+    monkeypatch.setattr(container.layout.store, "head", broken)
     monkeypatch.setattr(container.layout.store, "exists", broken)
     with pytest.raises(SettingsError, match="connection refused") as raised:
         await container.migrate_user_settings()

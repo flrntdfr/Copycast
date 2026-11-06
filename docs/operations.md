@@ -274,8 +274,14 @@ its first start 3.0 copies the global `engine/` keys of 2.x to the owner of exis
 target already there is kept (logged as `user_settings.migration_conflict`), and the marker
 `users/.legacy-settings-copied` makes the copy run once only. The `engine/` keys stay, so a
 2.3.0 image rolled back still finds them (a later release deletes them), but whatever changed
-under 3.0 is not in them. `copycast users reassign OLD NEW` moves `users/OLD/` to `users/NEW/`
-with the Feeds; a file NEW already has stays OLD's and is reported. `copycast rebuild` needs
+under 3.0 is not in them. The way back is not automatic either: before upgrading to 3.0 again
+after a rollback, delete `users/.legacy-settings-copied` and the copies under `users/<owner>/`
+(`defaults.json`, `cookies.txt`, `cookie-files/`), or 3.0 keeps using the copies of the first
+upgrade; each start logs `user_settings.legacy_newer_than_copy` for a legacy key changed after
+the copy. `copycast users reassign OLD NEW` moves `users/OLD/` to `users/NEW/` with the Feeds;
+a file NEW already has stays OLD's and is reported. OLD's API keys stay OLD's (they stop
+working while OLD is not configured); `--move-keys` moves them too, for the same person under
+a new name only, since whoever holds them then acts as NEW. `copycast rebuild` needs
 nothing for them: they are read live from `users/`.
 
 The descriptor is rewritten after every change of intent and is what `copycast rebuild`
