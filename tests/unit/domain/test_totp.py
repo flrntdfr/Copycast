@@ -123,3 +123,10 @@ def test_provisioning_uri_shape() -> None:
         "period": ["30"],
     }
     assert uri.startswith("otpauth://totp/Copycast:florent?secret=JBSWY3DPEHPK3PXP&issuer=")
+
+
+@pytest.mark.parametrize("digits", ["١٢٣٤٥٦", "１２３４５６", "۱۲۳۴۵۶", "12345٦"])
+def test_match_step_refuses_non_ascii_digits_without_raising(digits: str) -> None:
+    # str.isdigit() accepts these, and hmac.compare_digest raises TypeError on them.
+    assert digits.isdigit()
+    assert totp.match_step(RFC_KEY, digits, now=59, last_step=None) is None

@@ -55,11 +55,14 @@ def step_at(now: float) -> int:
 def match_step(key: bytes, code: str, *, now: float, last_step: int | None) -> int | None:
     """The step in ``now ± 1`` whose code is ``code``, if it is later than ``last_step``.
 
-    Spaces in ``code`` are ignored. Every candidate step is compared in constant time;
-    a code from a step already used (or older) returns None, as does a wrong code.
+    Spaces in ``code`` are ignored. Only ASCII digits are a code: ``str.isdigit`` also
+    accepts other scripts' digits, which ``hmac.compare_digest`` refuses with a TypeError
+    (a 500 only reached after the password verified). Every candidate step is compared in
+    constant time; a code from a step already used (or older) returns None, as does a
+    wrong code.
     """
     typed = "".join(code.split())
-    if len(typed) != DIGITS or not typed.isdigit():
+    if len(typed) != DIGITS or not (typed.isascii() and typed.isdigit()):
         return None
     current = step_at(now)
     matched: int | None = None

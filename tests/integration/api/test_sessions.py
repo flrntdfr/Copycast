@@ -335,6 +335,18 @@ async def test_totp_is_required_and_good_once(settings: Settings, db: str) -> No
         assert me.json()["totp"] is True and me.json()["admin"] is True
 
 
+async def test_a_non_ascii_digit_code_is_the_same_401_with_the_right_password(
+    settings: Settings, db: str
+) -> None:
+    configured = settings_with(settings, auth=users_auth(totp={"root": TOTP_SECRET}))
+    async with running(configured) as (_, client):
+        arabic = "\u0661\u0662\u0663\u0664\u0665\u0666"
+        wrong = await attempt(client, "root", "wrong-password", arabic)
+        right = await attempt(client, "root", USERS["root"].password, arabic)
+        assert wrong.status_code == right.status_code == 401
+        assert problem(wrong) == problem(right)
+
+
 async def test_an_https_site(settings: Settings, db: str) -> None:
     configured = settings_with(settings, base_url="https://copycast.example", auth=users_auth())
     async with running(configured, base_url="https://copycast.example") as (container, client):
