@@ -9,6 +9,13 @@ reads its tags there (they need a seekable file) and uploads it to
 gave, and removes the staged objects; ``add_uploads`` does the same into an existing Bucket, in
 natural file-name order, dated by arrival (ADR 0018). Staged uploads older
 than :data:`UPLOAD_TTL` are swept on the next ``create_upload``.
+
+An upload belongs to the User who staged it (``owner`` in ``upload.json``; files staged
+before 3.0 belong to the owner of existing data): another User's upload is NotFound,
+and an Admin may use anyone's, but only into a Feed of that upload's Owner. Quotas
+(ADR 0029): ``create_upload`` checks the declared ``size_bytes``, ``put_upload`` stops
+at the room left, and ``add_uploads`` and ``create_serial_bucket`` check the sum of the
+batch before copying anything, so staged files added together cannot overshoot.
 """
 
 from __future__ import annotations
@@ -34,15 +41,22 @@ from copycast.application.models import (
     UploadsAdd,
 )
 from copycast.application.services.buckets import bucket_read_for
-from copycast.application.services.context import ObjectStorePort, ServiceContext
+from copycast.application.services.context import (
+    ObjectStorePort,
+    Scope,
+    ServiceContext,
+    UnitOfWorkPort,
+)
 from copycast.application.services.feeds import require_bucket
 from copycast.application.services.owners import acting_owner
+from copycast.application.services.quota import over_quota, require_room
 from copycast.domain.enums import ArchiveState, FeedKind, ListingOrder
 from copycast.domain.exceptions import Conflict, NotFound, Unsupported
 from copycast.domain.ids import bucket_id
 from copycast.domain.listing import SourceListing, SourceListingItem
 from copycast.domain.media import MPEG4_CONTAINERS, PODCAST_EXTS, mime_for_ext
 from copycast.domain.ordering import natural_key
+from copycast.domain.quota import format_size
 from copycast.domain.serial import SerialEntry, numbered_title, posting_dates, progress_notes
 from copycast.logging import get_logger
 
@@ -109,6 +123,20 @@ def _staged(ctx: ServiceContext, upload_id: str) -> _Staged:
     return _Staged(ctx.layout.store, ctx.layout.uploads_prefix(), upload_id)
 
 
+def _owner(ctx: ServiceContext, meta: dict[str, Any]) -> str:
+    """The upload's Owner; an upload staged before 3.0 has none and is the existing data's."""
+    owner = meta.get("owner")
+    return owner if isinstance(owner, str) and owner else ctx.users.owner_of_existing
+
+
+def _check_visible(ctx: ServiceContext, upload_id: str, meta: dict[str, Any]) -> None:
+    """NotFound unless the caller may see the upload: its own, or anyone's for an Admin
+    session and SYSTEM (an API key sees its owner's only, like Feeds)."""
+    visible = Scope.for_principal(ctx.principal).visible_owner
+    if visible is not None and _owner(ctx, meta) != visible:
+        raise NotFound("upload", upload_id)
+
+
 def _read(ctx: ServiceContext, meta: dict[str, Any], token: str | None = None) -> UploadRead:
     tags = meta.get("tags")
     url = None
@@ -121,6 +149,7 @@ def _read(ctx: ServiceContext, meta: dict[str, Any], token: str | None = None) -
         upload_url=url,
         size_bytes=meta.get("size_bytes"),
         tags=AudioTags.model_validate(tags) if tags is not None else None,
+        owner=_owner(ctx, meta),
         created_at=datetime.fromisoformat(meta["created_at"]),
     )
 
@@ -147,6 +176,9 @@ async def create_upload(ctx: ServiceContext, body: UploadCreate) -> UploadRead:
     """Stage one audio file: returns the one-time ``upload_url`` to PUT its bytes to."""
     if served_ext(body.filename) is None:
         raise Unsupported(f"{body.filename!r} is not mp3, m4a or m4b; convert it before uploading")
+    owner = acting_owner(ctx)
+    async with ctx.uow_factory() as uow:
+        await require_room(uow, ctx.users, owner, adding_bytes=body.size_bytes or 0)
     now = _now()
     await asyncio.to_thread(_sweep, ctx.layout.store, ctx.layout.uploads_prefix(), now)
     upload_id = secrets.token_hex(8)
@@ -159,10 +191,12 @@ async def create_upload(ctx: ServiceContext, body: UploadCreate) -> UploadRead:
         "file": f"file.{ext.lower()}",
         "token_sha256": _digest(token),
         "state": "pending",
+        "owner": owner,
+        "declared_bytes": body.size_bytes,
         "created_at": now.isoformat(),
     }
     await asyncio.to_thread(staged.save, meta)
-    log.info("upload.created", upload_id=upload_id, filename=body.filename)
+    log.info("upload.created", upload_id=upload_id, filename=body.filename, owner=owner)
     return _read(ctx, meta, token)
 
 
@@ -177,12 +211,22 @@ async def put_upload(
         raise NotFound("upload", upload_id)
     if meta["state"] != "pending":
         raise Conflict(f"upload {upload_id} was already received")
+    owner = _owner(ctx, meta)
+    async with ctx.uow_factory() as uow:
+        status = await require_room(uow, ctx.users, owner)
+    room = None if status.quota_bytes is None else max(0, status.quota_bytes - status.used_bytes)
     partial = ctx.scratch.temp_file(f".{str(meta['file']).rpartition('.')[2]}")
     size = 0
     try:
         with partial.open("wb") as out:
             async for chunk in chunks:
                 size += len(chunk)
+                if room is not None and size > room and room < MAX_UPLOAD_BYTES:
+                    raise over_quota(
+                        status,
+                        f"over quota: the upload does not fit in the {format_size(room)} left; "
+                        "free some space or ask for a larger quota",
+                    )
                 if size > MAX_UPLOAD_BYTES:
                     raise Unsupported(f"an upload is limited to {MAX_UPLOAD_BYTES} bytes")
                 out.write(chunk)
@@ -207,8 +251,10 @@ async def put_upload(
 
 @capability("get_upload", response=UploadRead)
 async def get_upload(ctx: ServiceContext, upload_id: str) -> UploadRead:
-    """A staged upload and, once received, the tags read from it."""
-    return _read(ctx, await asyncio.to_thread(_staged(ctx, upload_id).load))
+    """A staged upload and, once received, the tags read from it; another User's is 404."""
+    meta = await asyncio.to_thread(_staged(ctx, upload_id).load)
+    _check_visible(ctx, upload_id, meta)
+    return _read(ctx, meta)
 
 
 def _tags(meta: dict[str, Any]) -> AudioTags:
@@ -223,17 +269,34 @@ def _duration(meta: dict[str, Any]) -> int | None:
 def _received(
     ctx: ServiceContext, upload_ids: list[str]
 ) -> list[tuple[_Staged, dict[str, Any], str]]:
-    """Each named upload with its metadata and served extension; 409 until its PUT."""
+    """Each named upload with its metadata and served extension; 404 for an upload the
+    caller may not see, 409 until its PUT."""
     staged: list[tuple[_Staged, dict[str, Any], str]] = []
     for upload_id in upload_ids:
         upload = _staged(ctx, upload_id)
         meta = upload.load()
+        _check_visible(ctx, upload_id, meta)
         if meta["state"] != "received":
             raise Conflict(f"upload {upload_id} has no file yet; PUT it first")
         ext = served_ext(str(meta["filename"]))
         assert ext is not None  # create_upload refused anything else
         staged.append((upload, meta, ext))
     return staged
+
+
+async def _check_batch(
+    ctx: ServiceContext,
+    uow: UnitOfWorkPort,
+    owner: str,
+    staged: list[tuple[_Staged, dict[str, Any], str]],
+) -> None:
+    """Every upload belongs to ``owner`` (the target Feed's: an Admin may add anyone's
+    uploads, but only to a Feed of their Owner), and the whole batch fits the quota."""
+    for upload, meta, _ in staged:
+        if _owner(ctx, meta) != owner:
+            raise NotFound("upload", upload.id)
+    total = sum(int(meta.get("size_bytes") or 0) for _, meta, _ in staged)
+    await require_room(uow, ctx.users, owner, adding_bytes=total)
 
 
 def _description(progress: str, episode: SerialEpisode) -> str:
@@ -288,11 +351,13 @@ async def create_serial_bucket(ctx: ServiceContext, body: SerialBucketCreate) ->
     )
 
     layout = ctx.layout
+    owner = acting_owner(ctx)
     async with ctx.uow_factory() as uow:
+        await _check_batch(ctx, uow, owner, staged)
         feed = await uow.feeds.add(
             ctx.rows.feed(
                 id=bucket_id(body.name),
-                owner=acting_owner(ctx),
+                owner=owner,
                 kind=FeedKind.bucket.value,
                 title=body.name,
                 author=body.author,
@@ -337,6 +402,7 @@ async def add_uploads(ctx: ServiceContext, bucket: str, body: UploadsAdd) -> Buc
     layout = ctx.layout
     async with ctx.uow_factory() as uow:
         feed = await require_bucket(uow, bucket)
+        await _check_batch(ctx, uow, feed.owner, staged)
         total = len(staged)
         for index, (upload, meta, ext) in enumerate(staged):
             # A Bucket dates Episodes by arrival: one second apart, the last one now.

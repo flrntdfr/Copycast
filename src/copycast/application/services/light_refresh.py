@@ -262,10 +262,16 @@ def _priority(reason: str | None) -> int:
 
 
 async def _enqueue_wanted(uow: UnitOfWorkPort, feed_id: str) -> int:
-    """One archive job per wanted row lacking an active one; returns how many were created."""
+    """One archive job per wanted row lacking an active one; returns how many were created.
+
+    Rows blocked by the Owner's quota wait for the scheduler's release: a podcast app's
+    fetch never queues (nor refuses) anything because of the quota.
+    """
     rows = await uow.catalog.get_many(await uow.catalog.ids_in_state(feed_id, ArchiveState.wanted))
     created = 0
     for item in rows:
+        if item.blocked_reason is not None:
+            continue
         if await uow.jobs.active_by_dedup_key(archive_dedup_key(item.id)) is not None:
             continue
         job = await enqueue_archive(

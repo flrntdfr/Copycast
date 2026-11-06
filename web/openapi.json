@@ -1328,6 +1328,173 @@
         "x-capability": "set_archive_flag"
       }
     },
+    "/api/feeds/{feed_id}/items/{item_id}/media": {
+      "get": {
+        "tags": [
+          "items"
+        ],
+        "summary": "An item's archived media for the web player (session only; Range supported)",
+        "description": "The archived media of one item, for the web player (``?download=1``: a download).",
+        "operationId": "play_item_media",
+        "parameters": [
+          {
+            "name": "feed_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feed Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          },
+          {
+            "name": "download",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Download"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "audio/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "The requested range"
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/feeds/{feed_id}/items/{item_id}/assets/{name}": {
+      "get": {
+        "tags": [
+          "items"
+        ],
+        "summary": "One archived asset of an item for the web player (session only)",
+        "description": "One archived asset of one item (chapters, transcript, Artwork, attachment).",
+        "operationId": "play_item_asset",
+        "parameters": [
+          {
+            "name": "feed_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feed Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/me": {
       "get": {
         "tags": [
@@ -3027,6 +3194,16 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Over quota",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         },
         "x-capability": "create_upload"
@@ -3142,6 +3319,16 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Over quota",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         },
         "x-capability": "create_serial_bucket"
@@ -3208,6 +3395,16 @@
           },
           "422": {
             "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "Over quota",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3393,6 +3590,16 @@
           "200": {
             "description": "Successful Response"
           },
+          "507": {
+            "description": "Over quota",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -3510,6 +3717,16 @@
           },
           "422": {
             "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "Over quota",
             "content": {
               "application/problem+json": {
                 "schema": {
