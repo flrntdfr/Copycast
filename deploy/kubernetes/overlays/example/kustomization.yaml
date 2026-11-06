@@ -18,8 +18,8 @@ configMapGenerator:
 
 images:
   - name: ghcr.io/flrntdfr/copycast
-    # Immutable tag: app version + engine version. `2.3.0` alone moves on every engine bump.
-    newTag: "2.3.0-yt2026.10.29.232701.dev0"
+    # Immutable tag: app version + engine version. `3.0.0` alone moves on every engine bump.
+    newTag: "3.0.0-yt2026.10.29.232701.dev0"
 
 patches:
   - path: worker-resources.yaml
