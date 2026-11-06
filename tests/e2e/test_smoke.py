@@ -241,7 +241,8 @@ def test_mirror_is_created_and_archived(
         assert item["media"] is not None, item
         assert item["media"]["mime"].startswith("audio/"), item["media"]
         assert item["media"]["bytes"] > 0
-        assert item["media"]["url"].startswith(stack.base_url + _media_path_prefix(mirror["id"]))
+        # The API's URL is the bare one (it takes the pair); the feed publishes the keyed one.
+        assert item["media"]["url"].startswith(f"{stack.base_url}/feeds/{mirror['id']}/media/")
         # The web player's own URL, opened with the session (U10).
         assert item["media"]["play_url"] == (
             f"{stack.base_url}/api/feeds/{mirror['id']}/items/{item['id']}/media"
@@ -292,11 +293,24 @@ def test_mirror_feed_links_point_home(
 
 
 def test_media_range_counts_one_download(
-    http: httpx.Client, anonymous: httpx.Client, mirror: dict[str, Any]
+    http: httpx.Client, anonymous: httpx.Client, stack: Stack, mirror: dict[str, Any]
 ) -> None:
     item = _items(http, mirror["id"], sort="ordinal", order="asc")[0]
-    # The keyed enclosure URL is its own credential: a player that sends nothing streams it.
-    media_path = "/feeds/" + item["media"]["url"].split("/feeds/", 1)[1]
+    bare_path = "/feeds/" + item["media"]["url"].split("/feeds/", 1)[1]
+    assert anonymous.head(bare_path).status_code == 401  # the bare URL takes the pair
+    assert anonymous.head(bare_path, auth=_feed_pair(mirror, stack)).status_code == 200
+    # The feed's keyed enclosure is its own credential: a player that sends nothing streams it.
+    feed = anonymous.get(f"/feeds/{mirror['id']}.xml", auth=_feed_pair(mirror, stack))
+    assert feed.status_code == 200, feed.text
+    file_name = bare_path.rsplit("/", 1)[1]
+    keyed = [
+        str(enclosure.get("url"))
+        for enclosure in ElementTree.fromstring(feed.content).iter("enclosure")
+        if str(enclosure.get("url", "")).endswith(f"/media/{file_name}")
+    ]
+    assert len(keyed) == 1, keyed
+    media_path = keyed[0][len(stack.base_url) :]
+    assert media_path.startswith(_media_path_prefix(mirror["id"])), media_path
     before = _item(http, mirror["id"], item["id"])["download_count"]
     player = anonymous
 
