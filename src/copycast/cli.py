@@ -1,5 +1,5 @@
 """Command line entry point: ``copycast api | worker | migrate | rebuild | config | openapi``,
-plus ``storage push`` and the ``users`` credential helpers.
+plus ``storage push``, the ``users`` credential helpers and ``users reassign``.
 
 Command implementations are imported lazily so the CLI loads (and ``config``
 and ``--version`` work) even when an adapter package is absent.
@@ -239,7 +239,7 @@ PASSWORD_MIN_LEN = 8
 
 @main.group()
 def users() -> None:
-    """Credentials for ``[[auth.users]]`` (no database needed)."""
+    """Credentials for ``[[auth.users]]`` (no database needed), and ``reassign``."""
 
 
 @users.command("hash-password")
@@ -305,6 +305,54 @@ def users_totp(username: str, secret: str | None) -> None:
     click.echo(f"uri:    {uri}")
     click.echo(qr.getvalue().rstrip("\n"))
     click.echo(f'copycast.toml, under this user\'s [[auth.users]]: totp_secret = "{secret}"')
+
+
+@users.command("reassign")
+@click.argument("old")
+@click.argument("new")
+@click.option("--yes", is_flag=True, help="Do not ask for confirmation.")
+def users_reassign(old: str, new: str, yes: bool) -> None:
+    """Give every Feed, API key and job of OLD, and its Defaults and Cookie files, to NEW.
+
+    For Feeds whose owner is no longer configured (a renamed user, a switch to users
+    mode). NEW must be configured. Refused while the worker runs (stop it first), and when
+    OLD and NEW mirror the same Source. Feed URLs, pairs and media keys do not change.
+    """
+    settings = _load_settings()
+    configure_logging(settings, process="cli")
+    old, new = old.strip(), new.strip()
+    check_names = _lazy("copycast.adapters.db.reassign", "check_names")
+    refused = _lazy("copycast.adapters.db.reassign", "ReassignRefused")
+    run_reassign = _lazy("copycast.adapters.db.reassign", "reassign")
+    try:
+        check_names(settings, old, new)
+    except refused as exc:
+        click.echo(f"copycast: {exc}", err=True)
+        sys.exit(1)
+    if not yes:
+        click.confirm(
+            f"Give everything {old} owns (Feeds, API keys, jobs, users/{old}/) to {new}?",
+            abort=True,
+        )
+    try:
+        report = asyncio.run(run_reassign(settings, old, new))
+    except SettingsError as exc:
+        click.echo(f"copycast: {exc}", err=True)
+        sys.exit(EXIT_CONFIG)
+    except refused as exc:
+        click.echo(f"copycast: {exc}", err=True)
+        sys.exit(1)
+    if report.demoted_default is not None:
+        click.echo(
+            f"{old}'s default Local feed {report.demoted_default} is now an ordinary "
+            f"Local feed of {new}"
+        )
+    for key in report.conflicts:
+        click.echo(f"{key} kept: {new} has its own")
+    click.echo(
+        f"moved from {old} to {new}: {len(report.feeds)} Feeds, {report.keys} API keys, "
+        f"{report.jobs} jobs, {len(report.files)} files; {len(report.conflicts)} conflicts"
+    )
 
 
 if __name__ == "__main__":

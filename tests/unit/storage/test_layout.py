@@ -207,3 +207,20 @@ def test_per_user_keys(layout: Layout) -> None:
             layout.user_prefix(bad)
     with pytest.raises(UnsafePath):
         layout.user_cookie_file_key("florent", "../cookies.txt")
+
+
+def test_the_seams_name_the_owners_keys_and_never_the_legacy_ones(layout: Layout) -> None:
+    from copycast.adapters.storage.user_settings import MARKER_KEY
+    from copycast.application.services.defaults import defaults_key
+    from copycast.application.services.engine import cookie_jar_key, cookie_store
+
+    assert defaults_key(layout, "alice") == layout.user_defaults_key("alice")
+    assert cookie_jar_key(layout, "alice") == "users/alice/cookies.txt"
+    store = cookie_store(layout, "alice")
+    assert (store.jar, store.folder) == ("users/alice/cookies.txt", "users/alice/cookie-files/")
+    legacy = {layout.defaults_key(), layout.cookies_key(), layout.cookie_files_prefix()}
+    assert not legacy & {defaults_key(layout, "copycast"), cookie_jar_key(layout, "copycast")}
+    # The copy's marker sits under users/ yet can never be a User's prefix.
+    assert MARKER_KEY.startswith("users/.")
+    with pytest.raises(UnsafePath):
+        layout.user_prefix(MARKER_KEY.removeprefix("users/"))

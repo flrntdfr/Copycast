@@ -93,7 +93,8 @@ class SourceGatewayAdapter:
     One probe cache per process (the plan's "probe cache" of the api lifespan)
     so ``create_mirror`` reuses the listing a ``probe_source`` call produced.
     ``owner`` names the User whose Cookie files an Engine call carries
-    (``application.services.engine.cookie_jar_key``).
+    (``application.services.engine.cookie_jar_key``); the cache is kept per owner, so a
+    probe made with one User's cookies is never reused for another.
     """
 
     def __init__(self, settings: Settings, engine: Engine, layout: Any) -> None:
@@ -122,7 +123,7 @@ class SourceGatewayAdapter:
         )
         snapshots: list[SourceSnapshot] = []
         for candidate in result.candidates:
-            entry = self.cache.get_by_token(candidate.candidate_token)
+            entry = self.cache.get_by_token(candidate.candidate_token, owner=owner)
             if entry is not None:
                 snapshots.append(self._snapshot(entry))
         return snapshots
@@ -132,7 +133,7 @@ class SourceGatewayAdapter:
         return cookie_jar_key(self._layout, owner)
 
     def cached(self, *, token: str | None, url: str | None, owner: str) -> SourceSnapshot | None:
-        entry = self.cache.get(token=token, url=url)
+        entry = self.cache.get(owner=owner, token=token, url=url)
         return self._snapshot(entry) if entry is not None else None
 
     def search_podcasts(self, query: str, limit: int) -> list[PodcastSearchResult]:
@@ -726,8 +727,23 @@ class Container:
 
     async def migrate_user_settings(self) -> None:
         """Copy the legacy Defaults and Cookie files to the owner of existing data's
-        ``users/{owner}/`` keys, once (api and worker start). Nothing to copy yet: every
-        User still reads the global keys."""
+        ``users/{owner}/`` keys, once (api and worker start, after preflight).
+
+        The legacy ``engine/`` keys stay (``adapters.storage.user_settings``). An Object
+        store error is fatal, like preflight: a ``SettingsError`` (one line, exit 2).
+        """
+        migrate = _load("copycast.adapters.storage.user_settings", "migrate_legacy_settings")
+        owner = self.users.owner_of_existing
+        try:
+            await asyncio.to_thread(migrate, self.layout, owner)
+        except SettingsError:
+            raise
+        except Exception as exc:
+            first = str(exc).splitlines()[0] if str(exc) else repr(exc)
+            raise SettingsError(
+                f"storage {self.settings.storage.url}: copying the Defaults and Cookie files "
+                f"to users/{owner}/ failed: {first}"
+            ) from exc
 
     async def schema_is_current(self) -> bool:
         current: bool = await _load("copycast.adapters.db.migrate", "schema_is_current")(

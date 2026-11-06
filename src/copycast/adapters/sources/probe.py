@@ -7,7 +7,7 @@ verifies as RSS (at most five; one the fetch guard refuses is skipped); anything
 else is listed by the engine and becomes a ``ytdlp`` candidate. A bare YouTube
 channel URL normalizes to its ``/videos`` tab and skips the HTTP round trip
 (YouTube pages advertise an RSS feed without audio). Every candidate is cached for ten minutes under
-its token and its normalized URL, together with the listing (and the parsed
+its token and its normalized URL, per owner, together with the listing (and the parsed
 RSS page) so ``create_mirror`` can populate the Catalog without refetching.
 """
 
@@ -74,26 +74,35 @@ class ProbeEntry:
 
 
 class ProbeCache:
-    """Entries keyed by candidate token and by normalized Source URL (10 min TTL)."""
+    """Entries keyed by owner and candidate token, and by owner and normalized Source URL
+    (10 min TTL).
+
+    ``owner`` is the User whose Cookie files the probe carried: a listing made with one
+    User's cookies (a private playlist, a members-only channel) is never served to another,
+    and another User's hit is no timing oracle on what this one probed. An owner-less probe
+    (``owner=""``) is cached under the empty name and reaches no User.
+    """
 
     def __init__(
         self, ttl: float = PROBE_TTL_SECONDS, *, clock: Callable[[], float] = time.monotonic
     ) -> None:
-        self._by_token: TtlCache[str, ProbeEntry] = TtlCache(ttl, clock=clock)
-        self._by_url: TtlCache[str, ProbeEntry] = TtlCache(ttl, clock=clock)
+        self._by_token: TtlCache[tuple[str, str], ProbeEntry] = TtlCache(ttl, clock=clock)
+        self._by_url: TtlCache[tuple[str, str], ProbeEntry] = TtlCache(ttl, clock=clock)
 
-    def put(self, entry: ProbeEntry) -> None:
-        self._by_token.put(entry.candidate.candidate_token, entry)
-        self._by_url.put(normalize_source_url(entry.source_url), entry)
+    def put(self, entry: ProbeEntry, *, owner: str) -> None:
+        self._by_token.put((owner, entry.candidate.candidate_token), entry)
+        self._by_url.put((owner, normalize_source_url(entry.source_url)), entry)
 
-    def get_by_token(self, token: str | None) -> ProbeEntry | None:
-        return self._by_token.get(token) if token else None
+    def get_by_token(self, token: str | None, *, owner: str) -> ProbeEntry | None:
+        return self._by_token.get((owner, token)) if token else None
 
-    def get_by_url(self, url: str | None) -> ProbeEntry | None:
-        return self._by_url.get(normalize_source_url(url)) if url else None
+    def get_by_url(self, url: str | None, *, owner: str) -> ProbeEntry | None:
+        return self._by_url.get((owner, normalize_source_url(url))) if url else None
 
-    def get(self, *, token: str | None = None, url: str | None = None) -> ProbeEntry | None:
-        return self.get_by_token(token) or self.get_by_url(url)
+    def get(
+        self, *, owner: str, token: str | None = None, url: str | None = None
+    ) -> ProbeEntry | None:
+        return self.get_by_token(token, owner=owner) or self.get_by_url(url, owner=owner)
 
     def purge(self) -> None:
         self._by_token.purge()
@@ -155,8 +164,8 @@ def probe(
     """Resolve ``url`` to candidates; raises :class:`Unsupported` when nothing fits.
 
     ``cookie_jar`` is the Object store key of the jar the Engine's listings carry;
-    ``owner`` is the User the probe runs for (whose cookies it used), so the entries it
-    puts in ``cache`` can be kept per owner. Passed through untouched for now.
+    ``owner`` is the User the probe runs for (whose cookies it used): the entries it puts in
+    ``cache`` are kept under that owner (``""`` without one), so only they reach them.
     """
     input_url = url.strip()
     if not input_url:
@@ -236,7 +245,7 @@ def probe(
     result_entries = [ProbeEntry(e.candidate, e.listing, e.feed, created_at=now) for e in entries]
     if cache is not None:
         for entry in result_entries:
-            cache.put(entry)
+            cache.put(entry, owner=owner or "")
     return ProbeResult(input_url=input_url, candidates=[e.candidate for e in result_entries])
 
 

@@ -252,15 +252,31 @@ Kubernetes: the example overlay's `api-auth.yaml` reads the password from a Secr
 
 ```
 LAYOUT_VERSION                     "2"; written on first start into an empty bucket, a mismatch refuses to start
-engine/cookies.txt                 the engine's cookie jar, merged from the files below
-engine/cookies/<name>.txt          the stored cookie files, one per upload (optional)
-engine/defaults.json               the Settings-page defaults
+users/<username>/defaults.json     that User's Defaults (the Settings page's Mirrors half)
+users/<username>/cookies.txt       that User's cookie jar, merged from the files below
+users/<username>/cookie-files/<name>.txt   that User's Cookie files, one per upload (optional)
+users/.legacy-settings-copied      written once 3.0 has copied the engine/ keys below
+engine/cookies.txt                 2.x: the one global cookie jar (kept, no longer read)
+engine/cookies/<name>.txt          2.x: the global cookie files (kept, no longer read)
+engine/defaults.json               2.x: the global Defaults (kept, no longer read)
 feeds/<feed_id>/feed.json          descriptor of the feed, its policy, items, assets and requests
 feeds/<feed_id>/source/            verbatim Source XML or the last engine listing
 feeds/<feed_id>/media/             audio, <item_id>.info.json, <item_id>.item.xml (original RSS item)
 feeds/<feed_id>/assets/            Artwork, chapters, transcripts, Attachments
 uploads/<upload_id>/               a staged Upload (upload.json, file.<ext>), swept after 24 h
 ```
+
+Defaults and Cookie files belong to each User. Every Engine call made for a Feed (Refresh,
+archive, Request expansion, metadata fetch, Light Refresh) carries its owner's jar, also when
+an Admin acts on it; a probe, a search or the playlists listing carries the acting User's. On
+its first start 3.0 copies the global `engine/` keys of 2.x to the owner of existing data
+(`auth.owner_of_existing`, else the first Admin, else `auth.username` without users): a
+target already there is kept (logged as `user_settings.migration_conflict`), and the marker
+`users/.legacy-settings-copied` makes the copy run once only. The `engine/` keys stay, so a
+2.3.0 image rolled back still finds them (a later release deletes them), but whatever changed
+under 3.0 is not in them. `copycast users reassign OLD NEW` moves `users/OLD/` to `users/NEW/`
+with the Feeds; a file NEW already has stays OLD's and is reported. `copycast rebuild` needs
+nothing for them: they are read live from `users/`.
 
 The descriptor is rewritten after every change of intent and is what `copycast rebuild`
 reads. Only the worker writes into `media/`, and only finished files: partial downloads and
