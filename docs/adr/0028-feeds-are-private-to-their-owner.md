@@ -91,10 +91,11 @@ release deletes them.
 **Events, status and storage are per Owner.** The NOTIFY payload carries the event's Owner;
 a stream delivers an event to its Owner, to Admin sessions and to SYSTEM, and a resync to
 everyone. Event ids are numbered per Owner view, so a Member can neither count nor time other
-Users' events. `get_status`, `about` and `storage_summary` count the caller's own Feeds
-(`storage_summary` stays the caller's own for Admins too, as the plan says); the instance-wide
-facts of the Object store and every User's quota need a Principal that sees every Owner, an
-Admin session or SYSTEM, never a key.
+Users' events. `get_status` (its crawlers and worker jobs) and `about` count the Feeds the
+caller can see, so a Member's figures are their own; `storage_summary` covers the caller's own
+Feeds only, an Admin's session included (the product owner kept the plan's rule on
+2026-11-06). The instance-wide facts of the Object store and every User's quota need a
+Principal that sees every Owner, an Admin session or SYSTEM, never a key.
 
 **Removed users keep their data.** A user taken out of the file keeps their rows: their
 sessions are deleted at startup, their keys and feed pairs answer the uniform 401, their Feeds
