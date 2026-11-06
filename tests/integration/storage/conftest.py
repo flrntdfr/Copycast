@@ -36,6 +36,9 @@ from copycast.domain.enums import (
 from copycast.domain.ids import asset_id, item_id, mirror_id
 from copycast.domain.urls import normalize_source_url
 from copycast.settings import Settings
+from tests.support.fake_engine import FakeEngine
+from tests.support.origin import Origin
+from tests.support.world import World, running_world
 
 pytestmark = pytest.mark.integration
 
@@ -58,6 +61,19 @@ async def db_engine(settings: Settings, db: str) -> AsyncIterator[AsyncEngine]:
 @pytest.fixture
 def sessionmaker(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return create_sessionmaker(db_engine)
+
+
+@pytest.fixture
+async def world(
+    settings: Settings, db: str, engine: FakeEngine, origin: Origin
+) -> AsyncIterator[World]:
+    """Bob's things (``tests.support.world``) in this test's database, users mode.
+
+    The app that built them is gone by the time the test runs: use the database
+    (``uow_factory`` and the repositories) with ``Scope`` values of the world's Users.
+    """
+    async with running_world(settings, engine, origin) as (_, built):
+        yield built
 
 
 @pytest.fixture

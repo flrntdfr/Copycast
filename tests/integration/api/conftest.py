@@ -8,6 +8,8 @@ worker ``Runner`` with the FakeEngine, so media files really exist on disk.
 ``users_settings``, ``users_container``, ``users_app`` and ``users_client`` are the
 same in users mode (``root`` the Admin, ``alice`` and ``bob`` Members, from
 ``tests.support.users``); :func:`running` starts an app for any other settings.
+``world`` fills ``users_app`` with Bob's things (``tests.support.world``) and
+``alice_client``, ``bob_client`` and ``root_client`` are signed-in clients of it.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from tests.support.fake_engine import FakeEngine
 from tests.support.origin import FIXTURES_DIR, Origin
 from tests.support.paths import api
 from tests.support.users import users_auth
+from tests.support.world import ClientFactory, World, build_world, signed_in
 
 pytestmark = pytest.mark.integration
 
@@ -161,6 +164,48 @@ async def users_client(users_app: Any) -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=users_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http:
         yield http
+
+
+@pytest.fixture
+def users_client_factory(users_app: Any) -> ClientFactory:
+    """Fresh clients of ``users_app``, each with its own cookie jar."""
+
+    def factory() -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=users_app), base_url="http://testserver"
+        )
+
+    return factory
+
+
+@pytest.fixture
+async def world(users_app: Any, users_client_factory: ClientFactory, origin: Origin) -> World:
+    """Bob's things in ``users_app`` (``tests.support.world``)."""
+    return await build_world(users_app, users_client_factory, origin=origin)
+
+
+@pytest.fixture
+async def alice_client(
+    world: World, users_client_factory: ClientFactory
+) -> AsyncIterator[httpx.AsyncClient]:
+    async with signed_in(users_client_factory, "alice") as client:
+        yield client
+
+
+@pytest.fixture
+async def bob_client(
+    world: World, users_client_factory: ClientFactory
+) -> AsyncIterator[httpx.AsyncClient]:
+    async with signed_in(users_client_factory, "bob") as client:
+        yield client
+
+
+@pytest.fixture
+async def root_client(
+    world: World, users_client_factory: ClientFactory
+) -> AsyncIterator[httpx.AsyncClient]:
+    async with signed_in(users_client_factory, "root") as client:
+        yield client
 
 
 __all__ = [
