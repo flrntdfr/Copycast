@@ -103,3 +103,27 @@ def test_artwork_mac_ok_accepts_only_the_exact_mac() -> None:
     assert not c.artwork_mac_ok(secret, asset_id, "")
     assert not c.artwork_mac_ok(secret, "feedbeef00000002", mac)
     assert not c.artwork_mac_ok(c.new_instance_secret(), asset_id, mac)
+
+
+def test_session_token_shape_and_digest() -> None:
+    token = c.mint_session_token()
+    assert len(token) == 43 and "=" not in token
+    assert set(token) <= set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+    assert c.mint_session_token() != token
+    digest = c.session_digest(token)
+    assert isinstance(digest, bytes) and len(digest) == 32
+    assert digest == c.session_digest(token) and digest != c.session_digest(token + "x")
+
+
+def test_credential_digest_follows_password_and_totp() -> None:
+    base = c.credential_digest("$argon2id$v=19$m=65536,t=3,p=4$salt$hash", None)
+    assert len(base) == 32
+    assert base == c.credential_digest("$argon2id$v=19$m=65536,t=3,p=4$salt$hash", "")
+    assert base != c.credential_digest("$argon2id$v=19$m=65536,t=3,p=4$salt$other", None)
+    with_totp = c.credential_digest("$argon2id$v=19$m=65536,t=3,p=4$salt$hash", "JBSWY3DPEHPK3PXP")
+    assert with_totp != base
+    # The TOTP secret is normalised: spaces, case and padding do not change the digest.
+    assert with_totp == c.credential_digest(
+        "$argon2id$v=19$m=65536,t=3,p=4$salt$hash", "jbsw y3dp ehpk 3pxp=="
+    )
+    assert c.credential_digest(None, None) == c.credential_digest("", None)

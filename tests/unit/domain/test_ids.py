@@ -114,3 +114,17 @@ def test_asset_id_covers_the_uniqueness_tuple() -> None:
 )
 def test_feed_id_regex(value: str, ok: bool) -> None:
     assert is_feed_id(value) is ok
+
+
+def test_owned_mirror_id_depends_on_owner_and_key() -> None:
+    from copycast.domain.ids import owned_mirror_id
+
+    key = normalize_source_url("https://example.com/feed.xml")
+    alice = owned_mirror_id("alice", key)
+    assert alice == owned_mirror_id("alice", key)
+    assert is_feed_id(alice) and len(alice) == 16
+    assert alice != owned_mirror_id("bob", key)
+    assert alice != mirror_id(key)
+    assert alice != owned_mirror_id("alice", normalize_source_url("https://example.com/b.xml"))
+    # The separator keeps "ab" + "c" apart from "a" + "bc".
+    assert owned_mirror_id("ab", "c") != owned_mirror_id("a", "bc")

@@ -75,3 +75,12 @@ def attachment_slot(url: str) -> str:
 
 def is_feed_id(value: str) -> bool:
     return FEED_ID_RE.match(value) is not None
+
+
+def owned_mirror_id(owner: str, dedup_key: str) -> str:
+    """``sha256(owner + '\\n' + dedup_key)[:16]``: a Mirror id that depends on its Owner.
+
+    In users mode every new Mirror and Capture gets it, so two Users mirroring one
+    Source never collide and nobody can compute another User's id from the Source.
+    """
+    return _short_hash(f"{owner}\n{dedup_key}")
