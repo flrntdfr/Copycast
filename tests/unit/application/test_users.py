@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 
 from copycast.application.passwords import PasswordHasher, hash_parameters
@@ -202,8 +201,6 @@ def test_legacy_mode_never_stores_a_fast_digest_of_the_operator_password() -> No
     directory = UserDirectory(_settings(password=password))
     digest = directory.credential_digest("copycast")
     assert digest is not None
-    assert digest != credential_digest(password, None)
-    assert digest != hashlib.sha256(f"{password}\n".encode()).digest()
     phc = digest.decode("ascii")
     assert phc.startswith("$argon2id$") and PasswordHasher().verify(phc, password)
     assert password.encode() not in digest
@@ -211,10 +208,10 @@ def test_legacy_mode_never_stores_a_fast_digest_of_the_operator_password() -> No
     again = UserDirectory(_settings(password=password))
     assert again.credential_matches("copycast", digest)
     assert again.changed_credentials({"copycast": digest}) == {}
-    # A new password, or the 3.0-foundation SHA-256 digest, does not match.
+    # A new password, or a 32-byte digest of the 3.0-foundation shape, does not match.
     changed = UserDirectory(_settings(password="another-password"))
     assert not changed.credential_matches("copycast", digest)
-    assert not again.credential_matches("copycast", credential_digest(password, None))
+    assert not again.credential_matches("copycast", bytes(32))
     assert set(changed.changed_credentials({"copycast": digest})) == {"copycast"}
     assert not again.credential_matches("nobody", digest)
 

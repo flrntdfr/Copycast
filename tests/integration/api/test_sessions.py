@@ -7,7 +7,6 @@ the cheapest argon2 parameters (``tests.support.users``).
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -698,7 +697,6 @@ async def test_legacy_mode_keeps_only_an_argon2_hash_of_the_operator_password(
             container, "SELECT credential_digest FROM users WHERE username = 'florent'"
         )
         assert bytes(stored).startswith(b"$argon2id$")
-        assert bytes(stored) != hashlib.sha256(f"{LEGACY_PASSWORD}\n".encode()).digest()
         assert PasswordHasher().verify(bytes(stored).decode(), LEGACY_PASSWORD)
         # Startup hashed the operator password off the event loop, once.
         assert "_legacy_hash" in vars(container.users)
