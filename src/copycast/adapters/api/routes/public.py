@@ -47,7 +47,7 @@ from starlette.background import BackgroundTask
 from copycast.adapters.api.auth import FeedAccess
 from copycast.adapters.api.cache import CachedFeed, FeedCache
 from copycast.adapters.api.container import ApiContainer, FeedHeadLike
-from copycast.adapters.api.deps import ContainerDep, FeedCacheDep, ServicesDep
+from copycast.adapters.api.deps import ContainerDep, FeedCacheDep, SystemServicesDep
 from copycast.adapters.api.objects import ObjectResponse
 from copycast.adapters.api.problems import problem_response
 from copycast.application.models import ItemRead
@@ -166,7 +166,7 @@ async def _cached_feed(
 async def feed_xml(
     request: Request,
     container: ContainerDep,
-    services: ServicesDep,
+    services: SystemServicesDep,
     cache: FeedCacheDep,
     feed_id: str,
 ) -> Response:
@@ -214,7 +214,7 @@ async def feed_xml(
 async def media(
     request: Request,
     container: ContainerDep,
-    services: ServicesDep,
+    services: SystemServicesDep,
     feed_id: str,
     filename: str,
 ) -> Response:

@@ -1,24 +1,21 @@
-"""HTTP Basic authentication: the operator pair everywhere, a feed's own pair on its routes.
+"""HTTP Basic on the published feeds: a feed's own pair (and, in legacy mode, the operator's).
 
-Off unless ``settings.auth.password`` is set (ADR 0011). When on:
+The web UI and ``/api`` take sessions and API keys (``adapters.api.principal``);
+``/feeds`` keeps HTTP Basic, which podcast apps speak. While authentication is on,
+:func:`require_feed_access` on the ``/feeds`` router accepts the pair of the very feed
+being fetched, so a podcast client holding one feed's credentials reaches nothing
+else. The ``/feeds/{id}/k/{key}/`` media and asset routes also take the feed's media
+key from the path: the enclosure URLs a feed publishes carry it, because a streaming
+player (iOS AVPlayer) never answers a challenge. A feed's XML also opens to a browser
+session of its Owner or of an Admin (the bucket page links it). In legacy mode the
+operator pair opens every feed, as before 3.0; in users mode there is no operator
+pair, and a Feed whose Owner is no longer configured opens to no pair and no key.
 
-* :class:`OperatorAuthMiddleware` requires the operator pair on every request
-  except the health checks, the public feed routes, public Artwork (``/art/``,
-  an opaque token is its credential), upload URLs and the MCP mount (MCP is
-  gated by API keys inside the fastmcp app, see ``adapters.mcp.auth``);
-* :func:`require_feed_access` on the ``/feeds`` router accepts the operator
-  pair or the pair of the very feed being fetched, so a podcast client holding
-  one feed's credentials reaches nothing else. The ``/feeds/{id}/k/{key}/``
-  media and asset routes also take the feed's media key from the path: the
-  enclosure URLs a feed publishes carry it, because a streaming player (iOS
-  AVPlayer) never answers a challenge.
-
-Both answer 401 as problem+json with a ``Basic`` challenge, which is what makes
-browsers, Overcast and AntennaPod prompt for the pair. Under ``/feeds`` that 401
-is one and the same answer (:data:`FEED_UNAUTHORIZED`) for a missing pair, a
-wrong pair, another feed's pair, a wrong media key and a feed, item or asset
-that does not exist, and it comes before anything else is looked up: the routes
-are no oracle of what this server mirrors.
+Every refusal is a 401 problem+json with a ``Basic`` challenge, which is what makes
+Overcast and AntennaPod prompt for the pair, and one and the same answer
+(:data:`FEED_UNAUTHORIZED`) for a missing pair, a wrong pair, another feed's pair, a
+wrong media key and a feed, item or asset that does not exist: the routes are no
+oracle of what this server mirrors.
 """
 
 from __future__ import annotations
@@ -30,13 +27,13 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
-from starlette.datastructures import Headers
-from starlette.types import ASGIApp, Receive, Scope, Send
 
 from copycast.adapters.api.container import ApiContainer
 from copycast.adapters.api.deps import get_container
-from copycast.adapters.api.problems import WWW_AUTHENTICATE, build_problem
+from copycast.adapters.api.principal import principal_of
+from copycast.adapters.api.problems import WWW_AUTHENTICATE, build_problem, challenges
 from copycast.domain.credentials import constant_time_equals, feed_media_key
+from copycast.domain.enums import AuthMode
 from copycast.domain.exceptions import Unauthorized
 from copycast.domain.urls import ART_PATH_PREFIX, COPYCAST_ARTWORK_PATH
 from copycast.settings import AuthSettings
@@ -79,7 +76,9 @@ def parse_basic(header: str | None) -> BasicCredentials | None:
 
 
 def is_operator(auth: AuthSettings, credentials: BasicCredentials | None) -> bool:
-    if credentials is None or auth.password is None:
+    """The legacy operator pair (``auth.username`` and ``auth.password``); never in users
+    mode, which has no plaintext password to compare."""
+    if credentials is None or auth.password is None or auth.mode is not AuthMode.legacy:
         return False
     # Compare both halves so timing reveals nothing about which one was wrong.
     user_ok = constant_time_equals(credentials.username, auth.username)
@@ -87,21 +86,7 @@ def is_operator(auth: AuthSettings, credentials: BasicCredentials | None) -> boo
     return user_ok and pass_ok
 
 
-def _under(path: str, prefix: str) -> bool:
-    return path == prefix or path.startswith(prefix + "/")
-
-
 ROBOTS_PATH = "/robots.txt"
-
-
-def is_gated(path: str) -> bool:
-    """Paths the operator middleware challenges (everything but health, feeds, MCP, robots,
-    public Artwork and upload URLs, whose token is their credential)."""
-    if _under(path, HEALTH_PATH) or _under(path, MCP_PATH) or path == ROBOTS_PATH:
-        return False
-    if path.startswith(UPLOADS_PREFIX + "/") or is_public_artwork(path):
-        return False
-    return not path.startswith(FEEDS_PREFIX)
 
 
 def is_public_artwork(path: str) -> bool:
@@ -116,43 +101,17 @@ def is_public_artwork(path: str) -> bool:
 
 
 def unauthorized_response(path: str | None, detail: str) -> JSONResponse:
+    """A 401 problem+json; the ``Basic`` challenge only under ``/feeds/``."""
     problem = build_problem(None, status=401, slug="unauthorized", detail=detail)
     body = problem.model_dump(mode="json", exclude_none=True)
     if path is not None:
         body["instance"] = path
+    headers = {"Cache-Control": "no-store"}
+    if challenges(path):
+        headers["WWW-Authenticate"] = WWW_AUTHENTICATE
     return JSONResponse(
-        body,
-        status_code=401,
-        media_type="application/problem+json",
-        headers={"WWW-Authenticate": WWW_AUTHENTICATE, "Cache-Control": "no-store"},
+        body, status_code=401, media_type="application/problem+json", headers=headers
     )
-
-
-class OperatorAuthMiddleware:
-    """Pure ASGI: require the operator pair on every gated path while auth is on."""
-
-    def __init__(self, app: ASGIApp, auth: AuthSettings) -> None:
-        self.app = app
-        self.auth = auth
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not self.auth.enabled:
-            await self.app(scope, receive, send)
-            return
-        path = str(scope.get("path", ""))
-        if not is_gated(path):
-            await self.app(scope, receive, send)
-            return
-        credentials = parse_basic(Headers(scope=scope).get("authorization"))
-        if not is_operator(self.auth, credentials):
-            detail = (
-                "wrong username or password"
-                if credentials is not None
-                else "this Copycast requires a username and password"
-            )
-            await unauthorized_response(path, detail)(scope, receive, send)
-            return
-        await self.app(scope, receive, send)
 
 
 async def require_feed_access(
@@ -160,8 +119,9 @@ async def require_feed_access(
     container: Annotated[ApiContainer, Depends(get_container)],
     feed_id: str,
 ) -> None:
-    """The operator pair, this feed's own pair, or (on a ``/k/{key}/`` route) this feed's
-    media key; a no-op while auth is off.
+    """This feed's own pair, (on a ``/k/{key}/`` route) its media key, (on its XML) a
+    session of its Owner or an Admin, or in legacy mode the operator pair; a no-op while
+    auth is off.
 
     A router dependency, so it runs before the endpoint looks anything up (the path
     parameters are plain strings: no validation can answer first). Every refusal is
@@ -174,15 +134,19 @@ async def require_feed_access(
     # Read from the path only: a ``?key=`` query must never stand in for the pair.
     key: str | None = request.path_params.get("key")
     credentials = parse_basic(request.headers.get("authorization"))
-    if credentials is None and key is None:
+    principal = principal_of(request.scope) if request.url.path.endswith(".xml") else None
+    if credentials is None and key is None and principal is None:
         raise Unauthorized(FEED_UNAUTHORIZED)
     if is_operator(auth, credentials):
         return
     async with container.uow_factory() as uow:
         feed = await uow.feeds.get(feed_id)
-        known = feed is not None
+        known = feed is not None and container.users.is_configured(feed.owner)
+        owner: str | None = feed.owner if feed is not None else None
         username: str = feed.auth_username if feed is not None else ""
         password: str = feed.auth_password if feed is not None else _ABSENT_PASSWORD
+    if known and principal is not None and (principal.admin or principal.username == owner):
+        return
     key_ok = key is not None and constant_time_equals(key, feed_media_key(feed_id, password))
     pair_ok = False
     if credentials is not None:
@@ -206,8 +170,6 @@ __all__ = [
     "ROBOTS_PATH",
     "BasicCredentials",
     "FeedAccess",
-    "OperatorAuthMiddleware",
-    "is_gated",
     "is_operator",
     "is_public_artwork",
     "parse_basic",

@@ -147,8 +147,10 @@ async def test_same_origin_and_non_browser_writes_reach_the_routes(
 async def test_headers_on_the_api_feeds_and_robots(settings: Settings) -> None:
     configured = with_auth(settings, base_url="https://copycast.example")
     async with app_client(configured, base_url="https://copycast.example") as client:
+        # /api takes a session now: its 401 carries the page headers and no Basic challenge.
         api_response = await client.get(api("/openapi.json"), headers=basic(*OPERATOR))
-        assert api_response.status_code == 200
+        assert api_response.status_code == 401
+        assert "www-authenticate" not in api_response.headers
         assert api_response.headers["content-security-policy"] == spa_policy(
             "https://copycast.example"
         )
@@ -169,7 +171,7 @@ async def test_headers_on_the_api_feeds_and_robots(settings: Settings) -> None:
         assert logo.headers["content-security-policy"] == PODCAST_POLICY
 
         docs = await client.get(api("/docs"), headers=basic(*OPERATOR))
-        assert docs.status_code == 200
+        assert docs.status_code == 401
         assert "https://cdn.jsdelivr.net" in docs.headers["content-security-policy"]
 
 

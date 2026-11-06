@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from copycast.application.services import Services
+from copycast.application.users import UserDirectory
 
 
 class ServicesProvider(Protocol):
@@ -12,6 +13,8 @@ class ServicesProvider(Protocol):
 
     @property
     def services(self) -> Services: ...
+    @property
+    def users(self) -> UserDirectory: ...
 
 
 __all__ = ["ServicesProvider"]

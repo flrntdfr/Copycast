@@ -24,6 +24,7 @@ from copycast.settings import Settings, get_settings
 from tests.conftest import TEST_ALLOW_PRIVATE_HOSTS, TEST_BASE_URL
 from tests.integration.mcp.conftest import Source, structured
 from tests.support.paths import MCP_PATH, api
+from tests.support.users import session_headers
 
 pytestmark = pytest.mark.integration
 
@@ -44,9 +45,9 @@ def settings(store: Any, storage_config: dict[str, Any], scratch_dir: Path, db: 
 
 
 @pytest.fixture
-def operator_headers() -> dict[str, str]:
-    token = base64.b64encode(f"{OPERATOR[0]}:{OPERATOR[1]}".encode()).decode()
-    return {"Authorization": f"Basic {token}"}
+async def operator_headers(client: httpx.AsyncClient) -> dict[str, str]:
+    """A session of the legacy Admin: keys are minted from a signed-in browser."""
+    return await session_headers(client, *OPERATOR)
 
 
 @pytest.fixture

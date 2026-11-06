@@ -21,6 +21,7 @@ from copycast.domain.enums import KeyScope
 
 SCOPE_CLAIM = "copycast_scope"
 KEY_ID_CLAIM = "copycast_key_id"
+OWNER_CLAIM = "copycast_owner"
 
 
 class ApiKeyVerifier(TokenVerifier):
@@ -31,14 +32,19 @@ class ApiKeyVerifier(TokenVerifier):
         self._container = container
 
     async def verify_token(self, token: str) -> AccessToken | None:
+        """The key's token, or None for an unknown key or one whose owner is not configured."""
         key = await self._container.services.authenticate_api_key(token)
-        if key is None:
+        if key is None or not self._container.users.is_configured(key.owner):
             return None
         return AccessToken(
             token=token,
             client_id=key.name,
             scopes=scopes_granted(key.scope),
-            claims={SCOPE_CLAIM: key.scope.value, KEY_ID_CLAIM: str(key.id)},
+            claims={
+                SCOPE_CLAIM: key.scope.value,
+                KEY_ID_CLAIM: str(key.id),
+                OWNER_CLAIM: key.owner,
+            },
         )
 
 
@@ -65,4 +71,11 @@ def check_scope(required: KeyScope, tool: str) -> None:
     )
 
 
-__all__ = ["KEY_ID_CLAIM", "SCOPE_CLAIM", "ApiKeyVerifier", "check_scope", "current_scope"]
+__all__ = [
+    "KEY_ID_CLAIM",
+    "OWNER_CLAIM",
+    "SCOPE_CLAIM",
+    "ApiKeyVerifier",
+    "check_scope",
+    "current_scope",
+]

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request, Response
 
-from copycast.adapters.api.deps import RebuildGuard, ServicesDep
+from copycast.adapters.api.deps import RebuildGuard, ServicesDep, SystemServicesDep
 from copycast.adapters.api.problems import problem_responses
 from copycast.application.models import (
     BucketRead,
@@ -92,7 +92,7 @@ async def add_uploads(services: ServicesDep, bucket_id: str, body: UploadsAdd) -
     summary="The bytes of a staged upload (the URL is the credential)",
 )
 async def put_upload(
-    services: ServicesDep, request: Request, upload_id: str, token: str
+    services: SystemServicesDep, request: Request, upload_id: str, token: str
 ) -> UploadRead:
     return await services.put_upload(upload_id, token, request.stream())
 

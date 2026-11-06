@@ -2,15 +2,21 @@
 
 Outside ``/api``: signing in needs no session, and signing out answers 204 whether
 or not a session came with the request. The session token travels in the cookie
-only, never in a body.
+only, never in a body. Both run as SYSTEM: the password (or the cookie) is their
+credential, not a Principal.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Request, Response
 
-from copycast.adapters.api.deps import ServicesDep
+from copycast.adapters.api.deps import ContainerDep, SystemServicesDep
 from copycast.adapters.api.problems import problem_responses, slug_responses
+from copycast.adapters.api.session_cookie import (
+    clear_session_cookie,
+    read_session_token,
+    set_session_cookie,
+)
 from copycast.application.models import LoginRequest
 
 router = APIRouter(tags=["users"])
@@ -29,8 +35,19 @@ router = APIRouter(tags=["users"])
     },
     summary="Sign in with a username, password and TOTP code; sets the session cookie",
 )
-async def login(request: Request, services: ServicesDep, body: LoginRequest) -> Response:
-    raise NotImplementedError("POST /auth/login arrives with the 3.0 foundation")
+async def login(
+    request: Request, container: ContainerDep, services: SystemServicesDep, body: LoginRequest
+) -> Response:
+    settings = container.settings
+    issued = await services.login(
+        body,
+        user_agent=request.headers.get("user-agent"),
+        scheme=request.url.scheme,
+        presented_token=read_session_token(request.headers, settings),
+    )
+    response = Response(status_code=204, headers={"Cache-Control": "no-store"})
+    set_session_cookie(response, issued, settings)
+    return response
 
 
 @router.post(
@@ -40,8 +57,14 @@ async def login(request: Request, services: ServicesDep, body: LoginRequest) -> 
     status_code=204,
     summary="Sign out: ends the session the cookie names, if any, and clears the cookie",
 )
-async def logout(request: Request, services: ServicesDep) -> Response:
-    raise NotImplementedError("POST /auth/logout arrives with the 3.0 foundation")
+async def logout(
+    request: Request, container: ContainerDep, services: SystemServicesDep
+) -> Response:
+    settings = container.settings
+    await services.logout(read_session_token(request.headers, settings))
+    response = Response(status_code=204, headers={"Cache-Control": "no-store"})
+    clear_session_cookie(response, settings)
+    return response
 
 
 __all__ = ["router"]

@@ -27,6 +27,7 @@ from tests.conftest import TEST_ALLOW_PRIVATE_HOSTS, TEST_BASE_URL
 from tests.integration.api.conftest import Source, archived_items, create_mirror
 from tests.support.fake_engine import FakeEngine
 from tests.support.paths import FEED_URL
+from tests.support.users import session_headers
 
 pytestmark = pytest.mark.integration
 
@@ -68,10 +69,11 @@ def operator(settings: Settings) -> dict[str, str]:
 async def archived_with_art(
     client: httpx.AsyncClient, source: Source, runner: Runner, settings: Settings, name: str
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    client.headers.update(operator(settings))
+    if settings.auth.enabled:  # /api takes a session; the operator pair opens the feeds
+        client.headers.update(await session_headers(client, *OPERATOR))
     mirror = await create_mirror(client, source.write_rss(name, items=[1], assets=True))
     (item,) = await archived_items(client, runner, mirror["id"])
-    client.headers.pop("Authorization", None)
+    client.headers.pop("Cookie", None)
     return mirror, item
 
 

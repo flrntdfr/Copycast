@@ -2,7 +2,8 @@
 
 Building the app touches neither the database nor the data directory
 (``copycast openapi`` needs that); the lifespan runs the startup sequence:
-layout version, schema (``COPYCAST_AUTO_MIGRATE``), default Bucket, EventHub,
+layout version, schema (``COPYCAST_AUTO_MIGRATE``), the configured Users (``sync_users``),
+each User's default Local feed, EventHub,
 the per-process probe cache and the FastMCP session manager, and undoes it on
 shutdown. :func:`preflight` is the part ``copycast api`` runs before uvicorn
 so a bad layout or schema exits 2 with one actionable line.
@@ -23,9 +24,10 @@ from starlette.middleware.gzip import GZipMiddleware
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from copycast.adapters.api.auth import ROBOTS_PATH, OperatorAuthMiddleware
+from copycast.adapters.api.auth import ROBOTS_PATH
 from copycast.adapters.api.cache import FeedCache, SharedFeedCache
 from copycast.adapters.api.container import ApiContainer
+from copycast.adapters.api.deps import KeyGuard
 from copycast.adapters.api.events import EventHub, psycopg_conninfo
 from copycast.adapters.api.health import create_health_router
 from copycast.adapters.api.middleware import (
@@ -34,6 +36,7 @@ from copycast.adapters.api.middleware import (
     NoStoreJsonMiddleware,
     RequestContextMiddleware,
 )
+from copycast.adapters.api.principal import PrincipalMiddleware
 from copycast.adapters.api.problems import install_exception_handlers, relabel_problem_content
 from copycast.adapters.api.routes import auth as auth_routes
 from copycast.adapters.api.routes import create_api_router
@@ -160,7 +163,10 @@ def _lifespan(settings: Settings, container: ApiContainer, mcp_app: Any) -> Any:
         except SettingsError as exc:
             log.error("api.startup_failed", error=str(exc))
             raise
-        await container.services.ensure_default_bucket()
+        # The configured Users' rows (and signed-out sessions) before anything they own.
+        await container.services.sync_users()
+        for owner in container.users.usernames():
+            await container.services.ensure_default_bucket(owner)
         # The artwork tokens' key, read (or minted) once: /art/ never waits on Postgres for it.
         app.state.feed_cache.set_namespace(await container.artwork_secret())
         _ = container.sources.cache  # the per-process probe cache
@@ -211,7 +217,7 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
 
     install_exception_handlers(app)
     # Innermost: runs right before routing, inside the request-id and gzip layers.
-    app.add_middleware(OperatorAuthMiddleware, auth=settings.auth)
+    app.add_middleware(PrincipalMiddleware, container=container)
     # Ahead of authentication and every route, whether auth is on or off.
     app.add_middleware(
         CrossSiteGuardMiddleware,
@@ -229,7 +235,7 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
     # Outermost: one http.request line per request, after every other layer has answered.
     app.add_middleware(AccessLogMiddleware)
 
-    app.include_router(create_api_router(), prefix=API_PREFIX)
+    app.include_router(create_api_router(), prefix=API_PREFIX, dependencies=[KeyGuard])
     app.include_router(auth_routes.router, prefix=AUTH_PREFIX)
     app.include_router(public_routes.open_router, prefix=FEEDS_PREFIX)
     app.include_router(public_routes.router, prefix=FEEDS_PREFIX)

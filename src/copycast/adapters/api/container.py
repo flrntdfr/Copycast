@@ -13,7 +13,9 @@ from typing import Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from copycast.application.services import Services
+from copycast.application.users import UserDirectory
 from copycast.domain.enums import FeedKind
+from copycast.domain.users import Principal
 from copycast.settings import Settings
 
 
@@ -62,6 +64,9 @@ class ApiContainer(Protocol):
     def settings(self) -> Settings: ...
     @property
     def services(self) -> Services: ...
+    @property
+    def users(self) -> UserDirectory: ...
+    def services_for(self, principal: Principal) -> Services: ...
     @property
     def uow_factory(self) -> Any: ...
     @property
