@@ -26,6 +26,12 @@ WWW_AUTHENTICATE = f'Basic realm="{BASIC_REALM}", charset="UTF-8"'
 
 TITLES: dict[str, str] = {
     "unauthorized": "Authentication required",
+    "login-failed": "Sign-in failed",
+    "login-locked": "Too many attempts",
+    "login-busy": "Busy",
+    "https-required": "HTTPS required",
+    "forbidden": "Forbidden",
+    "over-quota": "Over quota",
     "cross-site-request": "Cross-site request refused",
     "unknown-host": "Unknown host name",
     "not-found": "Not found",
@@ -164,6 +170,13 @@ def problem_responses(*statuses: int) -> dict[int | str, dict[str, Any]]:
     }
 
 
+def slug_responses(slugs: dict[int, str]) -> dict[int | str, dict[str, Any]]:
+    """OpenAPI ``responses`` entries for statuses whose problem type is not the usual one."""
+    return {
+        status: {"model": Problem, "description": TITLES[slug]} for status, slug in slugs.items()
+    }
+
+
 def _is_problem_schema(schema: object) -> bool:
     if not isinstance(schema, dict):
         return False
@@ -208,4 +221,5 @@ __all__ = [
     "problem_responses",
     "problem_type",
     "relabel_problem_content",
+    "slug_responses",
 ]

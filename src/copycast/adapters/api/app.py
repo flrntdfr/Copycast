@@ -35,6 +35,7 @@ from copycast.adapters.api.middleware import (
     RequestContextMiddleware,
 )
 from copycast.adapters.api.problems import install_exception_handlers, relabel_problem_content
+from copycast.adapters.api.routes import auth as auth_routes
 from copycast.adapters.api.routes import create_api_router
 from copycast.adapters.api.routes import public as public_routes
 from copycast.adapters.api.routes import uploads as upload_routes
@@ -48,6 +49,7 @@ from copycast.settings import Settings, SettingsError
 from copycast.version import APP_VERSION
 
 API_PREFIX = "/api"
+AUTH_PREFIX = "/auth"
 FEEDS_PREFIX = "/feeds"
 ART_PREFIX = ART_PATH_PREFIX
 UPLOADS_PREFIX = "/uploads"
@@ -228,6 +230,7 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
     app.add_middleware(AccessLogMiddleware)
 
     app.include_router(create_api_router(), prefix=API_PREFIX)
+    app.include_router(auth_routes.router, prefix=AUTH_PREFIX)
     app.include_router(public_routes.open_router, prefix=FEEDS_PREFIX)
     app.include_router(public_routes.router, prefix=FEEDS_PREFIX)
     app.include_router(public_routes.art_router, prefix=ART_PREFIX)
@@ -258,6 +261,7 @@ def create_app(settings: Settings, container: ApiContainer) -> FastAPI:
 __all__ = [
     "API_PREFIX",
     "ART_PREFIX",
+    "AUTH_PREFIX",
     "FEEDS_PREFIX",
     "GZIP_EXCLUDED_TYPES",
     "HEALTH_PREFIX",
