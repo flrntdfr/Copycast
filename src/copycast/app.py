@@ -118,6 +118,7 @@ class SourceGatewayAdapter:
             cache=self.cache,
             cancel=cancel,
             cookie_jar=self._jar(owner),
+            owner=owner,
         )
         snapshots: list[SourceSnapshot] = []
         for candidate in result.candidates:

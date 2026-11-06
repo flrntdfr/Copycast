@@ -150,10 +150,13 @@ def probe(
     log: EngineLog | None = None,
     verify_limit: int = MAX_VERIFIED_LINKS,
     cookie_jar: str | None = None,
+    owner: str | None = None,
 ) -> ProbeResult:
     """Resolve ``url`` to candidates; raises :class:`Unsupported` when nothing fits.
 
-    ``cookie_jar`` is the Object store key of the jar the Engine's listings carry.
+    ``cookie_jar`` is the Object store key of the jar the Engine's listings carry;
+    ``owner`` is the User the probe runs for (whose cookies it used), so the entries it
+    puts in ``cache`` can be kept per owner. Passed through untouched for now.
     """
     input_url = url.strip()
     if not input_url:
