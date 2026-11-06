@@ -82,18 +82,24 @@ WATCH_LATER_URL = "https://www.youtube.com/playlist?list=WL"
 
 @capability("list_youtube_playlists", response=YouTubePlaylistList)
 async def list_youtube_playlists(ctx: ServiceContext) -> YouTubePlaylistList:
-    """The signed-in account's playlists (Watch Later first), with the Mirror capturing each.
+    """The signed-in account's playlists (Watch Later first), with the caller's own Mirror
+    capturing each.
 
     Needs the cookie file: without it YouTube shows no account, and the engine's
     error is reported as-is.
     """
-    playlists = await asyncio.to_thread(ctx.sources.list_playlists, owner=acting_owner(ctx))
+    owner = acting_owner(ctx)
+    playlists = await asyncio.to_thread(ctx.sources.list_playlists, owner=owner)
     async with ctx.uow_factory() as uow:
         mirrors = await uow.feeds.list(FeedKind.mirror)
+    # Only the caller's own Captures: an Admin sees every Feed, but another User's Mirror
+    # of the same playlist is theirs, not this account's.
     by_list_id = {
         playlist_id: feed.id
         for feed in mirrors
-        if feed.source_url and (playlist_id := youtube_playlist_id(feed.source_url))
+        if feed.owner == owner
+        and feed.source_url
+        and (playlist_id := youtube_playlist_id(feed.source_url))
     }
     marked = [
         playlist.model_copy(update={"captured_feed_id": by_list_id.get(playlist.id)})

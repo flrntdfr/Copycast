@@ -4,9 +4,16 @@ The worker (and the api itself, through ``UnitOfWork.publish``) runs
 ``NOTIFY copycast_events`` after commit; the hub parses each payload with
 ``application.events.parse``, stamps a per-process sequence id, keeps the last
 ``buffer_size`` events for ``Last-Event-ID`` replay and pushes the event into
-every subscriber's bounded queue. A subscriber that cannot keep up is closed:
-the client reconnects and replays from its last id. When the LISTEN
-connection drops the hub reconnects with backoff and emits ``resync``.
+the bounded queue of every subscriber allowed to see it. A subscriber that cannot
+keep up is closed: the client reconnects and replays from its last id. When the
+LISTEN connection drops the hub reconnects with backoff and emits ``resync``.
+
+A payload names its Owner before a newline (``"{owner}\n{json}"``; a bare JSON
+payload has none). A subscription delivers an event to its Principal when the
+event is a ``resync`` (it carries no data and every UI must refetch), when the
+Principal is an Admin or SYSTEM, or when the event's Owner is the Principal; an
+owner-less event other than ``resync`` (a SYSTEM job without a Feed) reaches Admins
+only.
 """
 
 from __future__ import annotations
@@ -52,12 +59,31 @@ def event_feed_id(event: BaseModel) -> str | None:
     return feed_id if isinstance(feed_id, str) else None
 
 
+def split_payload(payload: str) -> tuple[str | None, str]:
+    """``(owner, json)`` of a NOTIFY payload; the owner is None for an owner-less event."""
+    owner, separator, body = payload.partition("\n")
+    if not separator:
+        return None, payload
+    return owner or None, body
+
+
 @dataclass(frozen=True, slots=True)
 class Envelope:
-    """One event with its per-process sequence id."""
+    """One event with its per-process sequence id and its Owner (None: owner-less)."""
 
     id: int
     event: BaseModel
+    owner: str | None = None
+
+    @property
+    def is_resync(self) -> bool:
+        return isinstance(self.event, ResyncEvent)
+
+    def visible_to(self, principal: Principal) -> bool:
+        """Whether ``principal`` may receive this event (see the module docstring)."""
+        if self.is_resync or principal.admin or principal.is_system:
+            return True
+        return self.owner is not None and self.owner == principal.username
 
     @property
     def name(self) -> str:
@@ -68,15 +94,25 @@ class Envelope:
 class Subscription:
     """A bounded queue of envelopes; ``None`` marks the end of the stream."""
 
-    def __init__(self, hub: EventHub, *, feed_id: str | None, queue_size: int) -> None:
+    def __init__(
+        self,
+        hub: EventHub,
+        *,
+        principal: Principal = Principal.SYSTEM,
+        feed_id: str | None,
+        queue_size: int,
+    ) -> None:
         self._hub = hub
+        self.principal = principal
         self.feed_id = feed_id
         self._queue: asyncio.Queue[Envelope | None] = asyncio.Queue(maxsize=queue_size)
         self.closed = False
         self.dropped = 0
 
     def wants(self, envelope: Envelope) -> bool:
-        if self.feed_id is None or envelope.name == "resync":
+        if not envelope.visible_to(self.principal):
+            return False
+        if self.feed_id is None or envelope.is_resync:
             return True
         return event_feed_id(envelope.event) == self.feed_id
 
@@ -180,9 +216,10 @@ class EventHub:
     def last_id(self) -> int:
         return self._next_id - 1
 
-    def publish(self, event: BaseModel) -> Envelope:
-        """Stamp, buffer and fan out one event (also used for locally raised ``resync``)."""
-        envelope = Envelope(id=self._next_id, event=event)
+    def publish(self, event: BaseModel, *, owner: str | None = None) -> Envelope:
+        """Stamp, buffer and fan out one event of ``owner`` (also used for locally raised
+        ``resync``, which has none)."""
+        envelope = Envelope(id=self._next_id, event=event, owner=owner)
         self._next_id += 1
         self._buffer.append(envelope)
         for subscriber in list(self._subscribers):
@@ -190,12 +227,13 @@ class EventHub:
         return envelope
 
     def _handle_payload(self, payload: str) -> None:
+        owner, body = split_payload(payload)
         try:
-            event = parse(payload)
+            event = parse(body)
         except InvalidEvent as exc:
             log.warning("events.invalid_payload", error=str(exc))
             return
-        self.publish(event)
+        self.publish(event, owner=owner)
 
     # ------------------------------------------------------------------ subscribing
 
@@ -210,11 +248,12 @@ class EventHub:
         ``last_event_id``.
 
         A ``last_event_id`` older than the buffer (or unknown after a restart)
-        first yields a ``resync`` so the client refetches everything. Every
-        subscriber gets every event for now, whoever its Principal is.
+        first yields a ``resync`` so the client refetches everything. Only the
+        events ``principal`` may see are delivered, replayed ones included.
         """
-        del principal
-        subscription = Subscription(self, feed_id=feed_id, queue_size=self._queue_size)
+        subscription = Subscription(
+            self, principal=principal, feed_id=feed_id, queue_size=self._queue_size
+        )
         if last_event_id is not None:
             oldest = self._buffer[0].id if self._buffer else self._next_id
             if last_event_id + 1 < oldest or last_event_id >= self._next_id:
@@ -275,4 +314,5 @@ __all__ = [
     "Subscription",
     "event_feed_id",
     "psycopg_conninfo",
+    "split_payload",
 ]

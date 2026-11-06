@@ -90,10 +90,12 @@ async def test_scheduled_deletions_and_engine_options_need_a_full_key(
     )
     renamed = await users_client.patch(patch_path, json={"title": "Mine"}, headers=write)
     assert renamed.status_code == 200 and renamed.json()["title"] == "Mine"
-    tuned_ok = await users_client.patch(
+    # A full key passes the scope fence; engine_options stay an Admin's (alice is a Member).
+    tuned_member = await users_client.patch(
         patch_path, json={"engine_options": {"ratelimit": 5}}, headers=full
     )
-    assert tuned_ok.status_code == 200 and tuned_ok.json()["engine_options"] == {"ratelimit": 5}
+    assert tuned_member.status_code == 403
+    assert problem(tuned_member)["detail"] == "update_mirror (engine_options) needs an Admin"
     rolled = await users_client.patch(
         patch_path, json={"backfill": {"mode": "rolling", "latest_n": 2}}, headers=full
     )

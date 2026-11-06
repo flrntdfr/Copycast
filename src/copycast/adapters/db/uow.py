@@ -9,15 +9,17 @@ counters and schedules the descriptor export as such a hook.
 from __future__ import annotations
 
 import inspect
+import uuid
 from collections.abc import Awaitable, Callable
 from types import TracebackType
 from typing import Any, Self
 
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from copycast.adapters.db.models import Feed, Job
 from copycast.adapters.db.repositories import (
     ApiKeyRepository,
     AssetRepository,
@@ -52,6 +54,14 @@ log = get_logger(__name__)
 RETRYABLE_SQLSTATES: frozenset[str] = frozenset({"40001", "40P01"})
 
 
+def _event_feed_id(event: BaseModel) -> str | None:
+    """The Feed an event concerns (``None`` for ``resync`` and feed-less jobs)."""
+    job = getattr(event, "job", None)
+    source = job if job is not None else event
+    feed_id = getattr(source, "feed_id", None)
+    return feed_id if isinstance(feed_id, str) else None
+
+
 def is_retryable(exc: BaseException) -> bool:
     """True when ``exc`` is a driver error carrying a retryable SQLSTATE."""
     orig = getattr(exc, "orig", None) if isinstance(exc, DBAPIError) else exc
@@ -78,6 +88,7 @@ class UnitOfWork:
         self._exports: dict[str, bool] = {}
         self._committed = False
         self._closed = False
+        self._feed_owners: dict[str, str | None] = {}
         self.feeds = FeedRepository(session, scope)
         self.catalog = CatalogRepository(session, scope)
         self.assets = AssetRepository(session)
@@ -121,14 +132,35 @@ class UnitOfWork:
     ) -> None:
         """``NOTIFY copycast_events`` inside this transaction: delivered only on commit.
 
-        ``owner`` will route the event to its Owner's subscribers; every subscriber
-        gets every event until then.
+        The payload carries the event's Owner (``"{owner}\n{json}"``) so the api hands
+        it only to that Owner's (and Admins') subscribers. ``owner`` defaults to a lookup:
+        the Owner of the event's Feed, else the requester of a feed-less job; ``None``
+        marks an owner-less event. A caller that publishes after deleting the Feed passes
+        the Owner it read before.
         """
-        del owner
+        resolved = await self._event_owner(event) if owner is LOOKUP else owner
         await self.session.execute(
             text("SELECT pg_notify(:channel, :payload)"),
-            {"channel": CHANNEL, "payload": serialize(event)},
+            {"channel": CHANNEL, "payload": serialize(event, owner=resolved or "")},
         )
+
+    async def _event_owner(self, event: BaseModel) -> str | None:
+        """Who ``event`` belongs to: its Feed's Owner, or a feed-less job's requester."""
+        feed_id = _event_feed_id(event)
+        if feed_id is not None:
+            if feed_id not in self._feed_owners:
+                result = await self.session.execute(select(Feed.owner).where(Feed.id == feed_id))
+                self._feed_owners[feed_id] = result.scalar_one_or_none()
+            return self._feed_owners[feed_id]
+        job = getattr(event, "job", None)
+        if job is not None:
+            requested_by = getattr(job, "requested_by", None)
+            return requested_by if isinstance(requested_by, str) else None
+        job_id = getattr(event, "job_id", None)
+        if isinstance(job_id, uuid.UUID):
+            result = await self.session.execute(select(Job.requested_by).where(Job.id == job_id))
+            return result.scalar_one_or_none()
+        return None
 
     async def notify_jobs(self, payload: str = "") -> None:
         """Wake the worker's claim loop (``NOTIFY copycast_jobs``) once this commits."""

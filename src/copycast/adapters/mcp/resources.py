@@ -9,6 +9,7 @@ from fastmcp.exceptions import ResourceError
 
 from copycast.adapters.mcp.auth import check_scope, current_principal
 from copycast.adapters.mcp.container import ServicesProvider
+from copycast.application.capabilities import ACCESS
 from copycast.application.services import Services
 from copycast.domain.enums import KeyScope
 from copycast.domain.exceptions import DomainError
@@ -42,9 +43,20 @@ def register_resources(mcp: FastMCP[Any], container: ServicesProvider) -> None:
             raise ResourceError(f"{exc} [{exc.slug}]") from exc
         return found.model_dump_json()
 
-    mcp.resource("copycast://about", name="about", mime_type=JSON)(about)
-    mcp.resource("copycast://feeds", name="feeds", mime_type=JSON)(feeds)
-    mcp.resource("copycast://feeds/{feed_id}", name="feed", mime_type=JSON)(feed)
+    mcp.resource("copycast://about", name="about", mime_type=JSON, meta=_meta("about"))(about)
+    mcp.resource("copycast://feeds", name="feeds", mime_type=JSON, meta=_meta("list_feeds"))(feeds)
+    mcp.resource("copycast://feeds/{feed_id}", name="feed", mime_type=JSON, meta=_meta("get_feed"))(
+        feed
+    )
+
+
+def _meta(capability: str) -> dict[str, str]:
+    """A resource's capability, the key scope it needs (``read``) and its ``Access``."""
+    return {
+        "capability": capability,
+        "scope": KeyScope.read.value,
+        "access": ACCESS[capability].value,
+    }
 
 
 __all__ = ["register_resources"]

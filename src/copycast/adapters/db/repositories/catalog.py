@@ -70,14 +70,33 @@ class ListingUpsert:
 
 
 class CatalogRepository:
+    """Catalog items; the lookups by item id (``get``, ``require``, ``get_many``) and
+    ``for_feed`` show only items of Feeds the scope may see (``scope.visible_owner``).
+
+    The other reads take a ``feed_id`` the caller has already required through the
+    scoped :class:`FeedRepository`.
+    """
+
     def __init__(self, session: AsyncSession, scope: Scope = Scope.SYSTEM) -> None:
         self._session = session
         self._scope = scope
 
+    def _visible[T: tuple[Any, ...]](self, stmt: Select[T]) -> Select[T]:
+        """``stmt`` (over ``catalog_items``) restricted to the Feeds this scope may see."""
+        owner = self._scope.visible_owner
+        if owner is None:
+            return stmt
+        return stmt.join(Feed, Feed.id == CatalogItem.feed_id).where(Feed.owner == owner)
+
     # ------------------------------------------------------------------ reads
 
     async def get(self, item_id: str) -> CatalogItem | None:
-        return await self._session.get(CatalogItem, item_id)
+        if self._scope.visible_owner is None:
+            return await self._session.get(CatalogItem, item_id)
+        result = await self._session.execute(
+            self._visible(select(CatalogItem).where(CatalogItem.id == item_id))
+        )
+        return result.scalar_one_or_none()
 
     async def require(self, item_id: str, feed_id: str | None = None) -> CatalogItem:
         item = await self.get(item_id)
@@ -90,7 +109,9 @@ class CatalogRepository:
         if not ids:
             return []
         result = await self._session.execute(
-            select(CatalogItem).where(CatalogItem.id.in_(ids)).order_by(CatalogItem.ordinal)
+            self._visible(select(CatalogItem).where(CatalogItem.id.in_(ids))).order_by(
+                CatalogItem.ordinal
+            )
         )
         return list(result.scalars())
 
@@ -104,7 +125,9 @@ class CatalogRepository:
 
     async def for_feed(self, feed_id: str) -> list[CatalogItem]:
         result = await self._session.execute(
-            select(CatalogItem).where(CatalogItem.feed_id == feed_id).order_by(CatalogItem.ordinal)
+            self._visible(select(CatalogItem).where(CatalogItem.feed_id == feed_id)).order_by(
+                CatalogItem.ordinal
+            )
         )
         return list(result.scalars())
 
