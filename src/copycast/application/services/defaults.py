@@ -15,14 +15,21 @@ from pydantic import ValidationError
 from copycast.application.capabilities import capability
 from copycast.application.models import MirrorDefaults
 from copycast.application.services.context import LayoutPort, ServiceContext
+from copycast.application.services.owners import acting_owner
 from copycast.logging import get_logger
 
 log = get_logger(__name__)
 
 
-def load_defaults(layout: LayoutPort) -> MirrorDefaults:
-    """The stored defaults, or the built-in ones when the object is absent or unreadable."""
-    key = layout.defaults_key()
+def defaults_key(layout: LayoutPort, owner: str) -> str:
+    """Where ``owner``'s Defaults live; every User shares ``engine/defaults.json`` for now."""
+    del owner
+    return layout.defaults_key()
+
+
+def load_defaults(layout: LayoutPort, owner: str) -> MirrorDefaults:
+    """``owner``'s stored Defaults, or the built-in ones when absent or unreadable."""
+    key = defaults_key(layout, owner)
     try:
         data: Any = layout.read_json(key)
     except OSError:
@@ -36,9 +43,9 @@ def load_defaults(layout: LayoutPort) -> MirrorDefaults:
         return MirrorDefaults()
 
 
-def store_defaults(layout: LayoutPort, defaults: MirrorDefaults) -> None:
+def store_defaults(layout: LayoutPort, owner: str, defaults: MirrorDefaults) -> None:
     layout.store.put_bytes(
-        layout.defaults_key(),
+        defaults_key(layout, owner),
         defaults.model_dump_json(indent=2) + "\n",
         content_type="application/json",
     )
@@ -67,13 +74,13 @@ def effective(
 @capability("get_mirror_defaults", response=MirrorDefaults)
 async def get_mirror_defaults(ctx: ServiceContext) -> MirrorDefaults:
     """The operator defaults applied wherever a Mirror leaves a value null."""
-    return await asyncio.to_thread(load_defaults, ctx.layout)
+    return await asyncio.to_thread(load_defaults, ctx.layout, acting_owner(ctx))
 
 
 @capability("set_mirror_defaults", request=MirrorDefaults, response=MirrorDefaults)
 async def set_mirror_defaults(ctx: ServiceContext, body: MirrorDefaults) -> MirrorDefaults:
     """Replace the operator defaults; Mirrors with their own value are unaffected."""
-    await asyncio.to_thread(store_defaults, ctx.layout, body)
+    await asyncio.to_thread(store_defaults, ctx.layout, acting_owner(ctx), body)
     log.info(
         "defaults.stored",
         language=body.language,
@@ -85,6 +92,7 @@ async def set_mirror_defaults(ctx: ServiceContext, body: MirrorDefaults) -> Mirr
 
 
 __all__ = [
+    "defaults_key",
     "effective",
     "get_mirror_defaults",
     "load_defaults",

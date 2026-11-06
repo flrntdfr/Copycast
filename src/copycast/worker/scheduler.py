@@ -83,9 +83,17 @@ class Scheduler:
     # ------------------------------------------------------------------ steps
 
     async def _due_refreshes(self, now: datetime) -> int:
-        """Mirrors whose last Refresh attempt is older than their interval (own, else default)."""
-        default_hours = load_defaults(self._container.layout).refresh_interval_hours
+        """Mirrors whose last Refresh attempt is older than their interval (own, else their
+        Owner's default, read once per Owner and tick)."""
+        layout = self._container.layout
         configured = self._container.users.usernames()
+        default_hours: dict[str, int] = {}
+
+        def interval_of(owner: str) -> int:
+            if owner not in default_hours:
+                default_hours[owner] = load_defaults(layout, owner).refresh_interval_hours
+            return default_hours[owner]
+
         async with uow_of(self._container.uow_factory()) as uow:
             due = [
                 feed.id
@@ -94,7 +102,7 @@ class Scheduler:
                 )
                 if feed.last_refresh_attempt_at is None
                 or now - feed.last_refresh_attempt_at
-                >= timedelta(hours=feed.refresh_interval_hours or default_hours)
+                >= timedelta(hours=feed.refresh_interval_hours or interval_of(feed.owner))
             ]
         count = 0
         for feed_id in due:

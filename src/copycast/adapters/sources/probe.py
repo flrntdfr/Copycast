@@ -149,8 +149,12 @@ def probe(
     cancel: CancelToken | None = None,
     log: EngineLog | None = None,
     verify_limit: int = MAX_VERIFIED_LINKS,
+    cookie_jar: str | None = None,
 ) -> ProbeResult:
-    """Resolve ``url`` to candidates; raises :class:`Unsupported` when nothing fits."""
+    """Resolve ``url`` to candidates; raises :class:`Unsupported` when nothing fits.
+
+    ``cookie_jar`` is the Object store key of the jar the Engine's listings carry.
+    """
     input_url = url.strip()
     if not input_url:
         raise Unsupported("paste a feed, page or Source URL")
@@ -169,7 +173,9 @@ def probe(
             raise Unsupported(f"{input_url} could not be resolved to a feed ({detail})")
     elif any(youtube_host(u) for u in urls):
         target = normalize_youtube_channel(urls[0])
-        entries = _ytdlp_entries([target], engine, engine_options, token, engine_log, failures)
+        entries = _ytdlp_entries(
+            [target], engine, engine_options, token, engine_log, failures, cookie_jar=cookie_jar
+        )
     else:
         fetched_any = False
         for candidate_url in urls:
@@ -213,7 +219,9 @@ def probe(
             break
         if not entries:
             targets = urls if not fetched_any else urls[:1]
-            entries = _ytdlp_entries(targets, engine, engine_options, token, engine_log, failures)
+            entries = _ytdlp_entries(
+                targets, engine, engine_options, token, engine_log, failures, cookie_jar=cookie_jar
+            )
 
     if not entries:
         detail = "; ".join(dict.fromkeys(failures)) or "no candidates"
@@ -274,10 +282,12 @@ def _ytdlp_entries(
     cancel: CancelToken,
     log: EngineLog,
     failures: list[str],
+    *,
+    cookie_jar: str | None = None,
 ) -> list[ProbeEntry]:
     for candidate_url in urls:
         try:
-            listing = engine.list_source(candidate_url, options, cancel, log)
+            listing = engine.list_source(candidate_url, options, cancel, log, cookie_jar=cookie_jar)
         except EngineError as exc:
             failures.append(f"{candidate_url}: {exc}")
             continue

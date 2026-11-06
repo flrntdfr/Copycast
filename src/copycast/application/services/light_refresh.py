@@ -200,7 +200,7 @@ def _plan(ctx: ServiceContext, feed: FeedRow) -> _Plan:
     else:
         mode = "shallow"
     language = effective(
-        load_defaults(ctx.layout),
+        load_defaults(ctx.layout, feed.owner),
         language=feed.preferred_language,
         min_duration_seconds=feed.min_duration_seconds,
     ).language
@@ -281,7 +281,7 @@ async def _apply(
 ) -> tuple[LightRefreshResult, int]:
     """Apply what was listed in one transaction; returns the result and the jobs created."""
     feed_id = plan.feed_id
-    defaults = load_defaults(ctx.layout)
+    defaults = load_defaults(ctx.layout, plan.owner)
     async with ctx.uow_factory() as uow:
         feed = await uow.feeds.get_for_update(feed_id)
         rss = listed.rss

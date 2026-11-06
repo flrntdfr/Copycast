@@ -40,7 +40,7 @@ async def list_feeds(
     """Every Feed (optionally one kind) with its counts, health and public URL."""
     async with ctx.uow_factory() as uow:
         rows = await uow.feeds.list(kind, sort=sort, order=order)
-        return FeedList(feeds=await feed_reads(uow, ctx.urls, list(rows)))
+        return FeedList(feeds=await feed_reads(uow, ctx.urls, ctx.users, list(rows)))
 
 
 @capability("get_feed")
@@ -48,7 +48,7 @@ async def get_feed(ctx: ServiceContext, feed_id: str) -> FeedRead:
     """One Feed by id; 404 when unknown."""
     async with ctx.uow_factory() as uow:
         feed = await uow.feeds.require(feed_id)
-        return await one_feed_read(uow, ctx.urls, feed)
+        return await one_feed_read(uow, ctx.urls, ctx.users, feed)
 
 
 async def require_mirror(uow: UnitOfWorkPort, feed_id: str) -> FeedRow:
@@ -81,9 +81,12 @@ async def delete_feed(ctx: ServiceContext, feed_id: str) -> None:
             if feed.is_default:
                 raise Conflict("the default Bucket cannot be deleted; rename it instead")
             await uow.jobs.cancel_for_feed(feed_id)
-            revision = feed.revision
+            revision, owner = feed.revision, feed.owner
             await uow.feeds.delete(feed_id)
-            await uow.publish(FeedEvent(feed_id=feed_id, revision=revision, reason="deleted"))
+            # Published after the delete: the Owner cannot be looked up from the row any more.
+            await uow.publish(
+                FeedEvent(feed_id=feed_id, revision=revision, reason="deleted"), owner=owner
+            )
             layout = ctx.layout
 
             async def _remove_objects() -> None:
@@ -105,7 +108,7 @@ async def rotate_feed_credentials(ctx: ServiceContext, feed_id: str) -> FeedRead
         await uow.flush()
         await uow.update_intent(feed_id)
         await uow.publish(FeedEvent(feed_id=feed_id, revision=feed.revision, reason="updated"))
-        read = await one_feed_read(uow, ctx.urls, feed)
+        read = await one_feed_read(uow, ctx.urls, ctx.users, feed)
     log.info("feed.credentials_rotated", feed_id=feed_id)
     return read
 
@@ -125,7 +128,13 @@ async def ensure_default_bucket(ctx: ServiceContext, owner: str | None = None) -
             log.info("bucket.default_created", feed_id=feed.id)
         counts = await uow.catalog.count_by_state(feed.id)
         request_count = (await uow.requests.count_for_feeds([feed.id])).get(feed.id, 0)
-        return bucket_read(feed, ctx.urls, counts=counts, request_count=request_count)
+        return bucket_read(
+            feed,
+            ctx.urls,
+            counts=counts,
+            request_count=request_count,
+            owner_removed=not ctx.users.is_configured(feed.owner),
+        )
 
 
 @capability("resolve_bucket", response=BucketRead)
@@ -135,7 +144,13 @@ async def resolve_bucket(ctx: ServiceContext, ident: str) -> BucketRead:
         feed = await require_bucket(uow, ident)
         counts = await uow.catalog.count_by_state(feed.id)
         request_count = (await uow.requests.count_for_feeds([feed.id])).get(feed.id, 0)
-        return bucket_read(feed, ctx.urls, counts=counts, request_count=request_count)
+        return bucket_read(
+            feed,
+            ctx.urls,
+            counts=counts,
+            request_count=request_count,
+            owner_removed=not ctx.users.is_configured(feed.owner),
+        )
 
 
 __all__ = [

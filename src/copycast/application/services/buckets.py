@@ -27,6 +27,7 @@ from copycast.application.services.context import (
 )
 from copycast.application.services.feeds import require_bucket
 from copycast.application.services.items import PRIORITY_MANUAL, expand_dedup_key
+from copycast.application.services.keyscope import require_key_scope
 from copycast.application.services.owners import acting_owner
 from copycast.application.services.policy import delete_rows, expire_automatic
 from copycast.application.services.readmodels import bucket_read, job_read, request_read
@@ -35,6 +36,7 @@ from copycast.domain.enums import (
     FeedKind,
     JobKind,
     JobTrigger,
+    KeyScope,
     RequestedVia,
     RequestStatus,
 )
@@ -53,12 +55,23 @@ def _now() -> datetime:
 async def bucket_read_for(uow: UnitOfWorkPort, ctx: ServiceContext, feed: FeedRow) -> BucketRead:
     counts = await uow.catalog.count_by_state(feed.id)
     request_count = (await uow.requests.count_for_feeds([feed.id])).get(feed.id, 0)
-    return bucket_read(feed, ctx.urls, counts=counts, request_count=request_count)
+    return bucket_read(
+        feed,
+        ctx.urls,
+        counts=counts,
+        request_count=request_count,
+        owner_removed=not ctx.users.is_configured(feed.owner),
+    )
 
 
 @capability("create_bucket", request=BucketCreate, response=BucketRead)
 async def create_bucket(ctx: ServiceContext, body: BucketCreate) -> BucketRead:
-    """A new Bucket; its id is the slugged name plus a random suffix."""
+    """A new Bucket; its id is the slugged name plus a random suffix.
+
+    ``autoprune_days`` deletes on a schedule, so an API key needs scope ``full`` for it.
+    """
+    if body.autoprune_days is not None:
+        require_key_scope(ctx, KeyScope.full, "create_bucket (autoprune_days)")
     async with ctx.uow_factory() as uow:
         feed = await uow.feeds.add(
             ctx.rows.feed(
@@ -81,7 +94,12 @@ async def create_bucket(ctx: ServiceContext, body: BucketCreate) -> BucketRead:
 
 @capability("update_bucket", request=BucketUpdate, response=BucketRead)
 async def update_bucket(ctx: ServiceContext, bucket: str, body: BucketUpdate) -> BucketRead:
-    """Rename a Bucket or change its Retention (``autoprune_days: null`` switches it off)."""
+    """Rename a Bucket or change its Retention (``autoprune_days: null`` switches it off).
+
+    Setting ``autoprune_days`` deletes on a schedule: an API key needs scope ``full``.
+    """
+    if body.autoprune_days is not None:
+        require_key_scope(ctx, KeyScope.full, "update_bucket (autoprune_days)")
     async with ctx.uow_factory() as uow:
         feed = await require_bucket(uow, bucket)
         if body.name is not None:

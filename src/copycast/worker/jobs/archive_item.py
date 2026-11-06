@@ -53,6 +53,7 @@ from copycast.application.ports import (
 )
 from copycast.application.services.context import FeedRow
 from copycast.application.services.defaults import effective, load_defaults
+from copycast.application.services.engine import cookie_jar_key
 from copycast.application.services.policy import locks_on_archive
 from copycast.domain.chapters import podcast_chapters
 from copycast.domain.enums import (
@@ -103,6 +104,8 @@ class _Target:
     item_source_url: str | None
     stored_item_xml: str | None
     options: dict[str, Any]
+    owner: str
+    """The Feed's Owner: whose Cookie files the fetch carries."""
     description: str | None = None
 
 
@@ -473,6 +476,7 @@ async def _fetch_and_store(
             ctx.cancel,
             ctx.progress.on_progress,
             ctx.log,
+            cookie_jar=cookie_jar_key(layout, target.owner),
         )
     except EngineError as exc:
         failure = await _record_failure(ctx, target.feed_id, item_id, exc)
@@ -601,12 +605,13 @@ def _target(
         item_source_url=item_source_url,
         stored_item_xml=stored_item_xml,
         description=description,
+        owner=feed.owner,
         options=engine_options_for(
             ctx.container.settings,
             feed.engine_options,
             feed_id=feed.id,
             language=effective(
-                load_defaults(ctx.container.layout),
+                load_defaults(ctx.container.layout, feed.owner),
                 language=feed.preferred_language,
                 min_duration_seconds=feed.min_duration_seconds,
             ).language,

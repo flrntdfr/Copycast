@@ -22,7 +22,8 @@ from copycast.application.models import (
     EngineCookiesRead,
     EngineCookiesWrite,
 )
-from copycast.application.services.context import ObjectStorePort, ServiceContext
+from copycast.application.services.context import LayoutPort, ObjectStorePort, ServiceContext
+from copycast.application.services.owners import acting_owner
 from copycast.domain.cookies import (
     COOKIE_SERVICES,
     YOUTUBE_DOMAINS,
@@ -156,15 +157,25 @@ def _services(files: list[EngineCookieFileRead]) -> list[CookieServiceRead]:
     return rows
 
 
-def _store(ctx: ServiceContext) -> _Store:
+def cookie_jar_key(layout: LayoutPort, owner: str) -> str:
+    """The Object store key of the jar ``owner``'s Engine calls carry (``cookie_jar``).
+
+    Every User shares the one global jar for now.
+    """
+    del owner
+    return layout.cookies_key()
+
+
+def _store(ctx: ServiceContext, owner: str) -> _Store:
+    """``owner``'s jar and the Cookie files it is merged from (the global ones for now)."""
     layout = ctx.layout
-    return _Store(layout.store, layout.cookies_key(), layout.cookie_files_prefix())
+    return _Store(layout.store, cookie_jar_key(layout, owner), layout.cookie_files_prefix())
 
 
 @capability("get_engine_cookies", response=EngineCookiesRead)
 async def get_engine_cookies(ctx: ServiceContext) -> EngineCookiesRead:
     """The stored cookie files, which domains they cover and which services they unlock."""
-    return await asyncio.to_thread(_store(ctx).read)
+    return await asyncio.to_thread(_store(ctx, acting_owner(ctx)).read)
 
 
 @capability("set_engine_cookies", request=EngineCookiesWrite, response=EngineCookiesRead)
@@ -173,7 +184,7 @@ async def set_engine_cookies(ctx: ServiceContext, body: EngineCookiesWrite) -> E
     (422 when it is not one); every future fetch carries it."""
     summary = parse_cookies(body.content)
     name = cookie_file_name(body.name)
-    store = _store(ctx)
+    store = _store(ctx, acting_owner(ctx))
 
     def _add() -> EngineCookiesRead:
         files = store.synced()
@@ -191,7 +202,7 @@ async def set_engine_cookies(ctx: ServiceContext, body: EngineCookiesWrite) -> E
 @capability("delete_engine_cookies")
 async def delete_engine_cookies(ctx: ServiceContext, name: str | None = None) -> None:
     """Remove one stored cookie file, or every one without ``name``."""
-    store = _store(ctx)
+    store = _store(ctx, acting_owner(ctx))
 
     def _remove() -> None:
         files = store.synced()
@@ -203,4 +214,10 @@ async def delete_engine_cookies(ctx: ServiceContext, name: str | None = None) ->
     log.info("engine.cookies_removed", file=name)
 
 
-__all__ = ["COOKIES_MODE", "delete_engine_cookies", "get_engine_cookies", "set_engine_cookies"]
+__all__ = [
+    "COOKIES_MODE",
+    "cookie_jar_key",
+    "delete_engine_cookies",
+    "get_engine_cookies",
+    "set_engine_cookies",
+]

@@ -165,6 +165,7 @@ def _lifespan(settings: Settings, container: ApiContainer, mcp_app: Any) -> Any:
             raise
         # The configured Users' rows (and signed-out sessions) before anything they own.
         await container.services.sync_users()
+        await container.migrate_user_settings()
         for owner in container.users.usernames():
             await container.services.ensure_default_bucket(owner)
         # The artwork tokens' key, read (or minted) once: /art/ never waits on Postgres for it.

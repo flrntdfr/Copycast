@@ -30,6 +30,7 @@ from copycast.application.models import (
 )
 from copycast.application.ports import CancelToken, Engine
 from copycast.application.services.context import RssFetch, ServiceContext, SourceSnapshot
+from copycast.application.services.engine import cookie_jar_key
 from copycast.application.services.sources import WATCH_LATER_URL
 from copycast.application.users import UserDirectory
 from copycast.domain.credentials import feed_media_key, new_instance_secret
@@ -91,8 +92,8 @@ class SourceGatewayAdapter:
 
     One probe cache per process (the plan's "probe cache" of the api lifespan)
     so ``create_mirror`` reuses the listing a ``probe_source`` call produced.
-    ``owner`` names the User whose Cookie files an Engine call carries; until per-user
-    Cookie files exist every call carries the one global jar the Engine holds.
+    ``owner`` names the User whose Cookie files an Engine call carries
+    (``application.services.engine.cookie_jar_key``).
     """
 
     def __init__(self, settings: Settings, engine: Engine, layout: Any) -> None:
@@ -110,13 +111,24 @@ class SourceGatewayAdapter:
         self, url: str, *, options: Mapping[str, Any], cancel: CancelToken, owner: str
     ) -> list[SourceSnapshot]:
         probe = _load("copycast.adapters.sources.probe", "probe")
-        result = probe(url, engine=self._engine, options=options, cache=self.cache, cancel=cancel)
+        result = probe(
+            url,
+            engine=self._engine,
+            options=options,
+            cache=self.cache,
+            cancel=cancel,
+            cookie_jar=self._jar(owner),
+        )
         snapshots: list[SourceSnapshot] = []
         for candidate in result.candidates:
             entry = self.cache.get_by_token(candidate.candidate_token)
             if entry is not None:
                 snapshots.append(self._snapshot(entry))
         return snapshots
+
+    def _jar(self, owner: str) -> str:
+        """The Object store key of ``owner``'s cookie jar."""
+        return cookie_jar_key(self._layout, owner)
 
     def cached(self, *, token: str | None, url: str | None, owner: str) -> SourceSnapshot | None:
         entry = self.cache.get(token=token, url=url)
@@ -143,6 +155,7 @@ class SourceGatewayAdapter:
             self._settings.engine.options,
             CancelToken(),
             _SearchLog(),
+            cookie_jar=self._jar(owner),
         )
         results: list[VideoSearchResult] = []
         for item in listing.items:
@@ -163,7 +176,11 @@ class SourceGatewayAdapter:
     def list_playlists(self, *, owner: str) -> list[YouTubePlaylist]:
         """``youtube.com/feed/playlists`` listed by the engine: the account's playlists."""
         listing = self._engine.list_source(
-            PLAYLISTS_URL, self._settings.engine.options, CancelToken(), _SearchLog()
+            PLAYLISTS_URL,
+            self._settings.engine.options,
+            CancelToken(),
+            _SearchLog(),
+            cookie_jar=self._jar(owner),
         )
         playlists: list[YouTubePlaylist] = [
             YouTubePlaylist(id="WL", title="Watch Later", url=WATCH_LATER_URL)
@@ -201,7 +218,9 @@ class SourceGatewayAdapter:
         """
         engine_options_for = _load("copycast.adapters.engine.options", "engine_options_for")
         merged = engine_options_for(self._settings, options, feed_id=feed_id, language=language)
-        listing = self._engine.list_source(url, merged, CancelToken(), _SearchLog())
+        listing = self._engine.list_source(
+            url, merged, CancelToken(), _SearchLog(), cookie_jar=self._jar(owner)
+        )
         return listing.items[0] if listing.items else None
 
     def save_snapshot(self, feed_id: str, snapshot: SourceSnapshot) -> None:
@@ -264,7 +283,12 @@ class SourceGatewayAdapter:
         engine_options_for = _load("copycast.adapters.engine.options", "engine_options_for")
         merged = engine_options_for(self._settings, options, feed_id=feed_id, language=language)
         return self._engine.list_source(
-            url, merged, cancel, _SearchLog("copycast.light_refresh"), limit=limit
+            url,
+            merged,
+            cancel,
+            _SearchLog("copycast.light_refresh"),
+            limit=limit,
+            cookie_jar=self._jar(owner),
         )
 
     def save_rss_snapshot(self, feed_id: str, body: bytes) -> bool:
@@ -698,6 +722,11 @@ class Container:
             )
         except not_current as exc:
             raise SettingsError(str(exc)) from exc
+
+    async def migrate_user_settings(self) -> None:
+        """Copy the legacy Defaults and Cookie files to the owner of existing data's
+        ``users/{owner}/`` keys, once (api and worker start). Nothing to copy yet: every
+        User still reads the global keys."""
 
     async def schema_is_current(self) -> bool:
         current: bool = await _load("copycast.adapters.db.migrate", "schema_is_current")(

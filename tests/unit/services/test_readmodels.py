@@ -36,6 +36,12 @@ class Urls:
     def artwork_url(self, asset_id: str, local_path: str) -> str:
         return f"http://t/art/{asset_id}-mac.{local_path.rsplit('.', 1)[-1]}"
 
+    def play_media_url(self, feed_id: str, item_id: str) -> str:
+        return f"http://t/api/feeds/{feed_id}/items/{item_id}/media"
+
+    def play_asset_url(self, feed_id: str, item_id: str, name: str) -> str:
+        return f"http://t/api/feeds/{feed_id}/items/{item_id}/assets/{name}"
+
     async def prepare(self) -> None:
         return None
 
@@ -315,7 +321,38 @@ def test_reads_carry_the_owner_and_the_blocked_reason() -> None:
 def test_asset_read_names_the_archived_file() -> None:
     read = readmodels.asset_read(asset_row(), Urls())
     assert read.name == "0123456789abcdef.transcript.en.mirrored.vtt"
-    assert readmodels.asset_read(asset_row(state="wanted"), Urls()).name is None
+    assert read.play_url == (
+        "http://t/api/feeds/abc/items/0123456789abcdef/assets/"
+        "0123456789abcdef.transcript.en.mirrored.vtt"
+    )
+    wanted = readmodels.asset_read(asset_row(state="wanted"), Urls())
+    assert wanted.name is None and wanted.play_url is None
+    # A Feed's own asset (its artwork) has no item to play it through.
+    feed_asset = readmodels.asset_read(asset_row(item_id=None), Urls())
+    assert feed_asset.play_url is None
+
+
+def test_reads_say_when_the_owner_is_removed() -> None:
+    mirror = readmodels.mirror_read(
+        mirror_row(owner="gone"), Urls(), counts=CatalogCounts(), owner_removed=True
+    )
+    assert mirror.owner_removed is True
+    bucket = readmodels.feed_read(
+        mirror_row(kind="bucket", owner="gone", source_url=None),
+        Urls(),
+        counts=CatalogCounts(),
+        owner_removed=True,
+    )
+    assert bucket.owner_removed is True
+
+
+def test_archived_media_carries_its_play_url() -> None:
+    read = readmodels.item_read(
+        item_row(archive_state="archived", media_ext="m4a", media_mime="audio/mp4", media_bytes=3),
+        Urls(),
+    )
+    assert read.media is not None
+    assert read.media.play_url == "http://t/api/feeds/abc/items/0123456789abcdef/media"
 
 
 def test_api_key_read_carries_the_owner() -> None:

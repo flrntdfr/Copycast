@@ -11,6 +11,7 @@ waits for the recording (``NotReady``) instead.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Mapping
 from posixpath import basename
 from typing import Any
@@ -40,6 +41,7 @@ from copycast.application.ports import (
     StorageFull,
 )
 from copycast.application.services.defaults import load_defaults
+from copycast.application.services.engine import cookie_jar_key
 from copycast.application.services.items import PRIORITY_MANUAL
 from copycast.domain.enums import (
     ArchiveState,
@@ -124,7 +126,13 @@ def want_streams(listing: SourceListing) -> SourceListing:
 
 
 def expand(
-    engine: Engine, url: str, options: Mapping[str, Any], cancel: CancelToken, log_: EngineLog
+    engine: Engine,
+    url: str,
+    options: Mapping[str, Any],
+    cancel: CancelToken,
+    log_: EngineLog,
+    *,
+    cookie_jar: str | None = None,
 ) -> SourceListing:
     """The listing a Request expands to (blocking)."""
     content_type = content_type_of(url)
@@ -132,7 +140,7 @@ def expand(
         return direct_listing(url, content_type)
     if _is_feed(url, content_type):
         raise PermanentError(USE_CREATE_MIRROR)
-    listing = engine.list_source(url, options, cancel, log_)
+    listing = engine.list_source(url, options, cancel, log_, cookie_jar=cookie_jar)
     if not listing.items:
         raise PermanentError(f"nothing to archive at {url}")
     if len(listing.items) > LEAF_CAP:
@@ -177,14 +185,20 @@ async def run(ctx: JobContext) -> JobOutcome:
             ctx.container.settings,
             feed.engine_options,
             feed_id=feed.id,
-            language=load_defaults(ctx.container.layout).language,
+            language=load_defaults(ctx.container.layout, feed.owner).language,
         )
+        cookie_jar = cookie_jar_key(ctx.container.layout, feed.owner)
 
     ctx.progress.set_phase(ProgressPhase.listing)
     try:
         ctx.check_cancelled("request expansion")
         listing = await ctx.run_blocking(
-            expand, ctx.container.engine, url, options, ctx.cancel, ctx.log
+            functools.partial(expand, cookie_jar=cookie_jar),
+            ctx.container.engine,
+            url,
+            options,
+            ctx.cancel,
+            ctx.log,
         )
     except EngineError as exc:
         await _record_failure(ctx, feed_id, request_id, exc)

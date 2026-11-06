@@ -514,7 +514,13 @@ async def test_slow_origin_hits_the_deadline_and_the_feed_is_still_served(
     gave_up = threading.Event()
 
     def slow_list_source(
-        url: str, options: Any, cancel: Any, log: Any, *, limit: int | None = None
+        url: str,
+        options: Any,
+        cancel: Any,
+        log: Any,
+        *,
+        limit: int | None = None,
+        cookie_jar: str | None = None,
     ) -> Any:
         # A Source that answers only once the fetch has given up and set the token.
         while limit is not None and not cancel.cancelled:

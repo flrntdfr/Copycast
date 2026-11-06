@@ -19,6 +19,7 @@ from copycast.application.services.context import (
 from copycast.application.services.defaults import effective
 from copycast.application.services.episodes import delete_episode
 from copycast.application.services.policy import defaults_for
+from copycast.application.services.quota import gate_manual, on_manual_wanted
 from copycast.application.services.readmodels import item_reads, job_read
 from copycast.application.services.retry import retry_concurrent
 from copycast.domain.enums import (
@@ -132,11 +133,14 @@ async def archive_item(
     """Archive one Available (or deleted, or failed) item now; 409 when already archived."""
     async with ctx.uow_factory() as uow:
         item = await uow.catalog.require(item_id, feed_id)
+        feed = await uow.feeds.require(feed_id)
+        await gate_manual(uow, ctx.users, feed.owner)
         if not item.archivable:
             raise Unsupported(f"item {item_id!r} has no media to archive")
         if item.archive_state == ArchiveState.archived:
             raise Conflict(f"item {item_id!r} is already archived")
         changed = await uow.catalog.set_wanted([item_id], WantedReason.manual)
+        await on_manual_wanted(uow, [item_id])
         if changed:
             item = await uow.catalog.require(item_id, feed_id)
             await uow.update_intent(feed_id)
@@ -164,7 +168,7 @@ async def fetch_item_metadata(ctx: ServiceContext, feed_id: str, item_id: str) -
         options = dict(feed.engine_options or {})
         owner = feed.owner
         language = effective(
-            defaults_for(ctx), language=feed.preferred_language, min_duration_seconds=None
+            defaults_for(ctx, owner), language=feed.preferred_language, min_duration_seconds=None
         ).language
     if not url:
         raise Unsupported(f"item {item_id!r} has no Source page to ask")

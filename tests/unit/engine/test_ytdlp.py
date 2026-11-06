@@ -502,7 +502,7 @@ def test_cookie_scope_copies_the_object_and_writes_changes_back(
 
     store = layout.store
     store.put_bytes(layout.cookies_key(), "# v1\n")
-    stored = StoredCookies(layout, Scratch(tmp_path / "scratch"))
+    stored = StoredCookies(layout, Scratch(tmp_path / "scratch"), key=layout.cookies_key())
 
     with cookie_scope(stored, {"ratelimit": 1}) as options:
         scratch = Path(options["cookiefile"])
@@ -536,22 +536,129 @@ def test_cookie_scope_copies_the_object_and_writes_changes_back(
         assert options == {"a": 1}
 
 
-def test_engine_reads_the_cookies_from_the_bucket_of_the_settings(settings: Settings) -> None:
+def test_each_call_carries_the_cookie_jar_it_names(settings: Settings) -> None:
     engine = build_engine(settings)
-    assert engine._cookies is not None
-    assert engine._cookies.key == "engine/cookies.txt"
-    assert engine._cookies.layout.store.url == settings.storage.url
-    assert engine._cookies.scratch.root == settings.storage.scratch_dir
-    assert YtDlpEngine()._cookies is None
-
-
-def test_a_call_may_name_its_own_cookie_jar(settings: Settings) -> None:
-    engine = build_engine(settings)
-    assert engine._jar(None) is engine._cookies
     jar = engine._jar("users/alice/cookies.txt")
     assert jar is not None and jar.key == "users/alice/cookies.txt"
-    assert engine._cookies is not None and jar.layout is engine._cookies.layout
+    assert jar.layout.store.url == settings.storage.url
+    assert jar.scratch.root == settings.storage.scratch_dir
+    other = engine._jar("engine/cookies.txt")
+    assert other is not None and other.key == "engine/cookies.txt"
+    # No jar named: no stored cookies at all (the Engine holds none of its own).
+    assert engine._jar(None) is None
     assert YtDlpEngine()._jar("users/alice/cookies.txt") is None
+
+
+def test_a_call_writes_rotated_cookies_back_to_its_own_jar(
+    settings: Settings, tmp_path: Path
+) -> None:
+    from copycast.adapters.engine.ytdlp import cookie_scope
+
+    engine = build_engine(settings)
+    jar = engine._jar("users/alice/cookies.txt")
+    assert jar is not None
+    store = jar.layout.store
+    store.put_bytes("users/alice/cookies.txt", "# alice\n")
+    store.put_bytes("engine/cookies.txt", "# global\n")
+    with cookie_scope(jar, {}) as options:
+        Path(options["cookiefile"]).write_text("# alice rotated\n", encoding="utf-8")
+    assert store.get_text("users/alice/cookies.txt") == "# alice rotated\n"
+    assert store.get_text("engine/cookies.txt") == "# global\n"
+
+
+# --------------------------------------------------------------------------- quota estimate
+
+
+@pytest.mark.parametrize(
+    ("info", "expected"),
+    [
+        ({"filesize": 1000}, 1000),
+        ({"filesize_approx": 2000.7}, 2000),
+        ({"filesize": None, "filesize_approx": 300}, 300),
+        ({"requested_formats": [{"filesize": 100}, {"filesize_approx": 50}]}, 150),
+        ({"requested_formats": [{"filesize": 100}, {}]}, None),
+        ({"requested_formats": [], "filesize": 7}, 7),
+        ({}, None),
+        ({"filesize": True}, None),
+        ({"filesize": 0}, None),
+    ],
+)
+def test_estimated_size(info: dict[str, Any], expected: int | None) -> None:
+    from copycast.adapters.engine.ytdlp import estimated_size
+
+    assert estimated_size(info) == expected
+
+
+def test_quota_filter_refuses_an_item_larger_than_the_quota_left() -> None:
+    from copycast.adapters.engine.ytdlp import OverQuotaEstimate, quota_match_filter
+
+    state = _HookState()
+    match_filter = quota_match_filter(state, 1000)
+    # Before format selection (incomplete) nothing is judged; a missing size passes.
+    assert match_filter({"filesize": 5000}, incomplete=True) is None
+    assert match_filter({"title": "unknown size"}) is None
+    assert match_filter({"filesize": 1000}) is None
+    assert state.estimate_bytes is None
+    with pytest.raises(OverQuotaEstimate):
+        match_filter({"requested_formats": [{"filesize": 800}, {"filesize": 300}]})
+    assert state.estimate_bytes == 1100
+    assert issubclass(OverQuotaEstimate, DownloadCancelled)
+
+
+def test_fetch_params_add_the_quota_filter_with_max_bytes(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from copycast.adapters.engine.ytdlp import OverQuotaEstimate
+
+    state = _HookState()
+    spec = replace(_spec(tmp_path), max_bytes=10)
+    params = fetch_params_for(
+        spec,
+        {},
+        log=_Log(),
+        progress_hook=_progress_hook(CancelToken(), lambda _: None, state),
+        postprocessor_hook=_postprocessor_hook(CancelToken(), lambda _: None, state),
+        state=state,
+    )
+    match_filter = params["match_filter"]
+    assert match_filter({"filesize": 5}, incomplete=False) is None
+    with pytest.raises(NotYetAvailable):
+        match_filter({"live_status": "is_live", "filesize": 50}, incomplete=False)
+    with pytest.raises(OverQuotaEstimate):
+        match_filter({"filesize": 50}, incomplete=False)
+    assert state.estimate_bytes == 50
+
+
+def test_fetch_item_turns_an_over_quota_estimate_into_quota_exceeded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from copycast.application.ports import QuotaExceeded
+
+    class _YDL:
+        def __init__(self, params: dict[str, Any]) -> None:
+            self.params = params
+
+        def __enter__(self) -> _YDL:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def add_post_processor(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+            self.params["match_filter"]({"filesize": 4096}, incomplete=False)
+            return {}
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _YDL)
+    monkeypatch.setattr("copycast.adapters.engine.ytdlp.check_engine_url", lambda *a, **k: None)
+    spec = replace(_spec(tmp_path), max_bytes=1024)
+    with pytest.raises(QuotaExceeded) as caught:
+        YtDlpEngine().fetch_item(spec, {}, CancelToken(), lambda _: None, _Log())
+    assert caught.value.estimate_bytes == 4096
 
 
 @pytest.mark.parametrize(

@@ -42,6 +42,7 @@ from copycast.adapters.storage.layout import (
 )
 from copycast.adapters.storage.objects import open_store
 from copycast.application.ports import StoredObject
+from copycast.application.users import UserDirectory
 from copycast.domain.credentials import new_feed_password, new_feed_username
 from copycast.domain.enums import (
     ArchiveState,
@@ -210,15 +211,16 @@ async def rebuild(
         await ensure_schema(engine, owner_of_existing=settings.auth.effective_owner_of_existing)
         sessionmaker = create_sessionmaker(engine)
         owner = settings.auth.effective_owner_of_existing
+        configured = UserDirectory(settings).usernames()
         if lock_held:
-            return await _rebuild(sessionmaker, layout, version, yes, owner)
+            return await _rebuild(sessionmaker, layout, version, yes, owner, configured)
         async with SessionLock(engine, WORKER_LOCK) as lock:
             if not lock.held:
                 raise RebuildRefused(
                     "the worker is running (WORKER_LOCK is held); stop it or start the "
                     "rebuild through POST /api/admin/rebuild"
                 )
-            return await _rebuild(sessionmaker, layout, version, yes, owner)
+            return await _rebuild(sessionmaker, layout, version, yes, owner, configured)
     finally:
         if own_engine:
             await engine.dispose()
@@ -230,7 +232,10 @@ async def _rebuild(
     version: str,
     yes: bool,
     owner_of_existing: str,
+    configured: Sequence[str] = (),
 ) -> RebuildReport:
+    """Rebuild every Feed found, then give the owner of existing data and every
+    ``configured`` User their default Local feed."""
     counters = _Counters(version, yes)
     on_disk = await asyncio.to_thread(layout.feed_ids)
     counters.data["feeds_on_disk"] = len(on_disk)
@@ -276,12 +281,15 @@ async def _rebuild(
                 counters.deleted_feeds.append(feed_id)
             else:
                 counters.would_delete_feeds.append(feed_id)
-        await _ensure_users(session, [owner_of_existing])
-        default = await feeds.ensure_default_bucket(owner_of_existing)
-        counters.data["default_bucket_id"] = default.id
+        owners = list(dict.fromkeys([owner_of_existing, *configured]))
+        await _ensure_users(session, owners)
+        defaults: list[str] = []
+        for owner in owners:
+            defaults.append((await feeds.ensure_default_bucket(owner)).id)
+        counters.data["default_bucket_id"] = defaults[0]
 
     async with sessionmaker() as session:
-        for feed_id in [*rebuilt, counters.data["default_bucket_id"]]:
+        for feed_id in dict.fromkeys([*rebuilt, *defaults]):
             if not feed_id:
                 continue
             key = layout.descriptor_key(feed_id)

@@ -137,10 +137,10 @@ async def test_soft_timeout_quarantines_the_feed_and_exits_3_when_all_stuck(
     # Make the fake engine ignore the token: it polls `cancel`, so give it one that never sets.
     original_fetch = engine.fetch_item
 
-    def ignoring_token(spec, options, cancel, on_progress, log):  # type: ignore[no-untyped-def]
+    def ignoring_token(spec, options, cancel, on_progress, log, *, cookie_jar=None):  # type: ignore[no-untyped-def]
         from copycast.application.ports import CancelToken
 
-        return original_fetch(spec, options, CancelToken(), on_progress, log)
+        return original_fetch(spec, options, CancelToken(), on_progress, log, cookie_jar=cookie_jar)
 
     engine.fetch_item = ignoring_token  # type: ignore[method-assign]
     exit_code = await asyncio.wait_for(runner.run(), timeout=15)
