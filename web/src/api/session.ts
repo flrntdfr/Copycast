@@ -6,7 +6,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 import { $api } from "./client";
-import type { FeedRead, MeRead } from "./types";
+import type { MeRead } from "./types";
 
 /** Re-read now and then: a demotion or a new quota applies without a reload. */
 export const ME_STALE_MS = 60_000;
@@ -32,7 +32,10 @@ export function forgetMe(queryClient: QueryClient): void {
 }
 
 /** What an owner label needs from a Feed. */
-export type Owned = Pick<FeedRead, "owner"> & { owner_removed?: boolean | null };
+export interface Owned {
+  owner?: string | null;
+  owner_removed?: boolean | null;
+}
 
 /**
  * The owner to label a Feed with: only an Admin sees labels, and only on another User's Feed

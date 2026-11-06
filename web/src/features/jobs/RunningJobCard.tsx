@@ -4,6 +4,7 @@ import { Loader2, XCircle } from "lucide-react";
 import { $api } from "@/api/client";
 import type { JobRead } from "@/api/types";
 import { FeedLink, type FeedSummary } from "@/components/common/FeedLink";
+import { OwnerBadge } from "@/features/session/OwnerBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { JobProgress } from "./JobProgress";
@@ -38,6 +39,7 @@ export function RunningJobCard({
         <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
           <span className="flex min-w-0 flex-wrap items-center gap-x-1">
             {job.feed_id ? <FeedLink feedId={job.feed_id} feed={feed} /> : null}
+            {job.feed_id ? <OwnerBadge feed={feed} /> : null}
             {itemId ? (
               <>
                 <span aria-hidden>·</span>
