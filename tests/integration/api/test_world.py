@@ -7,6 +7,7 @@ import pytest
 
 from copycast.adapters.db.uow import uow_of
 from copycast.app import Container
+from copycast.application.services.engine import cookie_jar_key
 from tests.support.paths import api
 from tests.support.world import World
 
@@ -91,8 +92,9 @@ async def test_every_engine_call_carries_its_owners_cookie_jar(
     engine.script_listing(url, listing(2, service="YouTube", title="Bob's channel"))
     probed = await bob_client.post(api("/probe"), json={"url": url})
     assert probed.status_code == 200, probed.text
-    # Every User shares the global jar until per-user Cookie files exist.
-    jar = users_container.layout.cookies_key()
+    # Every call of Bob's carries Bob's jar: the seam, whatever key it names (the global
+    # jar until per-user Cookie files exist, users/bob/cookies.txt after).
+    jar = cookie_jar_key(users_container.layout, "bob")
     assert engine.records.listings and engine.records.fetches
     assert {record.cookie_jar for record in engine.records.listings} == {jar}
     assert {record.cookie_jar for record in engine.records.fetches} == {jar}
