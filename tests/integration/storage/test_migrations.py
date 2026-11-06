@@ -590,3 +590,98 @@ def test_copycast_migrate_hands_over_the_settings_owner(
     assert result.exit_code == 0, result.output
     feeds, keys, jobs, users = asyncio.run(_read())
     assert (feeds, keys, jobs, users) == ({"florent"}, {"florent"}, {None}, {"florent"})
+
+
+FLORENT_USERS = [
+    {
+        "username": "florent",
+        "password_hash": "$argon2id$v=19$m=1024,t=1,p=1$c2FsdHNhbHRzYWx0$"
+        "U0HvE4ipdHl1ykcyEHWQ8ZbcFwm5S8okpQN0Dj7cmKI",
+        "admin": True,
+    },
+    {
+        "username": "emilia",
+        "password_hash": "$argon2id$v=19$m=1024,t=1,p=1$c2FsdHNhbHRzYWx0$"
+        "U0HvE4ipdHl1ykcyEHWQ8ZbcFwm5S8okpQN0Dj7cmKI",
+    },
+]
+
+
+async def test_worker_first_migrates_with_owner_of_existing(
+    db: str, tmp_path: Path, storage_config: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In compose the worker may win MIGRATE_LOCK: it hands over the same owner as the api.
+
+    Users mode, ``owner_of_existing = "florent"`` and no ``copycast`` user: whichever
+    process migrates, every existing Feed and key goes to florent.
+    """
+    from copycast.adapters.db.locks import WORKER_LOCK, SessionLock
+    from copycast.adapters.db.session import create_db_engine
+    from copycast.logging import get_logger
+    from copycast.settings import get_settings
+    from copycast.worker import main as worker_module
+    from copycast.worker.constants import EXIT_LOCKED
+    from tests.support.fake_engine import FakeEngine
+
+    # A logger of its own: once logging is configured (a CLI test ran first), the module's
+    # logger would be cached here and escape the worker suite's capture_logs later on.
+    monkeypatch.setattr(worker_module, "log", get_logger("tests.worker_first"))
+
+    settings = get_settings(
+        database_url=db,
+        storage={**storage_config, "scratch_dir": tmp_path / "scratch"},
+        auth={"users": FLORENT_USERS, "owner_of_existing": "florent"},
+    )
+    engine = create_db_engine(settings)
+    try:
+        await downgrade_schema(engine, "0016")
+        await _seed_0016(engine)
+        # Another worker holds WORKER_LOCK: this one migrates, then stops right there.
+        async with SessionLock(engine, WORKER_LOCK) as lock:
+            assert lock.held
+            assert await worker_module.main(settings, engine=FakeEngine()) == EXIT_LOCKED
+        feeds, keys, jobs, users = await _owners(engine)
+    finally:
+        await engine.dispose()
+    assert (feeds, keys, jobs) == ({"florent"}, {"florent"}, {None})
+    assert users == {"florent"}  # no "copycast" user anywhere
+
+
+def test_copycast_migrate_in_users_mode_hands_over_owner_of_existing(
+    db: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import asyncio
+    import json
+
+    from click.testing import CliRunner
+
+    from copycast.adapters.db.session import create_db_engine
+    from copycast.cli import main
+    from copycast.settings import get_settings
+
+    engine_settings = get_settings(database_url=db)
+
+    async def _prepare() -> None:
+        engine = create_db_engine(engine_settings)
+        try:
+            await downgrade_schema(engine, "0016")
+            await _seed_0016(engine)
+        finally:
+            await engine.dispose()
+
+    async def _read() -> tuple[set[str], set[str], set[str | None], set[str]]:
+        engine = create_db_engine(engine_settings)
+        try:
+            return await _owners(engine)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_prepare())
+    monkeypatch.setenv("COPYCAST__DATABASE_URL", db)
+    monkeypatch.setenv("COPYCAST__STORAGE__URL", "memory://migrate-cli-users")
+    monkeypatch.setenv("COPYCAST__STORAGE__SCRATCH_DIR", str(tmp_path / "scratch"))
+    monkeypatch.setenv("COPYCAST__AUTH__USERS", json.dumps(FLORENT_USERS[::-1]))
+    monkeypatch.setenv("COPYCAST__AUTH__OWNER_OF_EXISTING", "florent")
+    result = CliRunner().invoke(main, ["migrate"])
+    assert result.exit_code == 0, result.output
+    assert asyncio.run(_read()) == ({"florent"}, {"florent"}, {None}, {"florent"})
