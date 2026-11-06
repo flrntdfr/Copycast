@@ -1,0 +1,29 @@
+# The e2e stack's configuration (docker-compose.ci.yml mounts this directory at /config in place
+# of ./config): users mode with three test Users. The environment sets base_url, the database,
+# the Object store and the cache, as for any compose stack.
+#
+# TEST VALUES ONLY. The passwords are "<username>-e2e-password" (tests/e2e/conftest.py and
+# web/e2e/users.ts sign in with them), hashed with cheap argon2 parameters (t=1, m=1 MiB, p=1) so
+# a sign-in costs nothing; every hash uses the same parameters, so startup does not warn. Real
+# deployments hash with `copycast users hash-password` (t=3, m=64 MiB, p=4). base_url is plain
+# http, so the Admin needs no totp_secret.
+
+[auth]
+default_quota = "unlimited"
+session_days  = 1
+
+[[auth.users]]
+username      = "admin"
+password_hash = '$argon2id$v=19$m=1024,t=1,p=1$vAG6yql/sGw5yxDV7YHl9Q$H80zUU6dgX1vs2AUfM33hWCzb7dx+sD3g67+qTabKMY'
+admin         = true
+
+[[auth.users]]
+username      = "alice"
+password_hash = '$argon2id$v=19$m=1024,t=1,p=1$RlknBdpasIakTCd8zuV8DA$a+emL+MSU1Hyl0Mfxg5WOuJVt8OGA0+7gAzEiY1gbPY'
+
+# A quota of 0: Bob is Over quota from the start, so every archive of his is blocked ("Over
+# quota" in the Catalog) and nothing of his is ever downloaded.
+[[auth.users]]
+username      = "bob"
+password_hash = '$argon2id$v=19$m=1024,t=1,p=1$Wa2fXM0tzTZNhUCx2Qmz+Q$E0kwNFCYhmEKG6YTFZT5qMdsBFvMtetk8qbTZoG4gow'
+quota         = "0 B"

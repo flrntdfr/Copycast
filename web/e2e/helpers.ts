@@ -7,6 +7,8 @@
  */
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
+import { ADMIN } from "./users";
+
 export const FIXTURE_FEED_URL =
   process.env.COPYCAST_E2E_FEED_URL ?? "http://fixtures:8000/rss/e2e_feed.xml";
 export const FIXTURE_MEDIA_URL =
@@ -24,6 +26,8 @@ interface FeedSummary {
   kind: "mirror" | "bucket";
   title: string;
   source_url?: string;
+  /** The User the Feed belongs to; an Admin's lists hold every User's Feeds. */
+  owner: string;
 }
 
 /** A Local feed (BucketRead): only it has a name and the default flag; a Mirror has neither. */
@@ -33,7 +37,10 @@ interface LocalFeedSummary extends FeedSummary {
   is_default: boolean;
 }
 
-/** Delete every Mirror so each spec starts from a Feeds page with no Mirror. */
+/**
+ * Delete every Mirror the signed-in User can see (an Admin: everyone's) so each spec starts
+ * from a Feeds page with no Mirror.
+ */
 export async function deleteAllMirrors(request: APIRequestContext): Promise<void> {
   const response = await request.get("/api/feeds?kind=mirror");
   expect(response.ok()).toBeTruthy();
@@ -49,13 +56,19 @@ export async function deleteAllMirrors(request: APIRequestContext): Promise<void
   }
 }
 
-/** The default Local feed, "Copycast" unless renamed (the API's kind is still "bucket"). */
-export async function defaultLocalFeed(request: APIRequestContext): Promise<LocalFeedSummary> {
+/**
+ * A User's default Local feed, "Copycast" unless renamed (the API's kind is still "bucket").
+ * Every User has one; an Admin sees them all, so pick by owner (the Admin's by default).
+ */
+export async function defaultLocalFeed(
+  request: APIRequestContext,
+  owner: string = ADMIN,
+): Promise<LocalFeedSummary> {
   const response = await request.get("/api/feeds?kind=bucket");
   expect(response.ok()).toBeTruthy();
   const { feeds } = (await response.json()) as { feeds: LocalFeedSummary[] };
-  const localFeed = feeds.find((feed) => feed.is_default) ?? feeds[0];
-  if (!localFeed) throw new Error("the default Local feed exists");
+  const localFeed = feeds.find((feed) => feed.is_default && feed.owner === owner);
+  if (!localFeed) throw new Error(`${owner}'s default Local feed exists`);
   return localFeed;
 }
 
