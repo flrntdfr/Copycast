@@ -92,7 +92,7 @@ exclude_also = [
 line-length = 100
 target-version = "py313"
 src = ["src", "tests"]
-extend-exclude = ["web", "stubs"]
+extend-exclude = ["web", "stubs", "docs/plans"]  # plans hold pseudo-code signatures, not code
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM", "RUF", "T20"]
