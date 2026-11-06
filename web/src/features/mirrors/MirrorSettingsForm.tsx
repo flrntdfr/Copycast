@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Link } from "@tanstack/react-router";
 
 import { $api, ApiProblem, describeProblem } from "@/api/client";
+import { useIsAdmin } from "@/api/session";
 import type { MirrorChangePreview, MirrorRead, MirrorUpdate } from "@/api/types";
 import {
   AlertDialog,
@@ -40,12 +41,16 @@ import {
 import { formatBytes, secondsToMinutes } from "@/lib/format";
 import { count } from "@/lib/labels";
 
-/** Follow, the policy as tabs (previewed, confirmed when it deletes), Source URL, Engine options, overrides and the danger zone. */
+/**
+ * Follow, the policy as tabs (previewed, confirmed when it deletes), Source URL, Engine options
+ * (Admins only), overrides and the danger zone.
+ */
 export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
   const invalidate = useInvalidateFeed();
   const [rejectedKeys, setRejectedKeys] = useState<string[]>([]);
   const [rejectedScope, setRejectedScope] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const admin = useIsAdmin();
   const form = useForm<MirrorSettingsInput, unknown, MirrorSettingsValues>({
     resolver: zodResolver(mirrorSettingsSchema),
     defaultValues: settingsDefaults(mirror),
@@ -295,23 +300,26 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
           </p>
         </div>
 
-        <Controller
-          control={form.control}
-          name="engine_options"
-          render={({ field, fieldState }) => (
-            <EngineOptionsEditor
-              id="settings-engine-options"
-              value={field.value}
-              onChange={(next) => {
-                setRejectedKeys([]);
-                field.onChange(next);
-              }}
-              error={fieldState.error?.message}
-              rejectedKeys={rejectedKeys}
-              scope={rejectedScope}
-            />
-          )}
-        />
+        {/* Per-Mirror Engine options are an Admin's (ADR 0024); a Member's form keeps them as is. */}
+        {admin ? (
+          <Controller
+            control={form.control}
+            name="engine_options"
+            render={({ field, fieldState }) => (
+              <EngineOptionsEditor
+                id="settings-engine-options"
+                value={field.value}
+                onChange={(next) => {
+                  setRejectedKeys([]);
+                  field.onChange(next);
+                }}
+                error={fieldState.error?.message}
+                rejectedKeys={rejectedKeys}
+                scope={rejectedScope}
+              />
+            )}
+          />
+        ) : null}
 
         <fieldset className="space-y-3 rounded-lg border p-3">
           <legend className="px-1 text-sm font-medium">Overrides</legend>

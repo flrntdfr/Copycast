@@ -3,7 +3,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import { describeWorkerSeen, workerSeenOf } from "./worker-status";
-import { about, ready } from "@/test/factories";
+import { about, me, ready } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
@@ -92,6 +92,23 @@ describe("AboutPage", () => {
     const worker = await screen.findByTestId("about-worker");
     await waitFor(() => expect(worker).toHaveTextContent("never"));
     expect(screen.getByText("The worker has not reported recently")).toBeInTheDocument();
+  });
+
+  it("hides the Engine rows from a Member", async () => {
+    server.use(
+      ...handlers(),
+      http.get("/api/me", () =>
+        HttpResponse.json(me({ username: "alice", admin: false, auth_mode: "users" })),
+      ),
+      http.get("/api/about", () => HttpResponse.json(about({ ffmpeg_version: null }))),
+    );
+    renderApp("/about");
+    expect(await screen.findByRole("heading", { name: "About" })).toBeInTheDocument();
+    expect(screen.getByText(/2 feeds · 42 Episodes · 1\.5 GB/)).toBeInTheDocument();
+    expect(screen.queryByTestId("about-engine")).toBeNull();
+    expect(screen.queryByTestId("about-ffmpeg")).toBeNull();
+    expect(screen.queryByTestId("about-layout")).toBeNull();
+    expect(screen.queryByText("ffmpeg is missing")).toBeNull();
   });
 
   it("flags a missing ffmpeg", async () => {
