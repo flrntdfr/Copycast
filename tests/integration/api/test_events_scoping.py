@@ -195,3 +195,26 @@ async def test_keys_cannot_open_the_event_stream(
         EVENTS_PATH, headers={"Authorization": f"Bearer {world.key_secret}"}
     )
     assert response.status_code == 403
+
+
+async def test_a_deleted_feeds_event_still_reaches_its_owner_only(
+    users_app: Any,
+    users_container: Container,
+    bob_client: httpx.AsyncClient,
+) -> None:
+    """``delete_feed`` publishes after the delete, with the Owner it read before."""
+    hub = hub_of(users_app)
+    assert await hub.wait_connected()
+    created = await bob_client.post("/api/buckets", json={"name": "Short-lived"})
+    assert created.status_code == 201, created.text
+    feed_id = created.json()["id"]
+    with (
+        hub.subscribe(principal(users_container, "alice")) as alice,
+        hub.subscribe(principal(users_container, "bob")) as bob,
+    ):
+        deleted = await bob_client.delete(f"/api/feeds/{feed_id}")
+        assert deleted.status_code == 204, deleted.text
+        bobs, alices = await drain(bob), await drain(alice, quiet=0.2)
+    gone = [e for e in bobs if e.name == "feed" and getattr(e.event, "reason", "") == "deleted"]
+    assert gone and gone[0].owner == "bob" and event_feed_id(gone[0].event) == feed_id
+    assert not alices
