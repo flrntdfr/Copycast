@@ -514,10 +514,15 @@ async def _fetch_and_store(
     except QuotaExceeded as exc:
         # The Engine's estimate does not fit the quota left: blocked with that estimate, so
         # the scheduler re-queues it only once that much room exists. Not a failure.
-        await _block(ctx, target.feed_id, item_id, exc.estimate_bytes)
-        return JobOutcome(
-            result={"blocked": BlockedReason.quota.value, "estimate_bytes": exc.estimate_bytes}
-        )
+        estimate = min(exc.estimate_bytes, MAX_BLOCKED_BYTES)
+        try:
+            await _block(ctx, target.feed_id, item_id, estimate)
+        except Exception as block_exc:
+            # Never leave the row archiving: back to wanted, the attempt counted.
+            wrapped = TransientError(f"blocking the item failed: {block_exc}")
+            await _record_failure(ctx, target.feed_id, item_id, wrapped)
+            raise wrapped from block_exc
+        return JobOutcome(result={"blocked": BlockedReason.quota.value, "estimate_bytes": estimate})
     except EngineError as exc:
         failure = await _record_failure(ctx, target.feed_id, item_id, exc)
         if failure is exc:
@@ -705,6 +710,11 @@ def _check_scratch_room(scratch: Scratch, storage: StorageSettings) -> None:
         raise StorageFull(
             f"Scratch has {free // (1024 * 1024)} MiB free, below {floor // (1024 * 1024)} MiB"
         )
+
+
+MAX_BLOCKED_BYTES = 2**63 - 1
+"""``blocked_bytes`` is a BIGINT: a larger estimate (a Source's own manifest can claim any
+size) is stored as this, which no quota ever fits."""
 
 
 async def _block(ctx: JobContext, feed_id: str, item_id: str, estimate_bytes: int) -> None:

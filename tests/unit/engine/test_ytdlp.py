@@ -581,6 +581,9 @@ def test_a_call_writes_rotated_cookies_back_to_its_own_jar(
         ({}, None),
         ({"filesize": True}, None),
         ({"filesize": 0}, None),
+        ({"filesize_approx": float("inf")}, None),
+        ({"filesize_approx": float("nan")}, None),
+        ({"filesize_approx": 10**19}, 10**19),
     ],
 )
 def test_estimated_size(info: dict[str, Any], expected: int | None) -> None:

@@ -18,6 +18,7 @@ import contextlib
 import functools
 import importlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -421,7 +422,7 @@ def estimated_size(info: Mapping[str, Any]) -> int | None:
     """yt-dlp's size estimate of the selected format(s): ``filesize``, else
     ``filesize_approx``, summed over ``requested_formats`` when there are several.
 
-    None when any part has no estimate.
+    None when any part has no estimate, or a non-finite one.
     """
     formats = info.get("requested_formats")
     parts: list[Mapping[str, Any]] = (
@@ -433,6 +434,8 @@ def estimated_size(info: Mapping[str, Any]) -> int | None:
     for part in parts:
         size = part.get("filesize") or part.get("filesize_approx")
         if not isinstance(size, int | float) or isinstance(size, bool) or size <= 0:
+            return None
+        if isinstance(size, float) and not math.isfinite(size):
             return None
         total += int(size)
     return total

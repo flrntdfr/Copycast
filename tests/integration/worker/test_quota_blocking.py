@@ -127,6 +127,47 @@ async def test_an_estimate_above_the_quota_left_blocks_with_the_estimate(
     assert sorted(published.items(ArchiveState.wanted)) == sorted(row.id for row in rows)
 
 
+async def test_an_estimate_beyond_bigint_is_blocked_at_the_ceiling_never_left_archiving(
+    container: Container, runner: Runner, engine: FakeEngine
+) -> None:
+    from copycast.worker.jobs.archive_item import MAX_BLOCKED_BYTES
+
+    set_quota(container, 10_000_000)
+    engine.estimated_bytes = 10**19  # a Source's manifest can claim any size
+    bucket = await request_three(container, engine)
+
+    await runner.run_until_idle()
+
+    async with uow(container) as unit:
+        rows = await unit.catalog.for_feed(bucket)
+    assert {(row.archive_state, row.blocked_reason) for row in rows} == {
+        (ArchiveState.wanted, "quota")
+    }
+    assert {row.blocked_bytes for row in rows} == {MAX_BLOCKED_BYTES}
+    archives = await jobs_of(container, bucket, kind=JobKind.archive_item)
+    assert {job.status for job in archives} == {JobStatus.succeeded.value}
+
+
+async def test_a_failed_block_puts_the_item_back_to_wanted(
+    container: Container, runner: Runner, engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from copycast.worker.jobs import archive_item
+
+    async def broken(*_: object, **__: object) -> None:
+        raise RuntimeError("database hiccup")
+
+    monkeypatch.setattr(archive_item, "_block", broken)
+    set_quota(container, 10_000_000)
+    engine.estimated_bytes = 50_000_000
+    bucket = await request_three(container, engine)
+
+    await runner.run_until_idle()
+
+    async with uow(container) as unit:
+        rows = await unit.catalog.for_feed(bucket)
+    assert ArchiveState.archiving not in {row.archive_state for row in rows}
+
+
 async def test_a_fetch_carries_the_quota_left_and_an_unlimited_owner_none(
     container: Container, runner: Runner, engine: FakeEngine
 ) -> None:
