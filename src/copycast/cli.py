@@ -1,4 +1,5 @@
-"""Command line entry point: ``copycast api | worker | migrate | rebuild | config | openapi``.
+"""Command line entry point: ``copycast api | worker | migrate | rebuild | config | openapi``,
+plus ``storage push`` and the ``users`` credential helpers.
 
 Command implementations are imported lazily so the CLI loads (and ``config``
 and ``--version`` work) even when an adapter package is absent.
@@ -231,6 +232,79 @@ def openapi() -> None:
 
     app = create_asgi_app(settings)
     click.echo(json.dumps(app.openapi(), indent=2, sort_keys=False))
+
+
+PASSWORD_MIN_LEN = 8
+
+
+@main.group()
+def users() -> None:
+    """Credentials for ``[[auth.users]]`` (no database needed)."""
+
+
+@users.command("hash-password")
+@click.option(
+    "--stdin", "from_stdin", is_flag=True, help="Read the password from one line of stdin."
+)
+def users_hash_password(from_stdin: bool) -> None:
+    """Print the argon2id hash of a password, for ``password_hash`` in copycast.toml.
+
+    Prompts twice (hidden) unless ``--stdin``. Put the hash in the TOML file, never in
+    an ``.env`` or compose file: it contains ``$`` signs.
+    """
+    from copycast.application.passwords import PasswordHasher
+
+    if from_stdin:
+        password = sys.stdin.readline().rstrip("\r\n")
+    else:
+        password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
+    if len(password) < PASSWORD_MIN_LEN:
+        click.echo(f"copycast: a password needs at least {PASSWORD_MIN_LEN} characters", err=True)
+        sys.exit(EXIT_CONFIG)
+    click.echo(PasswordHasher().hash(password))
+
+
+@users.command("totp")
+@click.argument("username")
+@click.option("--secret", default=None, help="Use this base32 secret instead of a new one.")
+def users_totp(username: str, secret: str | None) -> None:
+    """Print a TOTP secret for USERNAME, its otpauth:// URI and a QR code to scan.
+
+    Put the secret in ``totp_secret``; an authenticator app scans the QR code.
+    """
+    import io
+
+    import segno
+
+    from copycast.domain.totp import decode_secret, generate_secret, provisioning_uri
+    from copycast.domain.users import is_valid_username
+
+    username = username.strip()
+    if not is_valid_username(username):
+        click.echo(
+            "copycast: a username is 1-32 lowercase letters, digits, '.', '_' or '-', "
+            "starting with a letter or digit",
+            err=True,
+        )
+        sys.exit(EXIT_CONFIG)
+    if secret is None:
+        secret = generate_secret()
+    else:
+        secret = "".join(secret.split()).upper().rstrip("=")
+        try:
+            decode_secret(secret)
+        except ValueError:
+            secret = ""
+        if len(secret) < 16:
+            click.echo("copycast: --secret must be base32, at least 16 characters", err=True)
+            sys.exit(EXIT_CONFIG)
+    uri = provisioning_uri(secret, username)
+    qr = io.StringIO()
+    segno.make(uri, error="m").terminal(out=qr, compact=True)
+    click.echo(f"secret: {secret}")
+    click.echo(f"uri:    {uri}")
+    click.echo(qr.getvalue().rstrip("\n"))
+    click.echo(f'copycast.toml, under this user\'s [[auth.users]]: totp_secret = "{secret}"')
 
 
 if __name__ == "__main__":
