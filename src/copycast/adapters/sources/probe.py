@@ -177,7 +177,7 @@ def probe(
     failures: list[str] = []
     urls = scheme_candidates(input_url)
 
-    directory = _directory_feeds(input_url, client, failures)
+    directory = _directory_feeds(input_url, client, failures, owner=owner or "")
     if directory is not None:
         entries = _verify_links(directory[:verify_limit], client, failures)
         if not entries:
@@ -250,13 +250,13 @@ def probe(
 
 
 def _directory_feeds(
-    input_url: str, client: httpx.Client | None, failures: list[str]
+    input_url: str, client: httpx.Client | None, failures: list[str], *, owner: str = ""
 ) -> list[str] | None:
     """Feed URLs behind an Apple Podcasts or Spotify link; None for any other input."""
     if not is_directory_link(input_url):
         return None
     try:
-        return resolve_directory_link(input_url, client=client)
+        return resolve_directory_link(input_url, client=client, owner=owner)
     except SourceError as exc:
         failures.append(str(exc))
         return []

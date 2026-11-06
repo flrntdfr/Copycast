@@ -87,7 +87,7 @@ def test_refresh_allowed(trigger: JobTrigger, overrides: dict[str, Any], expecte
 class _SlowGateway:
     def __init__(self) -> None:
         self.token: CancelToken | None = None
-        self.searches: list[tuple[str, int]] = []
+        self.searches: list[tuple[str, int, str]] = []
 
     def probe(self, url: str, *, options: Any, cancel: CancelToken, owner: str) -> list[Any]:
         self.token = cancel
@@ -95,8 +95,8 @@ class _SlowGateway:
             time.sleep(0.01)
         return []
 
-    def search_podcasts(self, query: str, limit: int) -> list[PodcastSearchResult]:
-        self.searches.append((query, limit))
+    def search_podcasts(self, query: str, limit: int, *, owner: str) -> list[PodcastSearchResult]:
+        self.searches.append((query, limit, owner))
         return [PodcastSearchResult(title=query, feed_url="https://x.example/feed.xml")]
 
 
@@ -113,14 +113,17 @@ async def test_probe_deadline_sets_the_token_and_raises_unsupported() -> None:
 
 async def test_search_normalizes_query_and_limit() -> None:
     gateway = _SlowGateway()
-    ctx = SimpleNamespace(sources=gateway)
+    principal = SimpleNamespace(username="alice")
+    ctx = SimpleNamespace(sources=gateway, principal=principal)
     empty = await search_podcasts(ctx, "   ", 10)  # type: ignore[arg-type]
     assert empty.results == [] and empty.query == ""
     assert gateway.searches == [], "a blank query never reaches iTunes"
     page = await search_podcasts(ctx, "  accidental   tech ", 500)  # type: ignore[arg-type]
     assert page.query == "accidental tech"
     assert page.results[0].title == "accidental tech"
-    assert gateway.searches == [("accidental tech", 50)], "the limit is capped at 50"
+    assert gateway.searches == [("accidental tech", 50, "alice")], (
+        "the limit is capped at 50, and the cache is the caller's"
+    )
 
 
 @pytest.mark.parametrize(

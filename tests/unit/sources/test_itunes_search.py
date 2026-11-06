@@ -24,7 +24,7 @@ def payload(fixtures_dir: Path) -> dict[str, object]:
     return json.loads((fixtures_dir / "itunes/search.json").read_text())
 
 
-def _cache() -> TtlCache[tuple[str, int], list[PodcastSearchResult]]:
+def _cache() -> TtlCache[tuple[str, str, int], list[PodcastSearchResult]]:
     return TtlCache(600)
 
 
@@ -61,7 +61,18 @@ def test_search_is_cached_for_ten_minutes(payload: dict[str, object]) -> None:
     assert route.call_count == 1
     search_podcasts("copycast", limit=5, cache=cache)
     assert route.call_count == 2
-    assert cache_key("  A  b ", 3) == ("a b", 3)
+    assert cache_key("  A  b ", 3) == ("", "a b", 3)
+
+
+@respx.mock
+def test_one_users_cached_answer_never_answers_another(payload: dict[str, object]) -> None:
+    route = respx.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=payload))
+    cache = _cache()
+    search_podcasts("some sensitive show", cache=cache, owner="bob")
+    search_podcasts("some sensitive show", cache=cache, owner="bob")
+    assert route.call_count == 1
+    search_podcasts("Some  sensitive show", cache=cache, owner="alice")
+    assert route.call_count == 2, "alice's search goes to iTunes: no timing oracle on bob's"
 
 
 @respx.mock

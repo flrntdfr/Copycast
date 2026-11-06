@@ -73,7 +73,9 @@ async def search_podcasts(
     limit = max(1, min(int(limit), SEARCH_MAX_LIMIT))
     if not query:
         return PodcastSearchPage(query=query, results=[])
-    results = await asyncio.to_thread(ctx.sources.search_podcasts, query, limit)
+    results = await asyncio.to_thread(
+        ctx.sources.search_podcasts, query, limit, owner=acting_owner(ctx)
+    )
     return PodcastSearchPage(query=query, results=results)
 
 

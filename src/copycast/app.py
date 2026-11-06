@@ -136,11 +136,11 @@ class SourceGatewayAdapter:
         entry = self.cache.get(owner=owner, token=token, url=url)
         return self._snapshot(entry) if entry is not None else None
 
-    def search_podcasts(self, query: str, limit: int) -> list[PodcastSearchResult]:
+    def search_podcasts(self, query: str, limit: int, *, owner: str) -> list[PodcastSearchResult]:
         search = _load("copycast.adapters.sources.itunes_search", "search_podcasts")
         source_error = _load("copycast.adapters.sources.http", "SourceError")
         try:
-            results: list[PodcastSearchResult] = search(query, limit)
+            results: list[PodcastSearchResult] = search(query, limit, owner=owner)
         except source_error as exc:
             raise EngineUnavailable(f"podcast search is unavailable: {exc}") from exc
         return results

@@ -26,11 +26,12 @@ MAX_RESPONSE_BYTES: Final = 4 * 1024 * 1024
 
 _ARTWORK_KEYS: Final = ("artworkUrl600", "artworkUrl100", "artworkUrl60", "artworkUrl30")
 
-_cache: TtlCache[tuple[str, int], list[PodcastSearchResult]] = TtlCache(CACHE_TTL_SECONDS)
+_cache: TtlCache[tuple[str, str, int], list[PodcastSearchResult]] = TtlCache(CACHE_TTL_SECONDS)
 
 
-def cache_key(query: str, limit: int) -> tuple[str, int]:
-    return " ".join(query.lower().split()), limit
+def cache_key(query: str, limit: int, owner: str = "") -> tuple[str, str, int]:
+    """Per User: another User's cached answer would be a timing oracle on their searches."""
+    return owner, " ".join(query.lower().split()), limit
 
 
 def search_podcasts(
@@ -38,23 +39,26 @@ def search_podcasts(
     limit: int = DEFAULT_LIMIT,
     *,
     client: httpx.Client | None = None,
-    cache: TtlCache[tuple[str, int], list[PodcastSearchResult]] | None = None,
+    cache: TtlCache[tuple[str, str, int], list[PodcastSearchResult]] | None = None,
+    owner: str = "",
 ) -> list[PodcastSearchResult]:
     """Podcasts matching ``query``; results without a ``feedUrl`` are dropped.
 
-    Answers are cached for ten minutes per (normalized query, limit).
+    Answers are cached for ten minutes per (owner, normalized query, limit): a fast
+    answer never tells one User that another searched the same terms.
     Network failures raise :class:`SourceUnreachable`; a 4xx raises
     :class:`SourceRejected`.
     """
     limit = max(1, min(int(limit), MAX_LIMIT))
-    key = cache_key(query, limit)
+    key = cache_key(query, limit, owner)
     store = cache if cache is not None else _cache
     cached = store.get(key)
     if cached is not None:
         return list(cached)
-    if not key[0]:
+    term = key[1]
+    if not term:
         return []
-    params = {"media": "podcast", "entity": "podcast", "limit": str(limit), "term": key[0]}
+    params = {"media": "podcast", "entity": "podcast", "limit": str(limit), "term": term}
     http = client if client is not None else get_client()
     try:
         response = http.get(SEARCH_URL, params=params, timeout=TIMEOUT_SECONDS)
