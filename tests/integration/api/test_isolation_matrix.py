@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import re
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -68,8 +67,8 @@ SAMPLE_BODIES: dict[str, dict[str, Any] | None] = {
     "get_job": None,
     "cancel_job": None,
 }
-"""A minimal body per ``owner_of_feed`` capability (None: no body); ``{name}`` placeholders
-take the world's ids, and ``{upload_id}`` a received Upload of the caller's own (Bob's for
+"""A minimal body per ``owner_of_feed`` capability (None: no body); ``{upload_id}`` stands
+for a received Upload of the caller's own (Bob's for
 root: an Admin may add an Upload only into a Feed of the Upload's Owner, spec §3.8)."""
 
 ADMIN_BODIES: dict[str, dict[str, Any]] = {
@@ -135,6 +134,7 @@ def access_of(route: Route) -> str:
 
 
 def bob_ids(world: World) -> dict[str, str]:
+    """Bob's ids by path parameter (``feed_id`` is chosen per route by :func:`concrete`)."""
     return {
         "item_id": world.item_id,
         "request_id": world.request_id,
@@ -153,7 +153,6 @@ def ghost_ids() -> dict[str, str]:
     a hidden Feed's answer must match (no existence oracle)."""
     return {
         "feed_id": "0123456789abcdef",
-        "mirror_id": "0123456789abcdef",
         "item_id": "fedcba9876543210",
         "request_id": GHOST_REQUEST,
         "job_id": GHOST_JOB,
@@ -233,9 +232,12 @@ async def received_upload(client: httpx.AsyncClient, name: str) -> str:
 
 def owned_routes(app: Any) -> list[Route]:
     routes = [route for route in api_routes(app) if access_of(route) == Access.owner_of_feed]
-    rank: Callable[[Route], int] = lambda route: (  # noqa: E731
-        DESTRUCTIVE_LAST.index(route.capability) + 1 if route.capability in DESTRUCTIVE_LAST else 0
-    )
+
+    def rank(route: Route) -> int:
+        if route.capability in DESTRUCTIVE_LAST:
+            return DESTRUCTIVE_LAST.index(route.capability) + 1
+        return 0
+
     return sorted(routes, key=rank)
 
 
