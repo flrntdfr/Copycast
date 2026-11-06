@@ -1,4 +1,4 @@
-"""The 60 s scheduler: due Refreshes, due autoprunes, stale jobs, retention purges."""
+"""The 60 s scheduler: due Refreshes, due autoprunes, quota releases, stale jobs, purges."""
 
 from __future__ import annotations
 
@@ -6,13 +6,16 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 from copycast.adapters.db.uow import uow_of
 from copycast.app import Container
 from copycast.application.events import JobEvent
 from copycast.application.models import JobRead
+from copycast.application.services.context import UnitOfWorkPort
 from copycast.application.services.defaults import load_defaults
 from copycast.application.services.items import PRIORITY_FOLLOW, prune_dedup_key
+from copycast.application.services.quota import release_if_room
 from copycast.domain.enums import JobKind, JobTrigger, PruneMode
 from copycast.logging import get_logger
 from copycast.worker.constants import (
@@ -37,6 +40,7 @@ class SchedulerTick:
     requeued: int = 0
     purged_jobs: int = 0
     purged_runs: int = 0
+    unblocked: int = 0
 
 
 class Scheduler:
@@ -58,11 +62,12 @@ class Scheduler:
         requeued, purged_jobs, purged_runs = await self._maintenance(now)
         refreshes = await self._due_refreshes(now)
         prunes = await self._due_autoprunes(now)
+        unblocked = await self._due_unblocks()
         self.last_tick_at = now
         if self.on_tick is not None:
             self.on_tick(now)
-        result = SchedulerTick(refreshes, prunes, requeued, purged_jobs, purged_runs)
-        if any((refreshes, prunes, requeued, purged_jobs, purged_runs)):
+        result = SchedulerTick(refreshes, prunes, requeued, purged_jobs, purged_runs, unblocked)
+        if any((refreshes, prunes, requeued, purged_jobs, purged_runs, unblocked)):
             log.info("scheduler.tick", **_as_dict(result))
         return result
 
@@ -139,6 +144,22 @@ class Scheduler:
                 await uow.notify_jobs()
         return count
 
+    async def _due_unblocks(self) -> int:
+        """Items blocked by a quota that now fit, re-queued: at most ``RELEASE_PER_TICK`` per
+        Owner and only what the room left allows (``quota.release_if_room``), so freeing a
+        little space never starts a storm of jobs. Covers every way usage drops (deletes,
+        purges, Sync, expiry) and a quota raised at restart; blocks left on rows that are
+        no longer wanted are dropped first."""
+        users = self._container.users
+        released = 0
+        async with uow_of(self._container.uow_factory()) as uow:
+            await uow.quota.clear_unwanted()
+            owners = await uow.quota.owners_with_blocked()
+        for owner in owners:
+            async with uow_of(self._container.uow_factory()) as uow:
+                released += await release_if_room(cast("UnitOfWorkPort", uow), users, owner)
+        return released
+
     async def _maintenance(self, now: datetime) -> tuple[int, int, int]:
         async with uow_of(self._container.uow_factory()) as uow:
             stale = await uow.jobs.requeue_stale(STALE_HEARTBEAT)
@@ -161,6 +182,7 @@ def _as_dict(tick: SchedulerTick) -> dict[str, int]:
         "requeued": tick.requeued,
         "purged_jobs": tick.purged_jobs,
         "purged_runs": tick.purged_runs,
+        "unblocked": tick.unblocked,
     }
 
 
