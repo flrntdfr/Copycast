@@ -35,6 +35,8 @@ from copycast.application.models import (
     ItemRead,
     JobPage,
     JobRead,
+    LoginRequest,
+    MeRead,
     MirrorChangePreview,
     MirrorCreate,
     MirrorDefaults,
@@ -63,6 +65,7 @@ from copycast.application.models import (
 )
 from copycast.application.ports import CancelToken
 from copycast.application.services import about as _about
+from copycast.application.services import auth as _auth
 from copycast.application.services import buckets as _buckets
 from copycast.application.services import defaults as _defaults
 from copycast.application.services import engine as _engine
@@ -78,6 +81,7 @@ from copycast.application.services import sources as _sources
 from copycast.application.services import status as _status
 from copycast.application.services import storage as _storage
 from copycast.application.services import uploads as _uploads
+from copycast.application.services.auth import IssuedSession
 from copycast.application.services.context import (
     FeedSort,
     ItemSort,
@@ -97,6 +101,7 @@ from copycast.domain.enums import (
     JobTrigger,
     RequestedVia,
 )
+from copycast.domain.users import Principal
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,8 +131,8 @@ class Services:
     async def rotate_feed_credentials(self, feed_id: str) -> FeedRead:
         return await _feeds.rotate_feed_credentials(self.ctx, feed_id)
 
-    async def ensure_default_bucket(self) -> BucketRead:
-        return await _feeds.ensure_default_bucket(self.ctx)
+    async def ensure_default_bucket(self, owner: str | None = None) -> BucketRead:
+        return await _feeds.ensure_default_bucket(self.ctx, owner)
 
     async def resolve_bucket(self, ident: str) -> BucketRead:
         return await _feeds.resolve_bucket(self.ctx, ident)
@@ -337,6 +342,19 @@ class Services:
     async def authenticate_api_key(self, secret: str) -> ApiKeyRead | None:
         return await _keys.authenticate_api_key(self.ctx, secret)
 
+    # users
+    async def login(self, body: LoginRequest, *, user_agent: str | None = None) -> IssuedSession:
+        return await _auth.login(self.ctx, body, user_agent=user_agent)
+
+    async def logout(self, token: str | None) -> None:
+        await _auth.logout(self.ctx, token)
+
+    async def get_me(self) -> MeRead:
+        return await _auth.get_me(self.ctx)
+
+    async def authenticate_session(self, token: str) -> Principal | None:
+        return await _auth.authenticate_session(self.ctx, token)
+
     # mirror defaults
     async def get_mirror_defaults(self) -> MirrorDefaults:
         return await _defaults.get_mirror_defaults(self.ctx)
@@ -365,6 +383,7 @@ def build_services(container: ServiceContext) -> Services:
 
 __all__ = [
     "DeletedEpisode",
+    "IssuedSession",
     "LightRefreshResult",
     "Services",
     "build_services",

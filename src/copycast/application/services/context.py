@@ -13,11 +13,12 @@ layout untyped and the worker uses the concrete classes directly.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Protocol
 
 from pydantic import BaseModel
 
@@ -40,6 +41,7 @@ from copycast.domain.enums import (
     AssetKind,
     AssetProvenance,
     AssetState,
+    BlockedReason,
     FeedKind,
     JobKind,
     JobStatus,
@@ -48,6 +50,7 @@ from copycast.domain.enums import (
     LiveStatus,
     LogLevel,
     Numbering,
+    PrincipalVia,
     RefreshRunStatus,
     RequestedVia,
     SourceKind,
@@ -55,11 +58,58 @@ from copycast.domain.enums import (
 )
 from copycast.domain.listing import SourceListing, SourceListingItem
 from copycast.domain.selection import ResolvedSelection, SelectionCandidate
+from copycast.domain.users import Principal
 from copycast.settings import Settings
+
+if TYPE_CHECKING:
+    from copycast.application.users import UserDirectory
 
 FeedSort = Literal["title", "created_at", "updated_at", "storage_bytes"]
 ItemSort = Literal["published", "ordinal", "title", "added"]
 Order = Literal["asc", "desc"]
+
+DEFAULT_BUCKET_TITLE: Final = "Copycast"
+"""The name every User's default Local feed starts with."""
+
+# --------------------------------------------------------------------------- scope
+
+
+@dataclass(frozen=True, slots=True)
+class Scope:
+    """What a unit of work stamps on new rows and which Owner's rows it may see.
+
+    ``actor`` is the User rows the caller creates belong to (None for SYSTEM);
+    ``visible_owner`` filters every Feed lookup (None sees every Owner: an Admin
+    session, the open-mode Admin and SYSTEM).
+    """
+
+    actor: str | None
+    visible_owner: str | None
+
+    SYSTEM: ClassVar[Scope]
+
+    @classmethod
+    def for_principal(cls, principal: Principal) -> Scope:
+        """SYSTEM sees all and stamps nothing; an Admin session or the open-mode Admin sees
+        all; a Member sees their own; any API key, an Admin's included, sees its owner's own
+        (a key never widens what its owner's Feeds are)."""
+        if principal.is_system:
+            return cls.SYSTEM
+        if principal.via is PrincipalVia.api_key or not principal.admin:
+            return cls(principal.username, principal.username)
+        return cls(principal.username, None)
+
+
+Scope.SYSTEM = Scope(None, None)
+
+
+class LookupSentinel(Enum):
+    """``UnitOfWorkPort.publish``'s default owner: look it up from the event."""
+
+    LOOKUP = "lookup"
+
+
+LOOKUP: Final = LookupSentinel.LOOKUP
 
 # --------------------------------------------------------------------------- rows
 
@@ -90,6 +140,7 @@ class FeedRow(Protocol):
     @property
     def last_light_refresh_at(self) -> datetime | None: ...
 
+    owner: str
     title: str
     title_override: str | None
     description: str | None
@@ -164,6 +215,10 @@ class ItemRow(Protocol):
     @property
     def wanted_reason(self) -> str | None: ...
     @property
+    def blocked_reason(self) -> str | None: ...
+    @property
+    def blocked_bytes(self) -> int | None: ...
+    @property
     def archive_flag(self) -> bool: ...
     @property
     def attempt_count(self) -> int: ...
@@ -234,6 +289,8 @@ class JobRow(Protocol):
     @property
     def request_id(self) -> uuid.UUID | None: ...
     @property
+    def requested_by(self) -> str | None: ...
+    @property
     def payload(self) -> dict[str, Any]: ...
     @property
     def status(self) -> str: ...
@@ -286,6 +343,8 @@ class ApiKeyRow(Protocol):
     @property
     def id(self) -> uuid.UUID: ...
     @property
+    def owner(self) -> str: ...
+    @property
     def name(self) -> str: ...
     @property
     def scope(self) -> str: ...
@@ -295,6 +354,51 @@ class ApiKeyRow(Protocol):
     def created_at(self) -> datetime: ...
     @property
     def last_used_at(self) -> datetime | None: ...
+
+
+class UserRow(Protocol):
+    """A ``users`` row: a configured (or formerly configured) User; no secret."""
+
+    @property
+    def username(self) -> str: ...
+    @property
+    def first_seen_at(self) -> datetime: ...
+    @property
+    def last_login_at(self) -> datetime | None: ...
+    @property
+    def totp_last_step(self) -> int | None: ...
+    @property
+    def credential_digest(self) -> bytes | None: ...
+
+
+class SessionRow(Protocol):
+    """A ``sessions`` row: one browser login, keyed by the SHA-256 of its token."""
+
+    @property
+    def id_hash(self) -> bytes: ...
+    @property
+    def username(self) -> str: ...
+    @property
+    def created_at(self) -> datetime: ...
+    @property
+    def last_seen_at(self) -> datetime: ...
+    @property
+    def expires_at(self) -> datetime: ...
+    @property
+    def user_agent(self) -> str | None: ...
+
+
+class LoginAttemptRow(Protocol):
+    """A ``login_attempts`` row: the failures and lock of one typed username."""
+
+    @property
+    def username(self) -> str: ...
+    @property
+    def failed_count(self) -> int: ...
+    @property
+    def locked_until(self) -> datetime | None: ...
+    @property
+    def updated_at(self) -> datetime: ...
 
 
 class RefreshRunRow(Protocol):
@@ -336,17 +440,31 @@ class FeedRepositoryPort(Protocol):
     async def require(self, feed_id: str) -> FeedRow: ...
     async def get_for_update(self, feed_id: str) -> FeedRow: ...
     async def try_get_for_update(self, feed_id: str) -> FeedRow | None: ...
-    async def by_dedup_key(self, dedup_key: str) -> FeedRow | None: ...
-    async def mirrors_due_expiry(self, before: datetime) -> Sequence[FeedRow]: ...
+    async def by_dedup_key(self, owner: str, key: str) -> FeedRow | None:
+        """``owner``'s Mirror of the Source ``key``: by owner, never by visibility."""
+        ...
+
+    async def exists_id(self, feed_id: str) -> bool:
+        """Whether any Feed, whoever owns it, has this id (the id collision check)."""
+        ...
+
+    async def mirrors_due_expiry(
+        self, before: datetime, *, configured: Collection[str]
+    ) -> Sequence[FeedRow]: ...
     async def list(
         self, kind: FeedKind | None = None, *, sort: FeedSort = "title", order: Order = "asc"
     ) -> Sequence[FeedRow]: ...
-    async def find_bucket(self, ident: str) -> FeedRow | None: ...
-    async def default_bucket(self) -> FeedRow | None: ...
+    async def find_bucket(self, ident: str) -> FeedRow | None:
+        """A visible Local feed by id, else by name, the actor's own first."""
+        ...
+
+    async def default_bucket(self, owner: str) -> FeedRow | None: ...
     async def totals(self) -> Totals: ...
     async def add(self, feed: Any) -> FeedRow: ...
     async def delete(self, feed_id: str) -> bool: ...
-    async def ensure_default_bucket(self, title: str = ...) -> FeedRow: ...
+    async def ensure_default_bucket(
+        self, owner: str, title: str = DEFAULT_BUCKET_TITLE
+    ) -> FeedRow: ...
     async def bump_revision(self, feed_id: str) -> int: ...
     async def recount_storage(self, feed_id: str) -> int: ...
     async def set_light_refresh_at(self, feed_id: str, at: datetime | None = None) -> None: ...
@@ -556,9 +674,84 @@ class ApiKeyRepositoryPort(Protocol):
     async def require(self, key_id: uuid.UUID) -> ApiKeyRow: ...
     async def by_hash(self, key_hash: str) -> ApiKeyRow | None: ...
     async def list(self) -> Sequence[ApiKeyRow]: ...
-    async def add(self, *, name: str, scope: KeyScope, key_hash: str, prefix: str) -> ApiKeyRow: ...
+    async def add(
+        self, *, owner: str, name: str, scope: KeyScope, key_hash: str, prefix: str
+    ) -> ApiKeyRow: ...
     async def delete(self, key_id: uuid.UUID) -> bool: ...
     async def touch(self, key_id: uuid.UUID, at: datetime | None = None) -> None: ...
+
+
+class UserRepositoryPort(Protocol):
+    async def ensure(self, usernames: Iterable[str]) -> None:
+        """Insert the missing ``users`` rows; never deletes one."""
+        ...
+
+    async def all(self) -> list[UserRow]: ...
+    async def touch_login(self, username: str, at: datetime) -> None: ...
+    async def claim_totp_step(self, username: str, step: int) -> bool:
+        """Store ``step`` as the last TOTP step unless one as late is stored already."""
+        ...
+
+    async def totp_last_step(self, username: str) -> int | None: ...
+    async def credential_digests(self) -> dict[str, bytes | None]: ...
+    async def set_credential_digest(
+        self, username: str, digest: bytes, *, reset_totp: bool
+    ) -> None: ...
+
+
+class SessionRepositoryPort(Protocol):
+    async def add(
+        self,
+        digest: bytes,
+        username: str,
+        *,
+        now: datetime,
+        expires_at: datetime,
+        user_agent: str | None,
+    ) -> None: ...
+    async def get(self, digest: bytes) -> SessionRow | None: ...
+    async def touch(self, digest: bytes, *, now: datetime, expires_at: datetime) -> None: ...
+    async def delete(self, digest: bytes) -> None: ...
+    async def delete_expired(self, now: datetime) -> int: ...
+    async def delete_for_users_not_in(self, usernames: Collection[str]) -> int: ...
+    async def delete_for_user(self, username: str) -> int: ...
+
+
+class LoginAttemptRepositoryPort(Protocol):
+    async def get(self, username: str) -> LoginAttemptRow | None: ...
+    async def record_failure(self, username: str, now: datetime) -> datetime | None:
+        """Count a failure; returns ``locked_until`` once the lock threshold is reached."""
+        ...
+
+    async def reset(self, username: str) -> None: ...
+    async def prune(self, now: datetime) -> int:
+        """Delete unlocked rows untouched for 24 hours."""
+        ...
+
+
+class QuotaRepositoryPort(Protocol):
+    async def owned_storage_bytes(self, owner: str) -> int:
+        """``SUM(feeds.storage_bytes)`` over ``owner``'s Feeds."""
+        ...
+
+    async def storage_by_owner(self) -> dict[str, int]:
+        """Usage of every Owner having Feeds."""
+        ...
+
+    async def mark_blocked(
+        self, item_id: str, reason: BlockedReason, *, estimate_bytes: int | None
+    ) -> None:
+        """``archive_state`` -> wanted, with the reason and the estimate; publishes nothing."""
+        ...
+
+    async def owners_with_blocked(self) -> list[str]: ...
+    async def blocked_for_release(self, owner: str, *, limit: int) -> Sequence[ItemRow]:
+        """``owner``'s blocked items in archive priority, unknown sizes first, newest first."""
+        ...
+
+    async def unblock(self, item_ids: Collection[str]) -> None:
+        """Clear ``blocked_reason`` and ``blocked_bytes``."""
+        ...
 
 
 class TelemetryRepositoryPort(Protocol):
@@ -641,6 +834,11 @@ class LayoutPort(Protocol):
     def cookie_files_prefix(self) -> str: ...
     def uploads_prefix(self) -> str: ...
     def defaults_key(self) -> str: ...
+    def user_prefix(self, username: str) -> str: ...
+    def user_defaults_key(self, username: str) -> str: ...
+    def user_cookies_key(self, username: str) -> str: ...
+    def user_cookie_files_prefix(self, username: str) -> str: ...
+    def user_cookie_file_key(self, username: str, name: str) -> str: ...
     def feeds_prefix(self) -> str: ...
     def feed_prefix(self, feed_id: str) -> str: ...
     def descriptor_key(self, feed_id: str) -> str: ...
@@ -668,6 +866,8 @@ Hook = Callable[[], Awaitable[None] | None]
 class UnitOfWorkPort(Protocol):
     """One transaction: ``async with ctx.uow_factory() as uow`` commits on a clean exit."""
 
+    scope: Scope
+
     @property
     def feeds(self) -> FeedRepositoryPort: ...
     @property
@@ -683,12 +883,29 @@ class UnitOfWorkPort(Protocol):
     @property
     def api_keys(self) -> ApiKeyRepositoryPort: ...
     @property
+    def users(self) -> UserRepositoryPort: ...
+    @property
+    def sessions(self) -> SessionRepositoryPort: ...
+    @property
+    def login_attempts(self) -> LoginAttemptRepositoryPort: ...
+    @property
+    def quota(self) -> QuotaRepositoryPort: ...
+    @property
     def layout(self) -> LayoutPort: ...
 
     def after_commit(self, hook: Hook) -> None: ...
     async def update_intent(self, feed_id: str, *, debounce: bool = False) -> tuple[int, int]: ...
     async def bump_revision(self, feed_id: str) -> int: ...
-    async def publish(self, event: BaseModel) -> None: ...
+    async def publish(
+        self, event: BaseModel, *, owner: str | LookupSentinel | None = LOOKUP
+    ) -> None:
+        """NOTIFY ``event`` on commit; ``owner`` routes it to that User's subscribers.
+
+        The default looks the owner up from the event's Feed (or job); a caller that
+        publishes after deleting the Feed passes it explicitly.
+        """
+        ...
+
     async def notify_jobs(self, payload: str = "") -> None: ...
     async def flush(self) -> None: ...
     async def commit(self) -> None: ...
@@ -698,7 +915,7 @@ class UnitOfWorkPort(Protocol):
 
 
 class UnitOfWorkFactoryPort(Protocol):
-    def __call__(self) -> UnitOfWorkPort: ...
+    def __call__(self, scope: Scope = Scope.SYSTEM) -> UnitOfWorkPort: ...
     async def flush_exports(self) -> None: ...
     async def aclose(self) -> None: ...
 
@@ -751,17 +968,30 @@ class RssFetch:
 
 
 class SourceGateway(Protocol):
-    """Probing, searching and Source snapshots; every method is synchronous and blocking."""
+    """Probing, searching and Source snapshots; every method is synchronous and blocking.
+
+    ``owner`` is the User whose Cookie files an Engine call carries (and whose probe
+    cache it reads): the Feed's Owner for its Refreshes and inspections, the acting
+    User for probes, searches and playlists.
+    """
 
     def probe(
-        self, url: str, *, options: Mapping[str, Any], cancel: CancelToken
+        self, url: str, *, options: Mapping[str, Any], cancel: CancelToken, owner: str
     ) -> list[SourceSnapshot]: ...
-    def cached(self, *, token: str | None, url: str | None) -> SourceSnapshot | None: ...
+    def cached(
+        self, *, token: str | None, url: str | None, owner: str
+    ) -> SourceSnapshot | None: ...
     def search_podcasts(self, query: str, limit: int) -> list[PodcastSearchResult]: ...
-    def search_videos(self, query: str, limit: int) -> list[VideoSearchResult]: ...
-    def list_playlists(self) -> list[YouTubePlaylist]: ...
+    def search_videos(self, query: str, limit: int, *, owner: str) -> list[VideoSearchResult]: ...
+    def list_playlists(self, *, owner: str) -> list[YouTubePlaylist]: ...
     def inspect_video(
-        self, url: str, *, feed_id: str, options: Mapping[str, Any], language: str | None
+        self,
+        url: str,
+        *,
+        feed_id: str,
+        options: Mapping[str, Any],
+        language: str | None,
+        owner: str,
     ) -> SourceListingItem | None: ...
     def save_snapshot(self, feed_id: str, snapshot: SourceSnapshot) -> None: ...
     def fetch_rss(
@@ -781,6 +1011,7 @@ class SourceGateway(Protocol):
         language: str | None,
         cancel: CancelToken,
         limit: int,
+        owner: str,
     ) -> SourceListing: ...
     def save_rss_snapshot(self, feed_id: str, body: bytes) -> bool: ...
     def read_audio_tags(self, path: Path) -> AudioTags | None: ...
@@ -805,6 +1036,13 @@ class PublicUrls(Protocol):
     def asset_url(self, feed_id: str, local_path: str) -> str: ...
     def artwork_url(self, asset_id: str, local_path: str) -> str: ...
     def feed_object_url(self, feed_id: str, path: str) -> str: ...
+    def play_media_url(self, feed_id: str, item_id: str) -> str:
+        """The web player's media URL (``/api/feeds/{f}/items/{i}/media``), session only."""
+        ...
+
+    def play_asset_url(self, feed_id: str, item_id: str, name: str) -> str:
+        """The web player's URL of an item asset, by its local name, session only."""
+        ...
 
 
 class RowFactory(Protocol):
@@ -818,6 +1056,13 @@ class ServiceContext(Protocol):
 
     @property
     def settings(self) -> Settings: ...
+    @property
+    def principal(self) -> Principal:
+        """Whoever the services act as (the Container: ``Principal.SYSTEM``)."""
+        ...
+
+    @property
+    def users(self) -> UserDirectory: ...
     @property
     def engine(self) -> Engine: ...
     @property
@@ -838,6 +1083,8 @@ class ServiceContext(Protocol):
 
 
 __all__ = [
+    "DEFAULT_BUCKET_TITLE",
+    "LOOKUP",
     "ApiKeyRepositoryPort",
     "ApiKeyRow",
     "AssetNameLike",
@@ -855,19 +1102,28 @@ __all__ = [
     "JobRow",
     "LayoutPort",
     "ListingUpsertResult",
+    "LoginAttemptRepositoryPort",
+    "LoginAttemptRow",
+    "LookupSentinel",
     "ObjectStorePort",
     "Order",
     "PublicUrls",
+    "QuotaRepositoryPort",
     "RefreshRunRow",
     "RequestRepositoryPort",
     "RequestRow",
     "RowFactory",
     "RssFetch",
+    "Scope",
     "ScratchPort",
     "ServiceContext",
+    "SessionRepositoryPort",
+    "SessionRow",
     "SourceGateway",
     "SourceSnapshot",
     "TelemetryRepositoryPort",
     "UnitOfWorkFactoryPort",
     "UnitOfWorkPort",
+    "UserRepositoryPort",
+    "UserRow",
 ]

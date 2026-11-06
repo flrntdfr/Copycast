@@ -61,6 +61,14 @@ class NotReady(EngineError):
         self.retry_after = retry_after
 
 
+class QuotaExceeded(EngineError):
+    """The item's estimated size exceeds ``FetchSpec.max_bytes``: block it, do not retry."""
+
+    def __init__(self, estimate_bytes: int) -> None:
+        super().__init__(f"the estimated size ({estimate_bytes} bytes) exceeds the quota left")
+        self.estimate_bytes = estimate_bytes
+
+
 # --------------------------------------------------------------------------- values
 
 
@@ -132,6 +140,8 @@ class FetchSpec:
     home_dir: Path
     temp_dir: Path
     synth: SynthItem | None = None
+    max_bytes: int | None = None
+    """The Owner's remaining quota: a larger estimate raises ``QuotaExceeded``; None, no check."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,11 +240,14 @@ class Engine(Protocol):
         log: EngineLog,
         *,
         limit: int | None = None,
+        cookie_jar: str | None = None,
     ) -> SourceListing:
         """Flat-extract ``url`` into a :class:`SourceListing` (no downloads).
 
         ``limit`` asks for a shallow listing of at most that many entries from
-        the first page (a light Refresh's check of the newest items).
+        the first page (a light Refresh's check of the newest items). ``cookie_jar``
+        is the Object store key of the Cookie file jar the call carries (rotated
+        cookies go back to it); None carries no stored cookies.
         """
         ...
 
@@ -245,6 +258,13 @@ class Engine(Protocol):
         cancel: CancelToken,
         on_progress: ProgressCallback,
         log: EngineLog,
+        *,
+        cookie_jar: str | None = None,
     ) -> FetchResult:
-        """Download one item's best audio with tags and Artwork embedded."""
+        """Download one item's best audio with tags and Artwork embedded.
+
+        ``cookie_jar`` as for :meth:`list_source`. With ``spec.max_bytes`` set, a yt-dlp
+        fetch whose estimated size exceeds it raises :class:`QuotaExceeded` before any
+        download; direct fetches are never estimated.
+        """
         ...

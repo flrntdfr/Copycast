@@ -19,7 +19,9 @@ from copycast.domain.enums import (
     AssetKind,
     AssetProvenance,
     AssetState,
+    AuthMode,
     BackfillMode,
+    BlockedReason,
     ErrorKind,
     FeedKind,
     HealthStatus,
@@ -29,12 +31,14 @@ from copycast.domain.enums import (
     KeyScope,
     LiveStatus,
     Numbering,
+    PrincipalVia,
     ProgressPhase,
     RequestedVia,
     RequestStatus,
     SourceKind,
 )
 from copycast.domain.language import normalize_language
+from copycast.domain.quota import QuotaState
 
 BUCKET_NAME_MAX_LEN = 80
 SELECTION_MAX_LEN = 4096
@@ -76,6 +80,7 @@ class CatalogCounts(ReadModel):
     wanted: int = 0
     archived: int = 0
     failed: int = 0
+    blocked: int = Field(default=0, description="Wanted items waiting because of the quota")
 
 
 class SelectionSummary(ReadModel):
@@ -95,6 +100,10 @@ class FeedCredentials(ReadModel):
 
 class _FeedReadBase(ReadModel):
     id: str
+    owner: str = Field(description="The User the Feed belongs to")
+    owner_removed: bool = Field(
+        default=False, description="The Owner is no longer in the configuration"
+    )
     title: str
     description: str | None = None
     artwork_url: str | None = None
@@ -256,6 +265,13 @@ class AssetRead(ReadModel):
         default=None,
         description="Local URL once archived; Artwork's is its public /art/ URL (no credentials)",
     )
+    name: str | None = Field(
+        default=None, description="The archived file's name (the last segment of its path)"
+    )
+    play_url: str | None = Field(
+        default=None,
+        description="An item asset for the web player (session only); absolute, stable",
+    )
     remote_url: str | None = None
     mime: str | None = None
     size_bytes: int | None = None
@@ -269,6 +285,10 @@ class ItemMedia(ReadModel):
     bytes: int
     mime: str
     ext: str
+    play_url: str | None = Field(
+        default=None,
+        description="The media for the web player (session only); absolute, no extension",
+    )
 
 
 class ItemRead(ReadModel):
@@ -302,6 +322,9 @@ class ItemRead(ReadModel):
     )
     attempt_count: int = 0
     last_error: str | None = None
+    blocked_reason: BlockedReason | None = Field(
+        default=None, description="Why a wanted item waits (quota: Over quota)"
+    )
     media: ItemMedia | None = None
     public_media_url: str = Field(
         description="The media URL the feed advertises: fixed for the item's life, whatever "
@@ -342,6 +365,9 @@ class JobRead(ReadModel):
     feed_id: str | None = None
     item_id: str | None = None
     request_id: UUID | None = None
+    requested_by: str | None = Field(
+        default=None, description="The User who asked for it; null for the scheduler"
+    )
     trigger: JobTrigger
     status: JobStatus
     progress: JobProgress | None = None
@@ -660,6 +686,9 @@ class BucketUpdate(RequestModel):
 
 class UploadCreate(RequestModel):
     filename: str = Field(min_length=1, max_length=255, description="The file's own name")
+    size_bytes: int | None = Field(
+        default=None, ge=0, description="The file's size, checked against the quota up front"
+    )
 
     @field_validator("filename")
     @classmethod
@@ -704,6 +733,7 @@ class UploadRead(ReadModel):
     )
     size_bytes: int | None = None
     tags: AudioTags | None = None
+    owner: str | None = Field(default=None, description="The User who staged it")
     created_at: datetime
 
 
@@ -946,6 +976,7 @@ class ApiKeyCreate(RequestModel):
 
 class ApiKeyRead(ReadModel):
     id: UUID
+    owner: str = Field(description="The User the key acts as")
     name: str
     scope: KeyScope
     prefix: str = Field(description="The displayable head of the key (cck_XXXXXXXX)")
@@ -989,7 +1020,11 @@ class AboutRead(ReadModel):
     layout_version: str
     totals: Totals = Field(default_factory=Totals)
     auth_enabled: bool = Field(
-        default=False, description="Whether an operator password gates the UI, API and MCP"
+        default=False, description="Whether authentication gates the UI, API and MCP"
+    )
+    auth_mode: AuthMode = Field(
+        default=AuthMode.open,
+        description="open (no authentication), legacy (the operator password) or users",
     )
 
 
@@ -1006,6 +1041,14 @@ class ReadyRead(ReadModel):
 StatusState = Literal["ok", "warn", "error", "unknown"]
 
 
+class StatusMeter(ReadModel):
+    """A usage bar: bytes used of a quota."""
+
+    used_bytes: int
+    quota_bytes: int | None = Field(description="None means unlimited")
+    ratio: float | None = Field(description="used / quota; None when unlimited")
+
+
 class StatusFact(ReadModel):
     """One line under a component: a value, a moment (shown relative) or both."""
 
@@ -1016,6 +1059,7 @@ class StatusFact(ReadModel):
     state: StatusState | None = Field(
         default=None, description="Set when this line has a state of its own (a crawler)"
     )
+    meter: StatusMeter | None = Field(default=None, description="A usage bar (a User's quota)")
 
 
 class ComponentStatus(ReadModel):
@@ -1024,6 +1068,7 @@ class ComponentStatus(ReadModel):
     state: StatusState
     summary: str
     facts: list[StatusFact] = Field(default_factory=list[StatusFact])
+    meter: StatusMeter | None = Field(default=None, description="A usage bar (the quota)")
 
 
 class StatusRead(ReadModel):
@@ -1056,6 +1101,46 @@ class CrawlerStats(ReadModel):
 
 class RebuildRequest(RequestModel):
     dry_run: bool = True
+
+
+# --------------------------------------------------------------------------- users
+
+
+class LoginRequest(RequestModel):
+    """``POST /auth/login``: a configured username (any case), its password and TOTP code."""
+
+    username: str = Field(min_length=1, max_length=256)
+    password: str = Field(min_length=1, max_length=1024)
+    totp: str | None = Field(default=None, description="6 digits; spaces ignored")
+
+    @field_validator("username")
+    @classmethod
+    def _username(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("username must not be blank")
+        return value
+
+
+class QuotaStatus(ReadModel):
+    """A User's storage: bytes used by their Feeds against their quota."""
+
+    username: str
+    used_bytes: int
+    quota_bytes: int | None = Field(description="None means unlimited")
+    state: QuotaState = Field(description="ok, near (from 90 %) or over (from 100 %)")
+    removed: bool = Field(default=False, description="The User is no longer in the configuration")
+
+
+class MeRead(ReadModel):
+    """The signed-in User (``GET /api/me``)."""
+
+    username: str
+    admin: bool
+    auth_mode: AuthMode
+    via: PrincipalVia
+    totp: bool = Field(description="Whether this User signs in with a TOTP code")
+    quota: QuotaStatus
 
 
 class Problem(BaseModel):
@@ -1108,6 +1193,8 @@ __all__ = [
     "JobPage",
     "JobProgress",
     "JobRead",
+    "LoginRequest",
+    "MeRead",
     "MirrorChangePreview",
     "MirrorCreate",
     "MirrorDefaults",
@@ -1122,6 +1209,7 @@ __all__ = [
     "PruneRequest",
     "PruneResult",
     "QueueStats",
+    "QuotaStatus",
     "ReadModel",
     "ReadyCheck",
     "ReadyRead",
@@ -1136,6 +1224,7 @@ __all__ = [
     "SerialBucketCreate",
     "SerialEpisode",
     "StatusFact",
+    "StatusMeter",
     "StatusRead",
     "StatusState",
     "StorageSummary",
