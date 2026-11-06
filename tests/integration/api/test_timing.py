@@ -94,14 +94,23 @@ async def _median_login_seconds(client: httpx.AsyncClient, names: list[str]) -> 
 async def test_unknown_user_and_wrong_password_take_the_same_time(
     settings: Settings, db: str
 ) -> None:
-    """Real argon2 parameters: an unknown name runs a dummy verify as costly as a real one."""
+    """Real argon2 parameters: an unknown name runs a dummy verify as costly as a real one.
+
+    Three known names, so the medians cover twelve sign-ins each and stay below the lock
+    threshold of every name (four were too few to resist a busy machine).
+    """
     real = PasswordHasher()
-    entries = [user_entry(USERS["root"], password_hash=real.hash(USERS["root"].password))]
+    known = ("root", "alice", "bob")
+    entries = [
+        user_entry(USERS[name], password_hash=real.hash(USERS[name].password)) for name in known
+    ]
     configured = settings_with(settings, auth={"users": entries})
     async with running(configured) as (_, client):
         await _median_login_seconds(client, ["warm-up"])  # computes the dummy hash once
-        unknown = await _median_login_seconds(client, [f"nobody{n}" for n in range(TRIES)])
-        wrong = await _median_login_seconds(client, ["root"] * TRIES)
+        wrong = await _median_login_seconds(client, [*known] * TRIES)
+        unknown = await _median_login_seconds(
+            client, [f"nobody{n}" for n in range(len(known) * TRIES)]
+        )
     assert abs(unknown - wrong) <= 0.25 * max(unknown, wrong), (unknown, wrong)
 
 
