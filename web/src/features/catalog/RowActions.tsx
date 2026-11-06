@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useArchiveItem, useDeleteItem, useSetLock } from "./mutations";
 import { canArchive, canDelete } from "./catalog-state";
+import { chaptersUrlOf, downloadUrlOf, playUrlOf } from "./media-urls";
 import { cn } from "@/lib/utils";
 import { play, useIsPlaying } from "@/stores/player";
 
@@ -90,19 +91,18 @@ export function RowActions({ item, feedTitle }: { item: ItemRead; feedTitle: str
                 feedId: item.feed_id,
                 title: item.title,
                 feedTitle,
-                url: item.media?.url ?? "",
+                url: playUrlOf(item) ?? "",
                 mime: item.media?.mime ?? "",
                 artworkUrl: item.artwork_url ?? null,
                 durationSeconds: item.duration_seconds ?? null,
-                chaptersUrl:
-                  item.assets?.find((asset) => asset.kind === "chapters" && asset.url)?.url ?? null,
+                chaptersUrl: chaptersUrlOf(item),
               })
             }
           >
             {playing ? <Pause /> : <Play />}
           </Action>
           <Action label="Download" asChild>
-            <a href={item.media.url} download>
+            <a href={downloadUrlOf(item) ?? item.media.url} download>
               <Download />
             </a>
           </Action>

@@ -126,6 +126,7 @@ export function item(overrides: Partial<ItemRead> = {}): ItemRead {
             bytes: 4_407,
             mime: "audio/mp4",
             ext: "m4a",
+            play_url: `http://localhost:8080/api/feeds/${feedId}/items/${id}/media`,
           }
         : null,
     public_media_url: `http://localhost:8080/feeds/${feedId}/media/${id}.m4a`,
