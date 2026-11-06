@@ -196,6 +196,37 @@ describe("CatalogTable", () => {
     expect(done.querySelector("[data-live-status]")).toBeNull();
   });
 
+  it("shows Over quota next to the state of an item blocked by the quota", async () => {
+    const blocked = [
+      item({
+        id: "item-b",
+        feed_id: feed.id,
+        title: "Waiting",
+        state: "wanted",
+        blocked_reason: "quota",
+      }),
+      item({ id: "item-q", feed_id: feed.id, title: "Next up", state: "wanted" }),
+    ];
+    server.use(
+      http.get("/api/feeds/:feedId/items", () =>
+        HttpResponse.json({ items: blocked, total: blocked.length, limit: 100, offset: 0 }),
+      ),
+      http.get("/api/settings/defaults", () =>
+        HttpResponse.json({ language: null, min_duration_seconds: null }),
+      ),
+    );
+    renderWithProviders(
+      <CatalogTable feed={feed} search={search()} onSearchChange={() => undefined} />,
+    );
+    await screen.findAllByTestId("catalog-row");
+    const waiting = screen.getByText("Waiting").closest("tr") as HTMLElement;
+    expect(
+      within(waiting).getByText("Over quota").closest("[data-blocked-reason]"),
+    ).toHaveAttribute("data-blocked-reason", "quota");
+    const queued = screen.getByText("Next up").closest("tr") as HTMLElement;
+    expect(queued.querySelector("[data-blocked-reason]")).toBeNull();
+  });
+
   it("marks approximate dates and fetches a missing description when the row opens", async () => {
     const rough = item({
       id: "item-7",

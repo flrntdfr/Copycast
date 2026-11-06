@@ -211,6 +211,7 @@ export function MirrorHeader({
               {counts ? ` · ${formatNumber(counts.available ?? 0)} Available` : ""}
               {counts?.delisted ? ` · ${formatNumber(counts.delisted)} Delisted` : ""}
               {counts?.wanted ? ` · ${formatNumber(counts.wanted)} queued` : ""}
+              {counts?.blocked ? ` · ${formatNumber(counts.blocked)} over quota` : ""}
               {counts?.failed ? ` · ${formatNumber(counts.failed)} failed` : ""}
               {` · ${formatBytes(mirror.storage_bytes)}`}
             </span>
