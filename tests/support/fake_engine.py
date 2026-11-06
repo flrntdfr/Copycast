@@ -25,6 +25,7 @@ from copycast.application.ports import (
     FetchSpec,
     Progress,
     ProgressCallback,
+    QuotaExceeded,
 )
 from copycast.domain.enums import EnginePhase, FetchKind
 from copycast.domain.listing import SourceListing
@@ -47,7 +48,9 @@ CANCEL_POLL_SECONDS = 0.05
 @dataclass(frozen=True, slots=True)
 class FetchRecord:
     spec: FetchSpec
+    """``spec.max_bytes`` is the quota left the caller passed."""
     options: dict[str, Any]
+    cookie_jar: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +58,7 @@ class ListingRecord:
     url: str
     options: dict[str, Any]
     limit: int | None = None
+    cookie_jar: str | None = None
 
 
 @dataclass
@@ -90,6 +94,9 @@ class FakeEngine:
         self.version_info = FAKE_VERSION
         self.audio_bytes = STUB_AUDIO
         self.duration_seconds: int | None = 61
+        self.estimated_bytes: int | None = None
+        """yt-dlp's size estimate of every yt-dlp fetch: above ``spec.max_bytes``, the fetch
+        raises ``QuotaExceeded`` before writing anything; None, no estimate (always passes)."""
 
     # ------------------------------------------------------------------ scripting
 
@@ -166,10 +173,13 @@ class FakeEngine:
         log: EngineLog,
         *,
         limit: int | None = None,
+        cookie_jar: str | None = None,
     ) -> SourceListing:
         opts = dict(options)
         with self._lock:
-            self.records.listings.append(ListingRecord(url=url, options=opts, limit=limit))
+            self.records.listings.append(
+                ListingRecord(url=url, options=opts, limit=limit, cookie_jar=cookie_jar)
+            )
             self.records.options_seen.append(opts)
             failure = self._failures.pop(0) if self._failures else None
             listing = self._listings.get(url) or self._listings.get(url.rstrip("/"))
@@ -195,10 +205,12 @@ class FakeEngine:
         cancel: CancelToken,
         on_progress: ProgressCallback,
         log: EngineLog,
+        *,
+        cookie_jar: str | None = None,
     ) -> FetchResult:
         opts = dict(options)
         with self._lock:
-            self.records.fetches.append(FetchRecord(spec=spec, options=opts))
+            self.records.fetches.append(FetchRecord(spec=spec, options=opts, cookie_jar=cookie_jar))
             self.records.options_seen.append(opts)
             failure = self._failures.pop(0) if self._failures else None
             if failure is None:
@@ -216,6 +228,15 @@ class FakeEngine:
             raise failure
         if spec.kind is FetchKind.direct and spec.synth is None:
             raise EngineError("direct fetch without a synthesized item")
+        estimate = self.estimated_bytes
+        if (
+            spec.kind is FetchKind.ytdlp
+            and spec.max_bytes is not None
+            and estimate is not None
+            and estimate > spec.max_bytes
+        ):
+            log.warning(f"fetch of {spec.item_id} refused: {estimate} bytes estimated")
+            raise QuotaExceeded(estimate)
 
         spec.home_dir.mkdir(parents=True, exist_ok=True)
         spec.temp_dir.mkdir(parents=True, exist_ok=True)

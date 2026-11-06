@@ -3,7 +3,7 @@
   "info": {
     "title": "Copycast",
     "description": "Self-hosted podcast mirroring and archiving.",
-    "version": "2.3.0"
+    "version": "3.0.0"
   },
   "paths": {
     "/api/feeds": {
@@ -317,7 +317,7 @@
         "tags": [
           "feeds"
         ],
-        "summary": "How many files every Feed keeps in its bucket, and their total size",
+        "summary": "How many files each of your own Feeds keeps in its bucket, and their total size",
         "operationId": "storage_summary",
         "responses": {
           "200": {
@@ -1326,6 +1326,205 @@
           }
         },
         "x-capability": "set_archive_flag"
+      }
+    },
+    "/api/feeds/{feed_id}/items/{item_id}/media": {
+      "get": {
+        "tags": [
+          "items"
+        ],
+        "summary": "An item's archived media for the web player (session only; Range supported)",
+        "description": "The archived media of one item, for the web player (``?download=1``: a download).",
+        "operationId": "play_item_media",
+        "parameters": [
+          {
+            "name": "feed_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feed Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          },
+          {
+            "name": "download",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Download"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "audio/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "The requested range"
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/feeds/{feed_id}/items/{item_id}/assets/{name}": {
+      "get": {
+        "tags": [
+          "items"
+        ],
+        "summary": "One archived asset of an item for the web player (session only)",
+        "description": "One archived asset of one item (chapters, transcript, Artwork, attachment).",
+        "operationId": "play_item_asset",
+        "parameters": [
+          {
+            "name": "feed_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feed Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "The signed-in User (session only); re-issues the session cookie",
+        "operationId": "get_me",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "get_me"
       }
     },
     "/api/probe": {
@@ -2828,6 +3027,16 @@
               }
             }
           },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Validation failed",
             "content": {
@@ -2995,6 +3204,16 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Over quota",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         },
         "x-capability": "create_upload"
@@ -3051,6 +3270,50 @@
           }
         },
         "x-capability": "get_upload"
+      },
+      "delete": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Give up a staged upload and the room it holds",
+        "operationId": "delete_upload",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "delete_upload"
       }
     },
     "/api/serial-buckets": {
@@ -3103,6 +3366,16 @@
           },
           "422": {
             "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "Over quota",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3183,9 +3456,119 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Over quota",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         },
         "x-capability": "add_uploads"
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Sign in with a username, password and TOTP code; sets the session cookie",
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "HTTPS required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign-in failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Busy",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-capability": "login"
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Sign out: ends the session the cookie names, if any, and clears the cookie",
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "x-capability": "logout"
       }
     },
     "/feeds/{feed_id}.xml": {
@@ -3260,6 +3643,16 @@
         "responses": {
           "200": {
             "description": "Successful Response"
+          },
+          "507": {
+            "description": "Over quota",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -3385,6 +3778,16 @@
                 }
               }
             }
+          },
+          "507": {
+            "description": "Over quota",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         },
         "x-capability": "put_upload"
@@ -3458,8 +3861,13 @@
           "auth_enabled": {
             "type": "boolean",
             "title": "Auth Enabled",
-            "description": "Whether an operator password gates the UI, API and MCP",
+            "description": "Whether authentication gates the UI, API and MCP",
             "default": false
+          },
+          "auth_mode": {
+            "$ref": "#/components/schemas/AuthMode",
+            "description": "open (no authentication), legacy (the operator password) or users",
+            "default": "open"
           }
         },
         "type": "object",
@@ -3531,6 +3939,11 @@
             "format": "uuid",
             "title": "Id"
           },
+          "owner": {
+            "type": "string",
+            "title": "Owner",
+            "description": "The User the key acts as"
+          },
           "name": {
             "type": "string",
             "title": "Name"
@@ -3564,6 +3977,7 @@
         "type": "object",
         "required": [
           "id",
+          "owner",
           "name",
           "scope",
           "prefix",
@@ -3687,6 +4101,30 @@
             ],
             "title": "Url",
             "description": "Local URL once archived; Artwork's is its public /art/ URL (no credentials)"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "The archived file's name (the last segment of its path)"
+          },
+          "play_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Play Url",
+            "description": "An item asset for the web player (session only); absolute, stable"
           },
           "remote_url": {
             "anyOf": [
@@ -3947,6 +4385,16 @@
         "title": "AudioTags",
         "description": "What Copycast read from an uploaded file (ID3, MP4, Vorbis tags); null when absent."
       },
+      "AuthMode": {
+        "type": "string",
+        "enum": [
+          "open",
+          "legacy",
+          "users"
+        ],
+        "title": "AuthMode",
+        "description": "How Copycast authenticates: nobody (``open``), the operator password, or config users."
+      },
       "BackfillMode": {
         "type": "string",
         "enum": [
@@ -4046,6 +4494,14 @@
         "title": "BackfillRequest",
         "description": "The archive policy; ``selection`` implies mode ``selection``.\n\nArchive: ``all`` (everything, then Follow) or ``new`` (nothing listed so far, then\nevery new item). Ephemeral: ``automatic``, nothing ahead of time; an Episode is\ndownloaded when a podcast app first asks for it and expires ``retention_days``\n(default 7) after its last download. ``rolling``: the newest ``latest_n`` only, older\nEpisodes tombstoned as newer ones arrive. ``selection``: exactly the Episodes named.\n``latest`` (N at creation, then Follow) remains for existing Mirrors."
       },
+      "BlockedReason": {
+        "type": "string",
+        "enum": [
+          "quota"
+        ],
+        "title": "BlockedReason",
+        "description": "Why a wanted Catalog item waits instead of archiving (``catalog_items.blocked_reason``)."
+      },
       "BucketCreate": {
         "properties": {
           "name": {
@@ -4079,6 +4535,17 @@
           "id": {
             "type": "string",
             "title": "Id"
+          },
+          "owner": {
+            "type": "string",
+            "title": "Owner",
+            "description": "The User the Feed belongs to"
+          },
+          "owner_removed": {
+            "type": "boolean",
+            "title": "Owner Removed",
+            "description": "The Owner is no longer in the configuration",
+            "default": false
           },
           "title": {
             "type": "string",
@@ -4183,6 +4650,7 @@
         "type": "object",
         "required": [
           "id",
+          "owner",
           "title",
           "feed_url",
           "created_at",
@@ -4253,6 +4721,12 @@
           "failed": {
             "type": "integer",
             "title": "Failed",
+            "default": 0
+          },
+          "blocked": {
+            "type": "integer",
+            "title": "Blocked",
+            "description": "Wanted items waiting because of the quota",
             "default": 0
           }
         },
@@ -4343,6 +4817,17 @@
             },
             "type": "array",
             "title": "Facts"
+          },
+          "meter": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StatusMeter"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A usage bar (the quota)"
           }
         },
         "type": "object",
@@ -4862,6 +5347,18 @@
           "ext": {
             "type": "string",
             "title": "Ext"
+          },
+          "play_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Play Url",
+            "description": "The media for the web player (session only); absolute, no extension"
           }
         },
         "type": "object",
@@ -5030,6 +5527,17 @@
               }
             ],
             "title": "Last Error"
+          },
+          "blocked_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BlockedReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why a wanted item waits (quota: Over quota)"
           },
           "media": {
             "anyOf": [
@@ -5290,6 +5798,18 @@
             ],
             "title": "Request Id"
           },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By",
+            "description": "The User who asked for it; null for the scheduler"
+          },
           "trigger": {
             "$ref": "#/components/schemas/JobTrigger"
           },
@@ -5429,6 +5949,80 @@
         ],
         "title": "LiveStatus",
         "description": "What the Engine says an item is doing as a live stream (yt-dlp's ``live_status``).\n\nA flat listing knows ``is_upcoming``, ``is_live`` and ``was_live``; only a full\nextraction (an archive) knows ``post_live``, the stream that ended but whose\nrecording YouTube has not published yet. ``None`` on the item means the Source\nsaid nothing (an RSS item, a plain upload from some extractors)."
+      },
+      "LoginRequest": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Password"
+          },
+          "totp": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Totp",
+            "description": "6 digits; spaces ignored"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "description": "``POST /auth/login``: a configured username (any case), its password and TOTP code."
+      },
+      "MeRead": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "admin": {
+            "type": "boolean",
+            "title": "Admin"
+          },
+          "auth_mode": {
+            "$ref": "#/components/schemas/AuthMode"
+          },
+          "via": {
+            "$ref": "#/components/schemas/PrincipalVia"
+          },
+          "totp": {
+            "type": "boolean",
+            "title": "Totp",
+            "description": "Whether this User signs in with a TOTP code"
+          },
+          "quota": {
+            "$ref": "#/components/schemas/QuotaStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "admin",
+          "auth_mode",
+          "via",
+          "totp",
+          "quota"
+        ],
+        "title": "MeRead",
+        "description": "The signed-in User (``GET /api/me``)."
       },
       "MirrorChangePreview": {
         "properties": {
@@ -5615,13 +6209,24 @@
         "additionalProperties": false,
         "type": "object",
         "title": "MirrorDefaults",
-        "description": "Operator defaults applied to every Mirror whose own value is null.\n\nStored under the data directory (``engine/defaults.json``), edited on the\nSettings page; a Mirror overrides a value by setting its own, and resets\nto the default by clearing it."
+        "description": "A User's Defaults, applied to every one of their Mirrors whose own value is null.\n\nStored in the Object store at ``users/{username}/defaults.json``, edited on\nthe Settings page; a Mirror overrides a value by setting its own, and resets\nto the default by clearing it."
       },
       "MirrorRead": {
         "properties": {
           "id": {
             "type": "string",
             "title": "Id"
+          },
+          "owner": {
+            "type": "string",
+            "title": "Owner",
+            "description": "The User the Feed belongs to"
+          },
+          "owner_removed": {
+            "type": "boolean",
+            "title": "Owner Removed",
+            "description": "The Owner is no longer in the configuration",
+            "default": false
           },
           "title": {
             "type": "string",
@@ -5871,6 +6476,7 @@
         "type": "object",
         "required": [
           "id",
+          "owner",
           "title",
           "feed_url",
           "created_at",
@@ -6110,6 +6716,17 @@
           "feed_url"
         ],
         "title": "PodcastSearchResult"
+      },
+      "PrincipalVia": {
+        "type": "string",
+        "enum": [
+          "session",
+          "api_key",
+          "open",
+          "system"
+        ],
+        "title": "PrincipalVia",
+        "description": "How a Principal was established."
       },
       "ProbeCandidate": {
         "properties": {
@@ -6366,6 +6983,55 @@
         "type": "object",
         "title": "PurgeRequest",
         "description": "Delete every archived Episode of every feed except the locked ones; feeds, Catalogs\nand artwork stay."
+      },
+      "QuotaStatus": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "used_bytes": {
+            "type": "integer",
+            "title": "Used Bytes"
+          },
+          "quota_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quota Bytes",
+            "description": "None means unlimited"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "near",
+              "over"
+            ],
+            "title": "State",
+            "description": "ok, near (from 90 %) or over (from 100 %)"
+          },
+          "removed": {
+            "type": "boolean",
+            "title": "Removed",
+            "description": "The User is no longer in the configuration",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "used_bytes",
+          "quota_bytes",
+          "state"
+        ],
+        "title": "QuotaStatus",
+        "description": "A User's storage: bytes used by their Feeds against their quota."
       },
       "ReadyCheck": {
         "properties": {
@@ -6892,6 +7558,17 @@
             ],
             "title": "State",
             "description": "Set when this line has a state of its own (a crawler)"
+          },
+          "meter": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StatusMeter"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A usage bar (a User's quota)"
           }
         },
         "type": "object",
@@ -6900,6 +7577,46 @@
         ],
         "title": "StatusFact",
         "description": "One line under a component: a value, a moment (shown relative) or both."
+      },
+      "StatusMeter": {
+        "properties": {
+          "used_bytes": {
+            "type": "integer",
+            "title": "Used Bytes"
+          },
+          "quota_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quota Bytes",
+            "description": "None means unlimited"
+          },
+          "ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio",
+            "description": "used / quota; None when unlimited"
+          }
+        },
+        "type": "object",
+        "required": [
+          "used_bytes",
+          "quota_bytes",
+          "ratio"
+        ],
+        "title": "StatusMeter",
+        "description": "A usage bar: bytes used of a quota."
       },
       "StatusRead": {
         "properties": {
@@ -6988,6 +7705,19 @@
             "minLength": 1,
             "title": "Filename",
             "description": "The file's own name"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes",
+            "description": "The file's size, checked against the quota up front"
           }
         },
         "additionalProperties": false,
@@ -7048,6 +7778,18 @@
                 "type": "null"
               }
             ]
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner",
+            "description": "The User who staged it"
           },
           "created_at": {
             "type": "string",

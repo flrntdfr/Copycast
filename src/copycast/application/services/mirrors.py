@@ -31,16 +31,23 @@ from copycast.application.services.items import (
     enqueue_archive,
     refresh_dedup_key,
 )
+from copycast.application.services.keyscope import (
+    require_backfill_scope,
+    require_engine_options_scope,
+)
+from copycast.application.services.owners import acting_owner
 from copycast.application.services.policy import (
     apply_policy,
     defaults_for,
     locks_on_archive,
     shortest_for,
 )
+from copycast.application.services.quota import gate_manual, on_manual_wanted
 from copycast.application.services.readmodels import job_read, mirror_read, one_feed_read
 from copycast.application.services.sources import probe_snapshots
 from copycast.domain.enums import (
     ArchiveState,
+    AuthMode,
     BackfillMode,
     FeedKind,
     JobKind,
@@ -50,12 +57,14 @@ from copycast.domain.enums import (
 )
 from copycast.domain.exceptions import (
     Ambiguous,
+    Conflict,
     FeedExists,
+    Forbidden,
     InvalidSelection,
     NotFound,
     SourceKindChange,
 )
-from copycast.domain.ids import mirror_id
+from copycast.domain.ids import mirror_id, owned_mirror_id
 from copycast.domain.selection import parse_selection_strict
 from copycast.domain.urls import normalize_source_url
 from copycast.logging import get_logger
@@ -123,19 +132,48 @@ async def request_refresh(
 
 
 async def _resolve_snapshot(
-    ctx: ServiceContext, url: str, token: str | None, *, cancel: CancelToken | None
+    ctx: ServiceContext,
+    url: str,
+    token: str | None,
+    *,
+    owner: str,
+    cancel: CancelToken | None,
 ) -> SourceSnapshot:
-    """The cached probe (by token, then by normalized URL) or a fresh one; one candidate."""
-    cached = ctx.sources.cached(token=token, url=url)
+    """``owner``'s cached probe (by token, then by normalized URL) or a fresh one; one
+    candidate."""
+    cached = ctx.sources.cached(token=token, url=url, owner=owner)
     if cached is not None:
         return cached
-    snapshots = await probe_snapshots(ctx, url, cancel=cancel)
+    snapshots = await probe_snapshots(ctx, url, owner=owner, cancel=cancel)
     if len(snapshots) != 1:
         raise Ambiguous([s.candidate for s in snapshots])
     return snapshots[0]
 
 
+def new_mirror_id(ctx: ServiceContext, owner: str, dedup_key: str) -> str:
+    """The id of ``owner``'s new Mirror of the Source ``dedup_key``.
+
+    Users mode: :func:`owned_mirror_id`, for every new Mirror and Capture, so the id never
+    depends on whether another User mirrors the Source and reveals nothing about it.
+    Open and legacy mode: :func:`mirror_id`, as before 3.0. Existing ids never change.
+    """
+    if ctx.users.mode is AuthMode.users:
+        return owned_mirror_id(owner, dedup_key)
+    return mirror_id(dedup_key)
+
+
+def require_engine_options_role(ctx: ServiceContext, changing: bool, what: str) -> None:
+    """Setting or changing a Mirror's ``engine_options`` is for Admins (and SYSTEM) only.
+
+    The second fence next to the key scope (:func:`require_engine_options_scope`): a
+    Member gets ``Forbidden`` on ``/api`` and over MCP alike.
+    """
+    if changing and not ctx.principal.admin:
+        raise Forbidden(f"{what} (engine_options) needs an Admin")
+
+
 def _feed_values(
+    feed_id: str,
     snapshot: SourceSnapshot,
     dedup_key: str,
     body: MirrorCreate,
@@ -145,7 +183,7 @@ def _feed_values(
     listing = snapshot.listing
     candidate = snapshot.candidate
     return {
-        "id": mirror_id(dedup_key),
+        "id": feed_id,
         "kind": FeedKind.mirror.value,
         "title": candidate.title or listing.title or candidate.source_url,
         "description": candidate.description or listing.description,
@@ -190,19 +228,36 @@ async def create_mirror(
     the other modes queue the first Refresh. Without ``backfill`` the operator's
     default policy applies (Automatic out of the box).
     """
-    snapshot = await _resolve_snapshot(ctx, body.source_url, body.candidate_token, cancel=cancel)
+    require_backfill_scope(ctx, body.backfill, "create_mirror")
+    require_engine_options_scope(ctx, bool(body.engine_options), "create_mirror")
+    require_engine_options_role(ctx, bool(body.engine_options), "create_mirror")
+    owner = acting_owner(ctx)
+    snapshot = await _resolve_snapshot(
+        ctx, body.source_url, body.candidate_token, owner=owner, cancel=cancel
+    )
     dedup_key = normalize_source_url(snapshot.source_url)
-    backfill, follow = body.resolve(defaults_for(ctx).backfill)
+    backfill, follow = body.resolve(defaults_for(ctx, owner).backfill)
+    feed_id = new_mirror_id(ctx, owner, dedup_key)
+    salted = ctx.users.mode is AuthMode.users
     async with ctx.uow_factory() as uow:
-        existing = await uow.feeds.by_dedup_key(dedup_key)
-        if existing is None:
-            existing = await uow.feeds.get(mirror_id(dedup_key))
+        # Only the actor's own duplicate is a feed-exists; another User's never shows.
+        existing = await uow.feeds.by_dedup_key(owner, dedup_key)
         if existing is not None:
             raise FeedExists(existing.id, snapshot.source_url)
+        taken = await uow.feeds.get(feed_id)
+        if taken is not None and (taken.owner == owner or not salted):
+            # The actor's own Mirror, retargeted away from this Source (or, before users
+            # mode, whichever Feed holds the id, as in 2.3.0).
+            raise FeedExists(taken.id, snapshot.source_url)
+        if await uow.feeds.exists_id(feed_id):
+            # A 64-bit hash collision with another User's Feed: no id, no Owner.
+            raise Conflict("feed id collision")
         feed = await uow.feeds.add(
-            ctx.rows.feed(**_feed_values(snapshot, dedup_key, body, backfill, follow))
+            ctx.rows.feed(
+                owner=owner,
+                **_feed_values(feed_id, snapshot, dedup_key, body, backfill, follow),
+            )
         )
-        feed_id = feed.id
         await uow.catalog.upsert_listing(feed_id, snapshot.listing)
         if backfill.mode is BackfillMode.selection:
             expression = backfill.selection
@@ -278,6 +333,7 @@ async def _apply_selection(
             "the selection matches no Catalog item", unresolved=resolved.unresolved
         )
     changed = set(await uow.catalog.set_wanted(resolved.resolved, WantedReason.manual))
+    await on_manual_wanted(uow, resolved.resolved)
     jobs: list[JobRead] = []
     for item in await uow.catalog.get_many(resolved.resolved):
         if item.archive_state in (ArchiveState.wanted, ArchiveState.archiving):
@@ -329,7 +385,8 @@ async def archive_available(
     are included, exactly as if each had been selected.
     """
     async with ctx.uow_factory() as uow:
-        await uow.feeds.require(feed_id)
+        feed = await uow.feeds.require(feed_id)
+        await gate_manual(uow, ctx.users, feed.owner)
         ids = await uow.catalog.available_ids(feed_id, include_deleted=True)
     result = await _archive_ids(ctx, feed_id, ids, trigger=trigger)
     log.info("feed.archive_available", feed_id=feed_id, queued=len(result.jobs))
@@ -342,7 +399,8 @@ async def retry_failed(
 ) -> SelectionResult:
     """Queue every failed item of a feed again."""
     async with ctx.uow_factory() as uow:
-        await uow.feeds.require(feed_id)
+        feed = await uow.feeds.require(feed_id)
+        await gate_manual(uow, ctx.users, feed.owner)
         ids = await uow.catalog.ids_in_state(feed_id, ArchiveState.failed)
     result = await _archive_ids(ctx, feed_id, ids, trigger=trigger)
     log.info("feed.retry_failed", feed_id=feed_id, queued=len(result.jobs))
@@ -360,6 +418,8 @@ async def select_items(
     """Archive ``"1-42, 180"`` (or explicit ids) exactly once; ``dry_run`` only resolves."""
     async with ctx.uow_factory() as uow:
         feed = await uow.feeds.require(feed_id)
+        if not body.dry_run:
+            await gate_manual(uow, ctx.users, feed.owner)
         return await _apply_selection(uow, feed, body, trigger=trigger)
 
 
@@ -383,10 +443,23 @@ async def update_mirror(
     unlocks nothing.
     """
     fields = body.model_fields_set
-    defaults = defaults_for(ctx)
+    require_backfill_scope(ctx, body.backfill, "update_mirror")
+    require_engine_options_scope(ctx, body.engine_options is not None, "update_mirror")
+    # The Feed first (404 before anything else), then its Owner's Defaults and probe,
+    # outside any transaction; the write below requires the Feed again.
+    async with ctx.uow_factory() as uow:
+        current = await require_mirror(uow, feed_id)
+        owner = current.owner
+        require_engine_options_role(
+            ctx,
+            body.engine_options is not None
+            and dict(body.engine_options) != dict(current.engine_options or {}),
+            "update_mirror",
+        )
+    defaults = defaults_for(ctx, owner)
     snapshot: SourceSnapshot | None = None
     if "source_url" in fields and body.source_url is not None:
-        snapshot = await _resolve_snapshot(ctx, body.source_url, None, cancel=cancel)
+        snapshot = await _resolve_snapshot(ctx, body.source_url, None, owner=owner, cancel=cancel)
     async with ctx.uow_factory() as uow:
         feed = await require_mirror(uow, feed_id)
         refresh_needed = False
@@ -457,7 +530,7 @@ async def update_mirror(
                 sources.save_snapshot(feed_id, kept)
 
             uow.after_commit(_save_snapshot)
-        read = await one_feed_read(uow, ctx.urls, feed)
+        read = await one_feed_read(uow, ctx.urls, ctx.users, feed)
         if not isinstance(read, MirrorRead):  # pragma: no cover - require_mirror guarantees it
             raise NotFound("mirror", feed_id)
         return read
@@ -467,7 +540,7 @@ async def _retarget(uow: UnitOfWorkPort, feed: FeedRow, snapshot: SourceSnapshot
     if feed.source_kind != snapshot.source_kind.value:
         raise SourceKindChange(feed.source_kind or "unknown", snapshot.source_kind.value)
     dedup_key = normalize_source_url(snapshot.source_url)
-    other = await uow.feeds.by_dedup_key(dedup_key)
+    other = await uow.feeds.by_dedup_key(feed.owner, dedup_key)
     if other is not None and other.id != feed.id:
         raise FeedExists(other.id, snapshot.source_url)
     feed.source_url = snapshot.source_url
@@ -503,7 +576,7 @@ async def set_paused(ctx: ServiceContext, feed_id: str, paused: bool) -> MirrorR
             )
             if not paused:
                 await enqueue_refresh(uow, feed, JobTrigger.manual)
-        read = await one_feed_read(uow, ctx.urls, feed)
+        read = await one_feed_read(uow, ctx.urls, ctx.users, feed)
         if not isinstance(read, MirrorRead):  # pragma: no cover - require_mirror guarantees it
             raise NotFound("mirror", feed_id)
         return read

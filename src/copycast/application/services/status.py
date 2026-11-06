@@ -6,8 +6,17 @@ Engine it imports for itself; the worker's side comes from what it leaves behind
 its heartbeat (scheduler tick, its own yt-dlp and ffmpeg), the job queue and the
 Refresh runs. Nothing here reaches the internet, so polling it is cheap.
 
-Storage is the Object store (ADR 0019): reachable, at the expected layout version,
-with the worker's Scratch space as its heartbeat reports it.
+The Object store component (``storage``, ADR 0019) says whether it is reachable, at the
+expected layout version, with the worker's Scratch space as its heartbeat reports it;
+its instance-wide facts (the bucket, the endpoint, what every Feed uses) are an Admin's
+only. The Storage component (``quota``, ADR 0029) is the caller's quota: what their Feeds
+use of it, as a meter, ``warn`` from 90 % and ``error`` once over; an Admin also gets one
+line per User, removed Users who still own Feeds included.
+
+"An Admin" here means a Principal whose Scope sees every Owner (an Admin session, the
+open-mode Admin, SYSTEM), never an Admin's API key: a key sees its owner's own (A29). Any
+narrower Principal gets the Worker component with its own running jobs and quarantined
+Feeds only, so the heartbeat never tells one User what another is doing.
 """
 
 from __future__ import annotations
@@ -24,15 +33,25 @@ from copycast.application.models import (
     ComponentStatus,
     CrawlerStats,
     QueueStats,
+    QuotaStatus,
     StatusFact,
+    StatusMeter,
     StatusRead,
     StatusState,
     Totals,
 )
 from copycast.application.ports import EngineVersion
 from copycast.application.services.about import normalize_engine_version
-from copycast.application.services.context import HeartbeatRow, ServiceContext
+from copycast.application.services.context import (
+    HeartbeatRow,
+    Scope,
+    ServiceContext,
+    UnitOfWorkPort,
+)
 from copycast.application.services.engine import get_engine_cookies
+from copycast.application.services.owners import acting_owner
+from copycast.application.services.quota import quota_status, quota_statuses
+from copycast.domain.quota import format_size
 from copycast.version import APP_VERSION
 
 WORKER_STALE_SECONDS = 90.0
@@ -70,6 +89,14 @@ class _Snapshot:
     queue: QueueStats | None = None
     crawlers: list[CrawlerStats] = field(default_factory=list[CrawlerStats])
     totals: Totals | None = None
+    quota: QuotaStatus | None = None
+    """The caller's own quota."""
+    quotas: list[QuotaStatus] = field(default_factory=list[QuotaStatus])
+    """Every User's, for an Admin only."""
+    instance: bool = True
+    """Whether the caller sees every Owner (an Admin session); False narrows the worker."""
+    quarantined: list[str] = field(default_factory=list[str])
+    """The quarantined Feeds the caller can see."""
 
     @property
     def worker(self) -> dict[str, Any]:
@@ -78,9 +105,11 @@ class _Snapshot:
 
 @capability("get_status", response=StatusRead)
 async def get_status(ctx: ServiceContext) -> StatusRead:
-    """Database, worker, scheduler, job queue, storage, yt-dlp, ffmpeg and crawlers."""
+    """Database, worker, scheduler, job queue, Object store, Storage (the caller's quota),
+    yt-dlp, ffmpeg and crawlers."""
     now = datetime.now(UTC)
-    snapshot = await _snapshot(ctx, now)
+    admin = sees_every_owner(ctx)
+    snapshot = await _snapshot(ctx, now, instance=admin)
     engine = await asyncio.to_thread(ctx.engine.version)
     cookies = await get_engine_cookies(ctx)
     unlocked = {service.name.casefold() for service in cookies.services if service.authenticated}
@@ -89,7 +118,8 @@ async def get_status(ctx: ServiceContext) -> StatusRead:
         _worker(snapshot, now),
         _scheduler(snapshot, now),
         _queue(snapshot, now),
-        await asyncio.to_thread(_storage, ctx, snapshot),
+        await asyncio.to_thread(_storage, ctx, snapshot, admin),
+        _quota(snapshot, admin),
         _engine(engine, snapshot, now),
         _ffmpeg(engine, snapshot),
         _crawlers(snapshot, unlocked),
@@ -101,8 +131,13 @@ async def get_status(ctx: ServiceContext) -> StatusRead:
     )
 
 
-async def _snapshot(ctx: ServiceContext, now: datetime) -> _Snapshot:
-    snapshot = _Snapshot()
+def sees_every_owner(ctx: ServiceContext) -> bool:
+    """An Admin session, the open-mode Admin or SYSTEM; never a key, an Admin's included."""
+    return Scope.for_principal(ctx.principal).visible_owner is None
+
+
+async def _snapshot(ctx: ServiceContext, now: datetime, *, instance: bool) -> _Snapshot:
+    snapshot = _Snapshot(instance=instance)
     started = time.perf_counter()
     try:
         async with ctx.uow_factory() as uow:
@@ -111,10 +146,27 @@ async def _snapshot(ctx: ServiceContext, now: datetime) -> _Snapshot:
             snapshot.queue = await uow.jobs.queue_stats(now=now, since=now - RECENT)
             snapshot.crawlers = await uow.telemetry.crawler_stats(now - RECENT)
             snapshot.totals = await uow.feeds.totals()
+            snapshot.quota = await quota_status(uow, ctx.users, acting_owner(ctx))
+            if instance:
+                snapshot.quotas = await quota_statuses(uow, ctx.users)
+            snapshot.quarantined = await _visible_quarantined(uow, snapshot, instance=instance)
         snapshot.schema_current = await ctx.schema_is_current()
     except Exception as exc:  # any driver or network failure
         snapshot.error = str(exc)[:200] or type(exc).__name__
     return snapshot
+
+
+async def _visible_quarantined(
+    uow: UnitOfWorkPort, snapshot: _Snapshot, *, instance: bool
+) -> list[str]:
+    """The heartbeat's quarantined Feeds, narrowed to those the caller's scope can see."""
+    listed: object = snapshot.worker.get("quarantined_feeds")
+    if not isinstance(listed, list):
+        return []
+    ids = [str(feed_id) for feed_id in listed]  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+    if instance:
+        return ids
+    return [feed_id for feed_id in ids if await uow.feeds.get(feed_id) is not None]
 
 
 # --------------------------------------------------------------------------- components
@@ -153,8 +205,12 @@ def _worker(snapshot: _Snapshot, now: datetime) -> ComponentStatus:
         )
     status = snapshot.worker
     age = (now - heartbeat.seen_at).total_seconds()
-    running = _int(status.get("running_jobs"))
-    concurrency = _int(status.get("concurrency"))
+    if snapshot.instance:
+        running = _int(status.get("running_jobs"))
+        concurrency = _int(status.get("concurrency"))
+    else:  # the caller's own jobs; the slots would count everyone's
+        running = snapshot.queue.running if snapshot.queue else 0
+        concurrency = 0
     facts = [StatusFact(label="Last seen", at=heartbeat.seen_at)]
     if concurrency:
         facts.append(StatusFact(label="Jobs", value=f"{running} of {concurrency} slots busy"))
@@ -180,9 +236,8 @@ def _worker(snapshot: _Snapshot, now: datetime) -> ComponentStatus:
             summary="Storage is full: archiving is paused",
             facts=[*facts, StatusFact(label="Retries at", at=full_until)],
         )
-    quarantined = status.get("quarantined_feeds")
-    if isinstance(quarantined, list) and quarantined:
-        count = len(quarantined)  # pyright: ignore[reportUnknownArgumentType]
+    if quarantined := snapshot.quarantined:
+        count = len(quarantined)
         noun = "Feed" if count == 1 else "Feeds"
         return ComponentStatus(
             id="worker",
@@ -268,17 +323,19 @@ def _queue(snapshot: _Snapshot, now: datetime) -> ComponentStatus:
     return ComponentStatus(id="queue", name=name, state="ok", summary=summary, facts=facts)
 
 
-def _storage(ctx: ServiceContext, snapshot: _Snapshot) -> ComponentStatus:
-    name = "Storage"
+def _storage(ctx: ServiceContext, snapshot: _Snapshot, admin: bool = True) -> ComponentStatus:
+    """The Object store; a Member sees neither where it is nor what every Feed uses."""
+    name = "Object store"
     storage = ctx.settings.storage
-    facts = [
-        StatusFact(label="Backend", value="S3 Object store"),
-        StatusFact(label="Bucket", value=storage.url),
-    ]
-    if storage.endpoint:
-        facts.append(StatusFact(label="Endpoint", value=storage.endpoint))
-    if snapshot.totals is not None:
-        facts.append(StatusFact(label="Used by Feeds", value=_bytes(snapshot.totals.storage_bytes)))
+    facts = [StatusFact(label="Backend", value="S3 Object store")]
+    if admin:
+        facts.append(StatusFact(label="Bucket", value=storage.url))
+        if storage.endpoint:
+            facts.append(StatusFact(label="Endpoint", value=storage.endpoint))
+        if snapshot.totals is not None:
+            facts.append(
+                StatusFact(label="Used by Feeds", value=_bytes(snapshot.totals.storage_bytes))
+            )
     try:
         version = ctx.layout.read_version()
     except Exception as exc:  # unreachable endpoint, refused keys, missing bucket
@@ -316,6 +373,52 @@ def _storage(ctx: ServiceContext, snapshot: _Snapshot) -> ComponentStatus:
         state="ok",
         summary=f"Reachable; {_bytes(free)} Scratch free",
         facts=facts,
+    )
+
+
+_QUOTA_STATES: dict[str, StatusState] = {"ok": "ok", "near": "warn", "over": "error"}
+
+
+def quota_meter(status: QuotaStatus) -> StatusMeter:
+    """The usage bar of ``status``; ``ratio`` None when unlimited (0 of 0 counts as full)."""
+    quota = status.quota_bytes
+    ratio = None if quota is None else (status.used_bytes / quota if quota > 0 else 1.0)
+    return StatusMeter(used_bytes=status.used_bytes, quota_bytes=quota, ratio=ratio)
+
+
+def quota_summary(status: QuotaStatus) -> str:
+    """``"3.2 GB of 10.0 GB (32 %)"``, or ``"3.2 GB used (unlimited)"``."""
+    used = format_size(status.used_bytes)
+    meter = quota_meter(status)
+    if status.quota_bytes is None or meter.ratio is None:
+        return f"{used} used (unlimited)"
+    return f"{used} of {format_size(status.quota_bytes)} ({round(meter.ratio * 100)} %)"
+
+
+def _quota(snapshot: _Snapshot, admin: bool) -> ComponentStatus:
+    """The caller's quota (``id="quota"``, "Storage"); an Admin gets a line per User."""
+    name = "Storage"
+    mine = snapshot.quota
+    if snapshot.error or mine is None:
+        return _unknown("quota", name, "Unknown while the database is unreachable")
+    facts: list[StatusFact] = []
+    if admin:
+        facts = [
+            StatusFact(
+                label=f"{status.username} (removed)" if status.removed else status.username,
+                value=quota_summary(status),
+                state=_QUOTA_STATES[status.state],
+                meter=quota_meter(status),
+            )
+            for status in snapshot.quotas
+        ]
+    return ComponentStatus(
+        id="quota",
+        name=name,
+        state=_QUOTA_STATES[mine.state],
+        summary=quota_summary(mine),
+        facts=facts,
+        meter=quota_meter(mine),
     )
 
 
@@ -450,4 +553,4 @@ def _bytes(size: int) -> str:
     return f"{value:.1f} TB"
 
 
-__all__ = ["get_status", "worst"]
+__all__ = ["get_status", "quota_meter", "quota_summary", "worst"]

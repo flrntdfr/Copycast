@@ -7,7 +7,7 @@ verifies as RSS (at most five; one the fetch guard refuses is skipped); anything
 else is listed by the engine and becomes a ``ytdlp`` candidate. A bare YouTube
 channel URL normalizes to its ``/videos`` tab and skips the HTTP round trip
 (YouTube pages advertise an RSS feed without audio). Every candidate is cached for ten minutes under
-its token and its normalized URL, together with the listing (and the parsed
+its token and its normalized URL, per owner, together with the listing (and the parsed
 RSS page) so ``create_mirror`` can populate the Catalog without refetching.
 """
 
@@ -74,26 +74,35 @@ class ProbeEntry:
 
 
 class ProbeCache:
-    """Entries keyed by candidate token and by normalized Source URL (10 min TTL)."""
+    """Entries keyed by owner and candidate token, and by owner and normalized Source URL
+    (10 min TTL).
+
+    ``owner`` is the User whose Cookie files the probe carried: a listing made with one
+    User's cookies (a private playlist, a members-only channel) is never served to another,
+    and another User's hit is no timing oracle on what this one probed. An owner-less probe
+    (``owner=""``) is cached under the empty name and reaches no User.
+    """
 
     def __init__(
         self, ttl: float = PROBE_TTL_SECONDS, *, clock: Callable[[], float] = time.monotonic
     ) -> None:
-        self._by_token: TtlCache[str, ProbeEntry] = TtlCache(ttl, clock=clock)
-        self._by_url: TtlCache[str, ProbeEntry] = TtlCache(ttl, clock=clock)
+        self._by_token: TtlCache[tuple[str, str], ProbeEntry] = TtlCache(ttl, clock=clock)
+        self._by_url: TtlCache[tuple[str, str], ProbeEntry] = TtlCache(ttl, clock=clock)
 
-    def put(self, entry: ProbeEntry) -> None:
-        self._by_token.put(entry.candidate.candidate_token, entry)
-        self._by_url.put(normalize_source_url(entry.source_url), entry)
+    def put(self, entry: ProbeEntry, *, owner: str) -> None:
+        self._by_token.put((owner, entry.candidate.candidate_token), entry)
+        self._by_url.put((owner, normalize_source_url(entry.source_url)), entry)
 
-    def get_by_token(self, token: str | None) -> ProbeEntry | None:
-        return self._by_token.get(token) if token else None
+    def get_by_token(self, token: str | None, *, owner: str) -> ProbeEntry | None:
+        return self._by_token.get((owner, token)) if token else None
 
-    def get_by_url(self, url: str | None) -> ProbeEntry | None:
-        return self._by_url.get(normalize_source_url(url)) if url else None
+    def get_by_url(self, url: str | None, *, owner: str) -> ProbeEntry | None:
+        return self._by_url.get((owner, normalize_source_url(url))) if url else None
 
-    def get(self, *, token: str | None = None, url: str | None = None) -> ProbeEntry | None:
-        return self.get_by_token(token) or self.get_by_url(url)
+    def get(
+        self, *, owner: str, token: str | None = None, url: str | None = None
+    ) -> ProbeEntry | None:
+        return self.get_by_token(token, owner=owner) or self.get_by_url(url, owner=owner)
 
     def purge(self) -> None:
         self._by_token.purge()
@@ -149,8 +158,15 @@ def probe(
     cancel: CancelToken | None = None,
     log: EngineLog | None = None,
     verify_limit: int = MAX_VERIFIED_LINKS,
+    cookie_jar: str | None = None,
+    owner: str | None = None,
 ) -> ProbeResult:
-    """Resolve ``url`` to candidates; raises :class:`Unsupported` when nothing fits."""
+    """Resolve ``url`` to candidates; raises :class:`Unsupported` when nothing fits.
+
+    ``cookie_jar`` is the Object store key of the jar the Engine's listings carry;
+    ``owner`` is the User the probe runs for (whose cookies it used): the entries it puts in
+    ``cache`` are kept under that owner (``""`` without one), so only they reach them.
+    """
     input_url = url.strip()
     if not input_url:
         raise Unsupported("paste a feed, page or Source URL")
@@ -161,7 +177,7 @@ def probe(
     failures: list[str] = []
     urls = scheme_candidates(input_url)
 
-    directory = _directory_feeds(input_url, client, failures)
+    directory = _directory_feeds(input_url, client, failures, owner=owner or "")
     if directory is not None:
         entries = _verify_links(directory[:verify_limit], client, failures)
         if not entries:
@@ -169,7 +185,9 @@ def probe(
             raise Unsupported(f"{input_url} could not be resolved to a feed ({detail})")
     elif any(youtube_host(u) for u in urls):
         target = normalize_youtube_channel(urls[0])
-        entries = _ytdlp_entries([target], engine, engine_options, token, engine_log, failures)
+        entries = _ytdlp_entries(
+            [target], engine, engine_options, token, engine_log, failures, cookie_jar=cookie_jar
+        )
     else:
         fetched_any = False
         for candidate_url in urls:
@@ -213,7 +231,9 @@ def probe(
             break
         if not entries:
             targets = urls if not fetched_any else urls[:1]
-            entries = _ytdlp_entries(targets, engine, engine_options, token, engine_log, failures)
+            entries = _ytdlp_entries(
+                targets, engine, engine_options, token, engine_log, failures, cookie_jar=cookie_jar
+            )
 
     if not entries:
         detail = "; ".join(dict.fromkeys(failures)) or "no candidates"
@@ -225,18 +245,18 @@ def probe(
     result_entries = [ProbeEntry(e.candidate, e.listing, e.feed, created_at=now) for e in entries]
     if cache is not None:
         for entry in result_entries:
-            cache.put(entry)
+            cache.put(entry, owner=owner or "")
     return ProbeResult(input_url=input_url, candidates=[e.candidate for e in result_entries])
 
 
 def _directory_feeds(
-    input_url: str, client: httpx.Client | None, failures: list[str]
+    input_url: str, client: httpx.Client | None, failures: list[str], *, owner: str = ""
 ) -> list[str] | None:
     """Feed URLs behind an Apple Podcasts or Spotify link; None for any other input."""
     if not is_directory_link(input_url):
         return None
     try:
-        return resolve_directory_link(input_url, client=client)
+        return resolve_directory_link(input_url, client=client, owner=owner)
     except SourceError as exc:
         failures.append(str(exc))
         return []
@@ -274,10 +294,12 @@ def _ytdlp_entries(
     cancel: CancelToken,
     log: EngineLog,
     failures: list[str],
+    *,
+    cookie_jar: str | None = None,
 ) -> list[ProbeEntry]:
     for candidate_url in urls:
         try:
-            listing = engine.list_source(candidate_url, options, cancel, log)
+            listing = engine.list_source(candidate_url, options, cancel, log, cookie_jar=cookie_jar)
         except EngineError as exc:
             failures.append(f"{candidate_url}: {exc}")
             continue

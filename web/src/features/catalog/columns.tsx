@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { LiveBadge } from "./LiveBadge";
+import { OverQuotaBadge } from "./OverQuotaBadge";
 import { RowActions } from "./RowActions";
 import { StateBadge } from "./StateBadge";
 import type { CatalogFeatures } from "./features";
@@ -249,6 +250,7 @@ export function buildColumns(ctx: CatalogColumnContext): ColumnDef<CatalogFeatur
         <div className="flex flex-wrap items-center gap-1">
           <StateBadge item={row.original} />
           <LiveBadge item={row.original} />
+          <OverQuotaBadge item={row.original} />
         </div>
       ),
       size: 110,

@@ -21,6 +21,7 @@ from copycast.adapters.api.app import create_app
 from copycast.app import Container, build_container
 from copycast.application import services as _services  # noqa: F401 - registers capabilities
 from copycast.application.capabilities import (
+    ACCESS,
     CAPABILITIES,
     CAPABILITY_NAMES,
     DESTRUCTIVE,
@@ -70,6 +71,12 @@ def request_models(fn: Any) -> list[type[BaseModel]]:
         if inspect.isclass(annotation) and issubclass(annotation, BaseModel):
             models.append(annotation)
     return models
+
+
+def test_every_capability_declares_access() -> None:
+    assert set(ACCESS) == CAPABILITY_NAMES
+    for name, registered in CAPABILITIES.items():
+        assert registered.access is ACCESS[name], name
 
 
 def test_every_capability_has_a_service() -> None:
@@ -151,3 +158,9 @@ async def test_destructive_tools_carry_the_hint(app: FastAPI) -> None:
         annotations = tool.annotations
         assert annotations is not None, tool.name
         assert bool(annotations.destructive_hint) == (name in DESTRUCTIVE), tool.name
+
+
+async def test_tools_declare_their_access(app: FastAPI) -> None:
+    for tool in await tools_of(app):
+        meta = tool.meta or {}
+        assert meta.get("access") == ACCESS[meta["capability"]].value, tool.name

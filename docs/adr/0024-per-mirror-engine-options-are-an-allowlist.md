@@ -1,7 +1,8 @@
 # 0024 A Mirror's engine options are an allowlist, and need a full key over MCP
 
 Status: accepted (2.3.0); amends ADR 0002 (per-Mirror options are no longer filtered by a
-deny-list) and extends ADR 0011's scopes
+deny-list) and extends ADR 0011's scopes; amended by ADR 0028 (setting them is Admin-only,
+and a key's scope is checked in the service, on `/api` as on MCP)
 
 ## Context
 

@@ -10,7 +10,7 @@ Copycast v1 is a Python (FastAPI, SQLAlchemy, Postgres) modular monolith with yt
 Use these terms, in code and in conversation. The _Avoid_ lists name the words that mean something else here or that blur a distinction.
 
 **Feed**:
-Everything Copycast publishes is a Feed: a Mirror or a Local feed. Every Feed has an id, a title, a Catalog, a published RSS document and exactly one bucket (its files under `feeds/{id}/` in the Object store). The Feeds page lists every Feed, Mirrors, captured playlists and Local feeds alike, in one table.
+Everything Copycast publishes is a Feed: a Mirror or a Local feed. Every Feed has an id, a title, an Owner, a Catalog, a published RSS document and exactly one bucket (its files under `feeds/{id}/` in the Object store). The Feeds page lists every Feed the caller can see, Mirrors, captured playlists and Local feeds alike, in one table.
 _Avoid_: Channel, show, podcast (for the thing Copycast serves)
 
 **Mirror**:
@@ -26,7 +26,7 @@ The RSS feed Copycast publishes for a Mirror — the thing you subscribe to in a
 _Avoid_: Output feed, generated feed, proxy feed
 
 **Local feed**:
-A Feed with no Source (`kind: "bucket"` in the API and MCP, which keep the older name). It is filled by Requests — arbitrary URLs pushed by a person or an agent — and by Uploads, and its page holds the *Add URL* form, *Upload files…* and its Settings (name, autoprune). One default Local feed named "Copycast" always exists: it can be renamed but never deleted, and the UI creates no other (agents can, with `create_bucket`). Called an Inbox before ADR 0018 and a Bucket before ADR 0021; `feed.json` files that still say `inbox` read as `bucket`.
+A Feed with no Source (`kind: "bucket"` in the API and MCP, which keep the older name). It is filled by Requests — arbitrary URLs pushed by a person or an agent — and by Uploads, and its page holds the *Add URL* form, *Upload files…* and its Settings (name, autoprune). Every User has one default Local feed named "Copycast", created at startup: it can be renamed but never deleted, and the UI creates no other (agents can, with `create_bucket`). Called an Inbox before ADR 0018 and a Bucket before ADR 0021; `feed.json` files that still say `inbox` read as `bucket`.
 _Avoid_: Bucket (that is a Feed's files now), Inbox, queue, dropbox, watch later
 
 **Local feed's RSS**:
@@ -38,7 +38,7 @@ A Local feed an agent builds from Uploads in an order it decides (an audiobook's
 _Avoid_: playlist, audiobook feed, ordered Bucket
 
 **Upload**:
-One audio file staged for a Local feed: created with a one-time upload URL, received by an HTTP PUT of its bytes, read for its tags, and consumed (or swept after 24 h) once a Serial Bucket or `add_uploads` takes it. `add_uploads` orders a batch by natural file name and dates it by arrival (ADR 0018).
+One audio file staged for a Local feed: created with a one-time upload URL, received by an HTTP PUT of its bytes, read for its tags, and consumed (or swept after 24 h, or given up with `delete_upload`) once a Serial Bucket or `add_uploads` takes it. Each Owner's staged uploads are counted in `staged_uploads` (ADR 0029). `add_uploads` orders a batch by natural file name and dates it by arrival (ADR 0018).
 _Avoid_: Import, attachment (that is a show-notes file), file request
 
 **Request**:
@@ -78,7 +78,7 @@ The episode number a Source publishes itself (`itunes:episode`, a playlist index
 _Avoid_: Episode id, track number
 
 **Mirror ID**:
-A Feed's permanent, opaque identity. For a Mirror it is derived from the Source's dedup key at creation; for a Local feed from its name plus a random suffix. It names the feed URL and the Feed's prefix in the Object store and never changes — podcast clients depend on it.
+A Feed's permanent, opaque identity. For a Mirror it is derived from the Source's dedup key at creation (in users mode salted with the Owner, `owned_mirror_id`, so it tells nobody what another User mirrors; ADR 0028); for a Local feed from its name plus a random suffix. It names the feed URL and the Feed's prefix in the Object store and never changes — podcast clients depend on it.
 _Avoid_: Slug, name, feed name
 
 **Backfill**:
@@ -165,9 +165,45 @@ _Avoid_: memcached (it is Valkey), CDN, feed store
 yt-dlp as used by Copycast: imported as a library, lockfile-pinned to one version (nightly channel by default), bumped by automation. Every download goes through it, RSS enclosures included; its version is recorded on every archived item and shown on the About page.
 _Avoid_: Downloader, backend, scraper, yt-dlp binary
 
+**User**:
+A configured account: one `[[auth.users]]` table of `copycast.toml` (or `COPYCAST__AUTH__USERS`) with a username, an argon2id `password_hash`, an optional `totp_secret`, `admin` and `quota`. The username is the identity: renaming a user makes a new one. Never created through the API; a User removed from the file keeps their Feeds, shown to Admins as "owner removed" (ADR 0027).
+_Avoid_: Account, login, profile, operator
+
+**Admin**:
+A User with `admin = true`: sees and acts on every User's Feeds (labelled with their Owner), and alone may `rebuild`, purge every Episode and set a Mirror's `engine_options`. Needs a TOTP secret to sign in on an https site. The open-mode and legacy single Admin are Admins too.
+_Avoid_: Superuser, root, operator, owner (that is a Feed's User)
+
+**Member**:
+A User without `admin`: sees only their own Feeds; another User's Feed answers 404, an Admin-only capability 403.
+_Avoid_: Regular user, guest, viewer
+
+**Owner**:
+The User a Feed belongs to (`feeds.owner`), and with it its Catalog, jobs, Uploads and bucket; also the User an API key acts as. Every Engine call made for a Feed uses its Owner's Cookie files and Defaults. Changed only by `copycast users reassign` (ADR 0028).
+_Avoid_: Creator, author, user (say Owner when it is about a Feed)
+
+**Session**:
+A browser's sign-in: 32 random bytes in the `__Host-copycast_session` cookie (`copycast_session` on plain http), stored as a digest, sliding for `auth.session_days`, ended by *Sign out* or by a change of the User's password or TOTP secret at the next restart (ADR 0027).
+_Avoid_: Login (the act), token, cookie (the carrier), Basic auth
+
+**Principal**:
+Whoever a request or a job acts as: a User through a Session or an API key, the open-mode Admin, or SYSTEM (the worker, the scheduler, startup and the public `/feeds` routes, which see every Owner). The services a request gets are scoped to it (`services_for`).
+_Avoid_: Actor, caller, identity, account
+
+**Auth mode**:
+How Copycast authenticates, read from the configuration: `open` (neither users nor a password: no authentication, one implicit Admin, ADR 0004), `legacy` (only `COPYCAST__AUTH__PASSWORD`: one Admin signing in with the Operator password) or `users` (`[[auth.users]]` set).
+_Avoid_: Auth on/off, security mode
+
+**Quota**:
+How much a User's Feeds may hold in the Object store (`quota`, else `auth.default_quota`, decimal units, `unlimited` by default), against their usage, the sum of their Feeds' `storage_bytes`. Shown as the Storage row of the status popover: ok, near from 90 %, Over quota from 100 % (ADR 0029).
+_Avoid_: Limit, allowance, disk space
+
+**Over quota**:
+The state of a User whose usage has reached their Quota, and the badge of a Catalog item blocked by it (`blocked_reason: quota`, still wanted): no new download starts for them, manual archives and first plays answer `507 over-quota`, running jobs finish, nothing is deleted, and blocked items queue again by themselves when room frees up.
+_Avoid_: Full (that is the Object store or Scratch), quota exceeded, blocked (in prose)
+
 **Operator password**:
-The one credential from the environment (`COPYCAST__AUTH__PASSWORD`, username `copycast` unless `COPYCAST__AUTH__USERNAME` says otherwise) that opens the web UI, the API and every feed over HTTP Basic. Setting it switches authentication on; unset, Copycast is open and the network is the boundary (ADR 0004, ADR 0011).
-_Avoid_: Admin password, login, account, session
+The legacy single Admin's password (`COPYCAST__AUTH__PASSWORD`, username `copycast` unless `COPYCAST__AUTH__USERNAME` says otherwise): setting it alone is legacy mode, where it signs in on the login page and still opens every feed over HTTP Basic. Exclusive with `[[auth.users]]`, and in users mode it opens nothing (ADR 0027).
+_Avoid_: Admin password, account, session
 
 **Feed credentials**:
 A Feed's own random username and password, minted at creation, kept in Postgres and in `feed.json`, and rotated on demand. While authentication is on they open that Feed's RSS, media and assets and nothing else; the feed URL carries them as `user:pass@` and the UI shows them separately for apps such as Overcast.
@@ -178,11 +214,11 @@ A Feed's secret path segment, derived from its password, under which the Feed pu
 _Avoid_: Feed key (that is the multi-user plan's per-listener credential), token, signed URL
 
 **API key**:
-A bearer secret minted on the MCP page for one MCP client, shown once as `.env` lines (`COPYCAST_MCP_URL`, `COPYCAST_MCP_KEY`), stored as a digest, revocable on its own. The only credential the MCP mount accepts while authentication is on.
+A bearer secret minted on the MCP page for one MCP client, shown once as `.env` lines (`COPYCAST_MCP_URL`, `COPYCAST_MCP_KEY`), stored as a digest, revocable on its own. The only credential the MCP mount accepts while authentication is on; on `/api` it reaches tool capabilities only. It acts as its Owner and never sees more than its Owner's own Feeds, an Admin's key included; its Owner alone lists and revokes it.
 _Avoid_: Token, PAT, MCP password, service account
 
 **Default**:
-An operator setting in the Mirrors half of the Settings page (Refresh interval, metadata language, minimum length, the policy new Mirrors start from) that every Mirror inherits unless its own value is set; saved as it changes, stored in the Object store at `engine/defaults.json`. A Mirror overrides it by setting a value and resets by clearing it.
+A User's setting in the Mirrors half of the Settings page (Refresh interval, metadata language, minimum length, the policy new Mirrors start from) that every Mirror they own inherits unless its own value is set; saved as it changes, stored in the Object store at `users/{username}/defaults.json` (`engine/defaults.json` before 3.0). A new User starts from the built-in values. A Mirror overrides it by setting a value and resets by clearing it.
 _Avoid_: Global setting, preference, config (that is the environment)
 
 **Minimum length**:
@@ -190,7 +226,7 @@ A Mirror's rule, or the Default, that keeps items shorter than N seconds Availab
 _Avoid_: Filter, Shorts rule, duration threshold
 
 **Cookie file**:
-A Netscape `cookies.txt` added under *Authentications* on the Settings page so sites that demand a login (YouTube from a server's IP, Twitch, Vimeo, Mixcloud) accept downloads; stored in the Object store as `engine/cookies/{name}.txt`, one row each. The Engine carries one jar merged from all of them, `engine/cookies.txt` (yt-dlp gets a private Scratch copy), on every listing and fetch, and cookies the sites rotate there go back to their file. A service shows unlocked while a file holds its cookies. Never shown back, never exposed to agents.
+A Netscape `cookies.txt` a User adds under *Authentications* on the Settings page so sites that demand a login (YouTube from a server's IP, Twitch, Vimeo, Mixcloud) accept downloads; stored in the Object store as `users/{username}/cookie-files/{name}.txt`, one row each. The Engine carries that User's jar, merged from their files at `users/{username}/cookies.txt` (yt-dlp gets a private Scratch copy), on every listing and fetch made for their Feeds or by them, and cookies the sites rotate there go back to their file. A service shows unlocked while a file holds its cookies. Never shown back, not even to Admins, never exposed to agents.
 _Avoid_: Cookies setting, session file, YouTube login, credentials
 
 **Bucket**:
@@ -198,7 +234,7 @@ A Feed's files: its prefix of the Object store (`feeds/{id}/`: media, Artwork, a
 _Avoid_: Storage, folder, volume, data directory; Bucket for a Feed with no Source (that is a Local feed); S3 bucket (say Object store)
 
 **Scope**:
-What an API key may do over MCP: `read` (read-only tools), `write` (everything but deletions and a Mirror's `engine_options`) or `full` (everything). Every tool checks it before running.
+What an API key may do: `read` (read-only tools), `write` (everything but deletions and a Mirror's `engine_options`) or `full` (everything). Enforced over MCP and, since 3.0, on `/api` (by method: GET and HEAD need `read`, other methods `write`, destructive capabilities `full`); the argument checks (a Rolling or expiring backfill, `engine_options`, `autoprune_days`) run in the services, so both enforce them alike.
 _Avoid_: Role, permission, level, grant
 
 **Fetch guard**:
@@ -213,19 +249,25 @@ _Avoid_: CSRF token (there is none), CORS (Copycast sends no CORS headers), orig
 
 ### Stack
 
-Python 3.13, uv lockfile, FastAPI, Pydantic v2, pydantic-settings (`config/copycast.toml` plus `COPYCAST__SECTION__KEY` environment variables; `COPYCAST__AUTH__PASSWORD` switches authentication on), SQLAlchemy 2 async with psycopg 3, Alembic, structlog, httpx, lxml, sse-starlette, fastmcp, click, obstore (the Object store client), redis (the Feed cache client, against Valkey); `yt-dlp[default]` from the lockfile; ffmpeg from the OS image; Postgres 17, SeaweedFS (S3), Valkey 9. Frontend: React 19, TypeScript, Vite 8, Tailwind v4, shadcn/ui, TanStack Router/Query/Table, openapi-typescript + openapi-fetch, vitest + MSW, Playwright; package manager pnpm 11 via corepack (never npm or yarn). Delivery: one image, Docker Compose (Tailscale sidecar or direct port), Kubernetes kustomize base, GitHub Actions.
+Python 3.13, uv lockfile, FastAPI, Pydantic v2, pydantic-settings (`config/copycast.toml` plus `COPYCAST__SECTION__KEY` environment variables; `[[auth.users]]` is users mode, `COPYCAST__AUTH__PASSWORD` alone legacy mode, neither open mode), SQLAlchemy 2 async with psycopg 3, Alembic, structlog, httpx, lxml, sse-starlette, fastmcp, click, obstore (the Object store client), redis (the Feed cache client, against Valkey), argon2-cffi (password hashes), segno (the TOTP QR code); `yt-dlp[default]` from the lockfile; ffmpeg from the OS image; Postgres 17, SeaweedFS (S3), Valkey 9. Frontend: React 19, TypeScript, Vite 8, Tailwind v4, shadcn/ui, TanStack Router/Query/Table, openapi-typescript + openapi-fetch, vitest + MSW, Playwright; package manager pnpm 11 via corepack (never npm or yarn). Delivery: one image, Docker Compose (Tailscale sidecar or direct port), Kubernetes kustomize base, GitHub Actions.
 
 ### Repository map
 
 ```
 src/copycast/domain/         pure rules: enums, ids, urls, listing, ordinals, selection, engine_options (the
-                             per-Mirror allowlist), credentials (feed pairs, media keys, artwork MACs),
-                             destinations (which addresses the fetch guard refuses)
-src/copycast/application/    models (the API/MCP contract), capabilities registry, ports (Engine), events, services/
+                             per-Mirror allowlist), credentials (feed pairs, media keys, artwork MACs, session
+                             tokens), destinations (which addresses the fetch guard refuses), users (usernames,
+                             Principal), quota (sizes, states), totp (RFC 6238)
+src/copycast/application/    models (the API/MCP contract), capabilities registry (with each one's Access), ports
+                             (Engine), events, passwords (argon2), users (the UserDirectory), services/ (auth,
+                             scoped and context: the Principal's Scope; quota, keyscope)
 src/copycast/adapters/       api (FastAPI; objects.py proxies Object store objects, cache.py the Feed cache,
-                             security.py the cross-site guard and security headers), mcp (fastmcp), db (SQLAlchemy,
-                             migrations; repositories/secrets.py the instance secrets), storage (objects: the Object
-                             store over obstore; layout: its keys; scratch; descriptor; rebuild; push), engine (the
+                             security.py the cross-site guard and security headers, principal.py the Principal
+                             middleware, session_cookie.py, media_response.py, routes/auth.py and routes/play.py
+                             the web player's media), mcp (fastmcp), db (SQLAlchemy, migrations;
+                             repositories/secrets.py the instance secrets, reassign.py), storage (objects: the
+                             Object store over obstore; layout: its keys; user_settings: the 3.0 copy of engine/;
+                             scratch; descriptor; rebuild; push), engine (the
                              only importer of yt_dlp; netguard.py guards its connections), sources (RSS, discovery,
                              probe, iTunes; guard.py the fetch guard), feeds (RSS rendering), assets
 src/copycast/worker/         runner, scheduler, progress, joblog, jobs/{refresh,archive_item,expand_request,prune,rebuild}
@@ -233,7 +275,8 @@ src/copycast/{app,cli,settings,logging,version}.py   composition root, click CLI
 web/                         Vite app; web/openapi.json is committed and generated into src/api/schema.d.ts
 deploy/                      compose/docker-compose.dev.yml (Postgres, SeaweedFS, Valkey for development),
                              compose/seaweedfs/entrypoint.sh, kubernetes/{base,overlays/example}
-tests/                       unit, integration/{storage,worker,api,mcp,engine}, e2e, support (FakeEngine, Origin), fixtures
+tests/                       unit, integration/{storage,worker,api,mcp,engine}, e2e, support (FakeEngine, Origin,
+                             users, world), fixtures
 scripts/                     smoke.sh, engine_version.py, engine_newest.py
 docs/                        adr/ (decisions), operations.md (running it)
 ```
@@ -260,8 +303,8 @@ Use `uv run` for everything Python and `pnpm --dir web` for everything web. Run 
 
 ### Adding a capability end to end
 
-1. Add the name to `CAPABILITY_NAMES` and, if destructive, to `DESTRUCTIVE` (`application/capabilities.py`); add request/response models to `application/models.py`.
-2. Implement the service function under `application/services/` decorated with `@capability(...)`; it receives a UnitOfWork and raises domain exceptions (`NotFound`, `Conflict`, `Unsupported`, ...) which the API maps to problem+json and MCP to `ToolError`.
+1. Add the name to `CAPABILITY_NAMES`, its `Access` to `ACCESS` (`public`, `member`, `owner_of_feed`, `admin` or `system`) and, if destructive, to `DESTRUCTIVE` (`application/capabilities.py`); add request/response models to `application/models.py`.
+2. Implement the service function under `application/services/` decorated with `@capability(...)`; it receives a ServiceContext scoped to the caller's Principal (its units of work see only the Feeds the caller may see) and raises domain exceptions (`NotFound`, `Conflict`, `Unsupported`, ...) which the API maps to problem+json and MCP to `ToolError`.
 3. Add the route in `adapters/api/` with `operation_id` and `x-capability`; add the tool in `adapters/mcp/` with `meta={"capability": name}` (or add the name to `TOOL_EXEMPT` / `INTERNAL` with a reason).
 4. `make openapi`, then register the operation in `web/src/api/ops.ts` and build the screen.
 5. Tests: a unit test for the service with `FakeEngine`, an API test with the `client` fixture, an MCP test with `mcp_client`; the convergence test picks the rest up.
@@ -280,6 +323,8 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 - The fetch guard is on in every test. An autouse fixture resolves names through `tests/support/dns.py` (address literals and `localhost` resolve, every other name does not; tests marked `network` keep the real resolver), and the suite's policy exempts only loopback (`TEST_ALLOW_PRIVATE_HOSTS` in `tests/conftest.py`), where `Origin` runs. A test that builds its own `Settings` passes `security={"allow_private_hosts": TEST_ALLOW_PRIVATE_HOSTS}`; a test that needs a name to resolve passes its own resolver.
 - The `s3` testcontainer runs the real `deploy/compose/seaweedfs/entrypoint.sh` (keys enforced, the bucket made by its bootstrap) and checks which sockets it leaves beyond loopback; `tests/unit/test_compose.py` pins its bind flags and the `objects` network layout.
 - Playwright specs import `test` and `expect` from `web/e2e/fixtures.ts`, never from `@playwright/test`: it fails any test whose pages met a Content-Security-Policy violation. Editing the inline theme script of `web/index.html` means updating `SPA_SCRIPT_HASHES` in `adapters/api/security.py` (`tests/unit/api/test_security.py` fails until it matches), and the web app never uses eval (zod runs jitless, `web/src/lib/zod.ts`).
+- Tests run in open mode by default, as the open-mode Admin `copycast`, who owns everything they create. Users-mode tests use `tests/support/users.py` (`TEST_HASHER`, cheap argon2 parameters; `USERS` root, alice and bob; `login`, `mint_key`, `as_principal`) and the `world` fixtures of `tests/integration/conftest.py` (`world`, `alice_client`, `bob_client`, `root_client`: Bob's Mirror, Local feed, job, Upload, key and failed Refresh). Groups of tests never edit `tests/support/**` or a `conftest.py` to add a private fixture; define it in the test module. A new `/api` route lands in the isolation matrix (`tests/integration/api/test_isolation_matrix.py`) or its capability-less list, and `tests/unit/test_raw_uow_ban.py` forbids the raw unit-of-work factory and SYSTEM services in `adapters/api` and `adapters/mcp` outside its allowlist.
+- The e2e stack runs in users mode (`tests/e2e/config/copycast.toml`: admin, alice, bob, with cheap hashes): the httpx smoke signs in, and the Playwright `setup` project signs each User in to a `storageState` file under `web/e2e/.auth/`.
 - Rendered feeds are compared canonically (`tests/support/xml.py`) against golden files; regenerate with `make golden-regen` and review the diff.
 - Keep coverage above the gates (85 % overall, 95 % for `copycast.domain`).
 
@@ -290,14 +335,14 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0001](docs/adr/0001-postgres-is-truth-data-dir-rebuildable.md) | Postgres is the runtime truth; the data directory is complete enough to rebuild it |
 | [0002](docs/adr/0002-engine-in-process-lockfile-pinned-nightly.md) | yt-dlp runs in process, pinned by the lockfile, nightly channel by default |
 | [0003](docs/adr/0003-one-contract-ui-api-mcp.md) | UI, API and MCP share one capability contract |
-| [0004](docs/adr/0004-network-is-the-security-boundary.md) | No authentication: the network (Tailscale) is the boundary |
+| [0004](docs/adr/0004-network-is-the-security-boundary.md) | No authentication: the network (Tailscale) is the boundary (open mode since ADR 0027) |
 | [0005](docs/adr/0005-modular-monolith-two-processes-one-image.md) | Modular monolith, two processes, one image |
 | [0006](docs/adr/0006-image-tags-and-engine-bump-automation.md) | Image tags and automated engine bumps |
 | [0007](docs/adr/0007-inbox-and-requests.md) | Bucket feeds fed by Requests |
 | [0008](docs/adr/0008-ordinals-source-numbering-selections.md) | Ordinals, Source numbering and selections |
 | [0009](docs/adr/0009-never-delete-tombstones.md) | Copycast never deletes from a Mirror; user deletions leave Tombstones |
 | [0010](docs/adr/0010-download-counting-rule.md) | What counts as a download |
-| [0011](docs/adr/0011-optional-authentication-for-direct-deployments.md) | Optional authentication: operator password, feed credentials, MCP API keys |
+| [0011](docs/adr/0011-optional-authentication-for-direct-deployments.md) | Optional authentication: operator password (superseded on the UI and API by ADR 0027), feed credentials, MCP API keys |
 | [0012](docs/adr/0012-mirror-modes-rolling-and-automatic.md) | Mirror modes: Rolling windows and Automatic archives narrow ADR 0009 |
 | [0013](docs/adr/0013-light-refresh-on-fetch-and-stable-media-urls.md) | A feed fetch runs a Light Refresh inline; media URLs are fixed at listing time; the api logs its own requests |
 | [0014](docs/adr/0014-live-streams-archived-once-recorded.md) | Live streams are archived once their recording is published; an archive that meets one waits, then fails |
@@ -312,3 +357,6 @@ Everything is pinned exactly (Python `==` in pyproject.toml, exact versions in w
 | [0024](docs/adr/0024-per-mirror-engine-options-are-an-allowlist.md) | A Mirror's `engine_options` are an allowlist; setting them over MCP needs a `full` key |
 | [0025](docs/adr/0025-the-browser-boundary.md) | Cross-site writes and foreign Host names are refused; security headers (CSP sandbox on `/feeds` and `/art`); trusted forwarded headers; no secret in a log line |
 | [0026](docs/adr/0026-seaweedfs-internal-apis-on-loopback-and-the-objects-network.md) | SeaweedFS keeps master, volume and filer on loopback; its gateway is reachable only on the internal `objects` network |
+| [0027](docs/adr/0027-users-from-the-config-file-sessions-and-totp.md) | Users come from the config file; the browser signs in to a session (TOTP for Admins on https); `/api` takes sessions and keys, never Basic; open, legacy and users modes |
+| [0028](docs/adr/0028-feeds-are-private-to-their-owner.md) | Feeds are private to their Owner (404, never 403); Admins see all, keys never more than their owner; owner-salted ids in users mode; per-user Defaults and Cookie files |
+| [0029](docs/adr/0029-storage-quotas.md) | Storage quotas: at the limit new downloads wait, blocked and still wanted; 507 from manual archives, first plays and Uploads; nothing is deleted |

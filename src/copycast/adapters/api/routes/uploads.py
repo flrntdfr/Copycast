@@ -4,15 +4,17 @@
 ``PUT /uploads/{id}/{token}`` (outside ``/api``: the token is the credential,
 so an agent holding only an API key can ``curl -T`` the file) receives the
 bytes; ``POST /api/serial-buckets`` turns received uploads into a Bucket in
-the given order.
+the given order; ``DELETE /api/uploads/{id}`` gives a staged upload up. Those that
+stage, receive or add answer ``507 over-quota`` (with ``used_bytes`` and
+``quota_bytes``) when the Owner's quota has no room for the file or the batch.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Request, Response
 
-from copycast.adapters.api.deps import RebuildGuard, ServicesDep
-from copycast.adapters.api.problems import problem_responses
+from copycast.adapters.api.deps import RebuildGuard, ServicesDep, SystemServicesDep
+from copycast.adapters.api.problems import problem_responses, slug_responses
 from copycast.application.models import (
     BucketRead,
     SerialBucketCreate,
@@ -20,6 +22,8 @@ from copycast.application.models import (
     UploadRead,
     UploadsAdd,
 )
+
+OVER_QUOTA = slug_responses({507: "over-quota"})
 
 router = APIRouter(tags=["uploads"])
 open_router = APIRouter(tags=["uploads"])
@@ -32,7 +36,7 @@ open_router = APIRouter(tags=["uploads"])
     response_model=UploadRead,
     status_code=201,
     dependencies=[RebuildGuard],
-    responses=problem_responses(422),
+    responses={**problem_responses(422), **OVER_QUOTA},
     summary="Stage an audio file; PUT its bytes to the returned upload_url",
 )
 async def create_upload(services: ServicesDep, body: UploadCreate) -> UploadRead:
@@ -51,6 +55,19 @@ async def get_upload(services: ServicesDep, upload_id: str) -> UploadRead:
     return await services.get_upload(upload_id)
 
 
+@router.delete(
+    "/uploads/{upload_id}",
+    operation_id="delete_upload",
+    openapi_extra={"x-capability": "delete_upload"},
+    status_code=204,
+    responses=problem_responses(404),
+    summary="Give up a staged upload and the room it holds",
+)
+async def delete_upload(services: ServicesDep, upload_id: str) -> Response:
+    await services.delete_upload(upload_id)
+    return Response(status_code=204)
+
+
 @router.post(
     "/serial-buckets",
     operation_id="create_serial_bucket",
@@ -58,7 +75,7 @@ async def get_upload(services: ServicesDep, upload_id: str) -> UploadRead:
     response_model=BucketRead,
     status_code=201,
     dependencies=[RebuildGuard],
-    responses=problem_responses(404, 409, 422),
+    responses={**problem_responses(404, 409, 422), **OVER_QUOTA},
     summary="Create a Bucket from uploads, Episodes in the given order",
 )
 async def create_serial_bucket(
@@ -75,7 +92,7 @@ async def create_serial_bucket(
     openapi_extra={"x-capability": "add_uploads"},
     response_model=BucketRead,
     dependencies=[RebuildGuard],
-    responses=problem_responses(404, 409, 422),
+    responses={**problem_responses(404, 409, 422), **OVER_QUOTA},
     summary="Add received uploads to a Bucket, in natural file-name order",
 )
 async def add_uploads(services: ServicesDep, bucket_id: str, body: UploadsAdd) -> BucketRead:
@@ -88,11 +105,11 @@ async def add_uploads(services: ServicesDep, bucket_id: str, body: UploadsAdd) -
     openapi_extra={"x-capability": "put_upload"},
     response_model=UploadRead,
     dependencies=[RebuildGuard],
-    responses=problem_responses(404, 409, 422),
+    responses={**problem_responses(404, 409, 422), **OVER_QUOTA},
     summary="The bytes of a staged upload (the URL is the credential)",
 )
 async def put_upload(
-    services: ServicesDep, request: Request, upload_id: str, token: str
+    services: SystemServicesDep, request: Request, upload_id: str, token: str
 ) -> UploadRead:
     return await services.put_upload(upload_id, token, request.stream())
 

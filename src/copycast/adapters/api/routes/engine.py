@@ -29,7 +29,7 @@ async def get_engine_cookies(services: ServicesDep) -> EngineCookiesRead:
     operation_id="set_engine_cookies",
     openapi_extra={"x-capability": "set_engine_cookies"},
     response_model=EngineCookiesRead,
-    responses=problem_responses(422),
+    responses=problem_responses(409, 422),
     summary="Store a Netscape cookies.txt under its name for every future fetch",
 )
 async def set_engine_cookies(services: ServicesDep, body: EngineCookiesWrite) -> EngineCookiesRead:

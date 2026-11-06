@@ -39,7 +39,7 @@ test.describe("Security headers", () => {
 
     for (const [path, heading] of [
       ["/about", "About"],
-      ["/settings", "Settings"],
+      ["/settings", "Your settings"],
       ["/jobs", "Jobs"],
     ] as const) {
       await page.goto(path);
@@ -104,7 +104,8 @@ test.describe("Security headers", () => {
     await expect(page.getByRole("table").getByText("Listed")).toHaveCount(FIXTURE_ITEM_COUNT, {
       timeout: ARCHIVE_TIMEOUT_MS,
     });
-    const media = page.waitForRequest(/\/feeds\/[^/]+\/(k\/[^/]+\/)?media\//);
+    // The web player streams through the session route (U10), never a feed's media key.
+    const media = page.waitForRequest(/\/api\/feeds\/[^/]+\/items\/[^/]+\/media(\?|$)/);
     await page.getByTestId("catalog-row").first().getByRole("button", { name: "Play" }).click();
     await media;
   });

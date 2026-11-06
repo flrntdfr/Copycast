@@ -1,7 +1,8 @@
 """Server-sent events shared by the worker (``NOTIFY copycast_events``) and the api.
 
-The wire form is one JSON object ``{"event": <name>, "data": {...}}``; the
-Postgres NOTIFY payload limit keeps it under :data:`MAX_PAYLOAD_BYTES`.
+The wire form is one JSON object ``{"event": <name>, "data": {...}}``; the NOTIFY
+payload prefixes it with the event's Owner and a newline, and the Postgres NOTIFY
+payload limit keeps the whole under :data:`MAX_PAYLOAD_BYTES`.
 :func:`serialize` and :func:`parse` are the only codec both processes use.
 """
 
@@ -104,13 +105,20 @@ def to_wire(event: BaseModel) -> dict[str, Any]:
     return {"event": event_name(event), "data": data}
 
 
-def serialize(event: BaseModel) -> str:
-    """Compact JSON for NOTIFY and the SSE ``data:`` line."""
-    payload = json.dumps(to_wire(event), separators=(",", ":"), ensure_ascii=False)
-    if len(payload.encode("utf-8")) >= MAX_PAYLOAD_BYTES:
+def serialize(event: BaseModel, *, owner: str = "") -> str:
+    """Compact JSON: the SSE ``data:`` line, and with ``owner`` the NOTIFY payload.
+
+    The NOTIFY payload of an event that has an Owner is ``"{owner}\n{json}"``, so the
+    api routes it to that Owner's subscribers; an owner-less event (``owner=""``) is the
+    bare JSON, which never contains a raw newline. The size limit applies to the whole
+    payload, prefix included.
+    """
+    body = json.dumps(to_wire(event), separators=(",", ":"), ensure_ascii=False)
+    payload = f"{owner}\n{body}" if owner else body
+    size = len(payload.encode("utf-8"))
+    if size >= MAX_PAYLOAD_BYTES:
         raise EventTooLarge(
-            f"{event_name(event)} event is {len(payload.encode('utf-8'))} bytes; "
-            f"the limit is {MAX_PAYLOAD_BYTES - 1}"
+            f"{event_name(event)} event is {size} bytes; the limit is {MAX_PAYLOAD_BYTES - 1}"
         )
     return payload
 

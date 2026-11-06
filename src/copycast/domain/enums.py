@@ -256,3 +256,26 @@ class DeleteReason(StrEnum):
 class PruneMode(StrEnum):
     auto = "auto"
     manual = "manual"
+
+
+class AuthMode(StrEnum):
+    """How Copycast authenticates: nobody (``open``), the operator password, or config users."""
+
+    open = "open"
+    legacy = "legacy"
+    users = "users"
+
+
+class PrincipalVia(StrEnum):
+    """How a Principal was established."""
+
+    session = "session"
+    api_key = "api_key"
+    open = "open"
+    system = "system"
+
+
+class BlockedReason(StrEnum):
+    """Why a wanted Catalog item waits instead of archiving (``catalog_items.blocked_reason``)."""
+
+    quota = "quota"

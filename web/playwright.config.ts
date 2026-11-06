@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { ADMIN, authFile } from "./e2e/users";
+
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:8080";
 
 export default defineConfig({
@@ -16,5 +18,13 @@ export default defineConfig({
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    // Signs each e2e User in once (e2e/auth.setup.ts); the specs reuse the sessions.
+    { name: "setup", testMatch: /.*\.setup\.ts/ },
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"], storageState: authFile(ADMIN) },
+      dependencies: ["setup"],
+    },
+  ],
 });

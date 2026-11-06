@@ -18,6 +18,7 @@ import contextlib
 import functools
 import importlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -60,6 +61,7 @@ from copycast.application.ports import (
     PermanentError,
     Progress,
     ProgressCallback,
+    QuotaExceeded,
 )
 from copycast.domain.enums import EnginePhase, FetchKind, LiveStatus
 from copycast.domain.exceptions import DestinationNotAllowed
@@ -88,6 +90,13 @@ class NotYetAvailable(DownloadCancelled):
     yt-dlp re-raises it as a fresh, message-less instance of the same class
     (``YoutubeDL._match_entry``), so the reason travels in :class:`_HookState`,
     not on the exception.
+    """
+
+
+class OverQuotaEstimate(DownloadCancelled):
+    """Raised inside the match filter: the item's estimated size exceeds the quota left.
+
+    Like :class:`NotYetAvailable`, the estimate travels in :class:`_HookState`.
     """
 
 
@@ -166,23 +175,24 @@ def engine_info() -> EngineVersion:
 
 @dataclass(frozen=True, slots=True)
 class StoredCookies:
-    """The cookie file in the Object store (``engine/cookies.txt``) and the Scratch its
-    private copies go to."""
+    """The cookie jar one call carries: its Object store ``key`` (the ``cookie_jar`` the
+    caller named, its Owner's) and the Scratch its private copy goes to."""
 
     layout: Layout
     scratch: Scratch
-
-    @property
-    def key(self) -> str:
-        return self.layout.cookies_key()
+    key: str
 
 
 class YtDlpEngine:
     """Implements :class:`copycast.application.ports.Engine` over ``yt_dlp.YoutubeDL``.
 
-    A cookie file stored in the Object store (``Layout.cookies_key``) rides along
-    with every call as ``cookiefile`` (a private Scratch copy) unless the
-    options name one; yt-dlp's refreshed cookies are written back afterwards.
+    The cookie jar a call names (``cookie_jar``, an Object store key: its Owner's) rides
+    along as ``cookiefile`` (a private Scratch copy) unless the options name one;
+    yt-dlp's refreshed cookies are written back to the same key afterwards. A call
+    that names no jar carries no stored cookies.
+
+    A fetch with ``spec.max_bytes`` set (the Owner's quota left) refuses an Engine item
+    whose estimated size is larger, before a byte is downloaded: :class:`QuotaExceeded`.
 
     The fetch guard judges every URL handed to yt-dlp before it runs
     (``adapters.sources.guard.check_engine_url``): the Source URL of a listing, the
@@ -198,16 +208,21 @@ class YtDlpEngine:
     def __init__(self, settings: Settings | None = None) -> None:
         netguard.install()
         self._settings = settings
-        self._cookies: StoredCookies | None = (
-            StoredCookies(
-                Layout(open_store(settings.storage)), Scratch(settings.storage.scratch_dir)
-            )
-            if settings is not None
-            else None
+        self._layout: Layout | None = (
+            Layout(open_store(settings.storage)) if settings is not None else None
+        )
+        self._scratch: Scratch | None = (
+            Scratch(settings.storage.scratch_dir) if settings is not None else None
         )
 
     def version(self) -> EngineVersion:
         return engine_info()
+
+    def _jar(self, cookie_jar: str | None) -> StoredCookies | None:
+        """The jar a call carries: the ``cookie_jar`` it names, or none."""
+        if cookie_jar is None or self._layout is None or self._scratch is None:
+            return None
+        return StoredCookies(self._layout, self._scratch, key=cookie_jar)
 
     def list_source(
         self,
@@ -217,13 +232,14 @@ class YtDlpEngine:
         log: EngineLog,
         *,
         limit: int | None = None,
+        cookie_jar: str | None = None,
     ) -> SourceListing:
         _check_cancel(cancel, f"listing of {url}")
         check_engine_url(url, claims=engine_claims)
         errors = _LastErrorLog(log)
         with netguard.recording_refusals() as refused:
             try:
-                with cookie_scope(self._cookies, options) as with_cookies:
+                with cookie_scope(self._jar(cookie_jar), options) as with_cookies:
                     params = listing_params(with_cookies, log=errors, limit=limit)
                     with yt_dlp.YoutubeDL(params) as ydl:
                         info = ydl.extract_info(url, download=False)
@@ -258,6 +274,8 @@ class YtDlpEngine:
         cancel: CancelToken,
         on_progress: ProgressCallback,
         log: EngineLog,
+        *,
+        cookie_jar: str | None = None,
     ) -> FetchResult:
         _check_cancel(cancel, f"fetch of {spec.item_id}")
         if spec.kind is FetchKind.direct and spec.synth is None:
@@ -271,7 +289,7 @@ class YtDlpEngine:
         try:
             with (
                 netguard.recording_refusals() as refused,
-                cookie_scope(self._cookies, options) as with_cookies,
+                cookie_scope(self._jar(cookie_jar), options) as with_cookies,
             ):
                 params = fetch_params_for(
                     spec,
@@ -290,6 +308,8 @@ class YtDlpEngine:
                         info = ydl.extract_info(spec.url, download=True)
         except Exception as exc:
             discard_temp_leftovers(spec)
+            if state.estimate_bytes is not None:
+                raise QuotaExceeded(state.estimate_bytes) from exc
             if state.not_ready is not None:
                 raise NotReady(
                     NOT_READY_MESSAGES[state.not_ready],
@@ -368,10 +388,11 @@ def fetch_params_for(
     postprocessor_hook: Hook,
     state: _HookState,
 ) -> dict[str, Any]:
-    """The complete ``YoutubeDL`` params of one fetch: options, hooks and the live filter.
+    """The complete ``YoutubeDL`` params of one fetch: options, hooks and the match filter.
 
-    Only an Engine extraction gets :func:`live_match_filter`; a direct (RSS
-    enclosure) fetch has no ``live_status`` to look at.
+    Only an Engine extraction gets :func:`live_match_filter` (and, with
+    ``spec.max_bytes``, :func:`quota_match_filter`); a direct (RSS enclosure) fetch
+    has no ``live_status`` to look at and is never estimated.
     """
     params = fetch_params(
         options,
@@ -384,8 +405,59 @@ def fetch_params_for(
     params["progress_hooks"] = [progress_hook]
     params["postprocessor_hooks"] = [postprocessor_hook]
     if spec.kind is FetchKind.ytdlp:
-        params["match_filter"] = live_match_filter(state)
+        live = live_match_filter(state)
+        if spec.max_bytes is None:
+            params["match_filter"] = live
+        else:
+            quota = quota_match_filter(state, spec.max_bytes)
+
+            def match_filter(info: Mapping[str, Any], *, incomplete: bool = False) -> str | None:
+                return live(info, incomplete=incomplete) or quota(info, incomplete=incomplete)
+
+            params["match_filter"] = match_filter
     return params
+
+
+def estimated_size(info: Mapping[str, Any]) -> int | None:
+    """yt-dlp's size estimate of the selected format(s): ``filesize``, else
+    ``filesize_approx``, summed over ``requested_formats`` when there are several.
+
+    None when any part has no estimate, or a non-finite one.
+    """
+    formats = info.get("requested_formats")
+    parts: list[Mapping[str, Any]] = (
+        [cast("Mapping[str, Any]", f) for f in cast("list[Any]", formats) if isinstance(f, dict)]
+        if isinstance(formats, list) and formats
+        else [info]
+    )
+    total = 0
+    for part in parts:
+        size = part.get("filesize") or part.get("filesize_approx")
+        if not isinstance(size, int | float) or isinstance(size, bool) or size <= 0:
+            return None
+        if isinstance(size, float) and not math.isfinite(size):
+            return None
+        total += int(size)
+    return total
+
+
+def quota_match_filter(state: _HookState, max_bytes: int) -> MatchFilter:
+    """A yt-dlp ``match_filter`` refusing an item estimated larger than ``max_bytes``.
+
+    It runs after format selection, before the download; the estimate is left in
+    ``state`` and ``fetch_item`` raises :class:`QuotaExceeded`. A missing estimate passes.
+    """
+
+    def match_filter(info: Mapping[str, Any], *, incomplete: bool = False) -> str | None:
+        if incomplete:
+            return None
+        size = estimated_size(info)
+        if size is None or size <= max_bytes:
+            return None
+        state.estimate_bytes = size
+        raise OverQuotaEstimate(f"estimated {size} bytes, {max_bytes} left")
+
+    return match_filter
 
 
 def live_match_filter(state: _HookState) -> MatchFilter:
@@ -639,12 +711,13 @@ class _HookState:
     ``starts_in`` an upcoming stream's time to its scheduled start.
     """
 
-    __slots__ = ("downloaded", "not_ready", "starts_in")
+    __slots__ = ("downloaded", "estimate_bytes", "not_ready", "starts_in")
 
     def __init__(self) -> None:
         self.downloaded = False
         self.not_ready: LiveStatus | None = None
         self.starts_in: timedelta | None = None
+        self.estimate_bytes: int | None = None
 
 
 def _progress_hook(cancel: CancelToken, on_progress: ProgressCallback, state: _HookState) -> Hook:
@@ -826,12 +899,14 @@ __all__ = [
     "discard_temp_leftovers",
     "engine_claims",
     "engine_info",
+    "estimated_size",
     "fetch_params_for",
     "ffmpeg_version",
     "fix_thumbnail_extensions",
     "guard_fetch_spec",
     "has_embedded_artwork",
     "live_match_filter",
+    "quota_match_filter",
     "release_date",
     "sniff_image_ext",
 ]

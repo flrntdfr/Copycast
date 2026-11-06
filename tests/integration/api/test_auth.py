@@ -1,7 +1,9 @@
-"""Authentication on: the operator pair on the UI and API, a feed's own pair on its routes.
+"""Legacy mode: the operator password signs in to the UI and API; feeds take a pair.
 
-Every fixture here overrides ``settings`` so ``auth.password`` is set; the
-rest of the API suite keeps running with authentication off (ADR 0004).
+Every fixture here overrides ``settings`` so ``auth.password`` is set (legacy mode);
+the rest of the API suite keeps running with authentication off (ADR 0004), and
+``test_sessions.py`` covers users mode. ``/api`` takes the session the operator gets
+by signing in; ``/feeds`` still takes the operator pair, or the feed's own.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from tests.conftest import TEST_ALLOW_PRIVATE_HOSTS, TEST_BASE_URL
 from tests.integration.api.conftest import Source, archived_items, create_mirror
 from tests.support.audio import TINY_MP3
 from tests.support.paths import ABOUT_PATH, FEED_URL, HEALTH_LIVE, HEALTH_READY, MEDIA_URL, api
+from tests.support.users import session_headers
 
 pytestmark = pytest.mark.integration
 
@@ -59,21 +62,39 @@ def problem(response: httpx.Response) -> dict[str, object]:
     return body
 
 
-async def test_api_requires_the_operator_pair(client: httpx.AsyncClient) -> None:
+@pytest.fixture
+async def session(client: httpx.AsyncClient) -> dict[str, str]:
+    """The operator's session cookie, as a header (the client's jar stays empty)."""
+    return await session_headers(client, *OPERATOR)
+
+
+async def test_api_requires_a_session(client: httpx.AsyncClient) -> None:
     missing = await client.get(api("/feeds"))
     assert missing.status_code == 401
-    assert missing.headers["www-authenticate"] == CHALLENGE
+    assert "www-authenticate" not in missing.headers  # the SPA shows its login page
     assert missing.headers["cache-control"] == "no-store"
     assert problem(missing)["type"] == "urn:copycast:problem:unauthorized"
     assert missing.headers["x-request-id"]  # the request-id layer wraps the auth layer
+    # The operator pair opens no /api route any more (scripts mint an API key).
+    basic_pair = await client.get(api("/feeds"), headers=OPERATOR_HEADERS)
+    assert basic_pair.status_code == 401 and "www-authenticate" not in basic_pair.headers
 
-    wrong = await client.get(api("/feeds"), headers=basic("florent", "wrong"))
-    assert wrong.status_code == 401 and problem(wrong)["detail"] == "wrong username or password"
-
-    right = await client.get(api("/feeds"), headers=OPERATOR_HEADERS)
-    assert right.status_code == 200
-    about = await client.get(ABOUT_PATH, headers=OPERATOR_HEADERS)
+    # The configured login name signs in, in any case, and so does its owner slug.
+    for name in ("Florent", "florent"):
+        signed = await session_headers(client, name, OPERATOR[1])
+        right = await client.get(api("/feeds"), headers=signed)
+        assert right.status_code == 200
+    about = await client.get(ABOUT_PATH, headers=signed)
     assert about.status_code == 200 and about.json()["auth_enabled"] is True
+    assert about.json()["auth_mode"] == "legacy"
+    me_response = await client.get(api("/me"), headers=signed)
+    client.cookies.clear()  # /api/me re-issued the cookie into the jar
+    me = me_response.json()
+    assert me["username"] == "florent" and me["admin"] is True
+    assert me["auth_mode"] == "legacy" and me["via"] == "session" and me["totp"] is False
+    # /api/docs and the OpenAPI document need the session too.
+    assert (await client.get(api("/openapi.json"))).status_code == 401
+    assert (await client.get(api("/openapi.json"), headers=signed)).status_code == 200
 
     # The health checks stay open for probes; SSE is gated like the rest of /api.
     assert (await client.get(HEALTH_LIVE)).status_code == 200
@@ -83,20 +104,24 @@ async def test_api_requires_the_operator_pair(client: httpx.AsyncClient) -> None
 
 
 async def test_feed_routes_take_the_feed_pair_or_the_operator_pair(
-    client: httpx.AsyncClient, source: Source, runner: Runner, container: Container
+    client: httpx.AsyncClient,
+    source: Source,
+    runner: Runner,
+    container: Container,
+    session: dict[str, str],
 ) -> None:
     url = source.write_rss("private", items=[1], artwork=False)
-    client.headers.update(OPERATOR_HEADERS)
+    client.headers.update(session)
     mirror = await create_mirror(client, url)
     other = await create_mirror(client, source.write_rss("other", items=[1], artwork=False))
-    client.headers.pop("Authorization")
+    client.headers.pop("Cookie")
 
     pair = mirror["feed_credentials"]
     assert pair is not None and len(pair["username"]) == 8 and len(pair["password"]) == 24
     assert mirror["feed_url"] == (
         f"http://{pair['username']}:{pair['password']}@testserver/feeds/{mirror['id']}.xml"
     )
-    listed = await client.get(api("/feeds"), headers=OPERATOR_HEADERS)
+    listed = await client.get(api("/feeds"), headers=session)
     assert listed.json()["feeds"][0]["feed_credentials"] is not None
 
     feed_path = FEED_URL(mirror["id"])
@@ -120,9 +145,9 @@ async def test_feed_routes_take_the_feed_pair_or_the_operator_pair(
 
     # The rendered feed's enclosures carry the media key, never the pair: a streaming player
     # (AVPlayer) sends no credentials and never answers the challenge.
-    client.headers.update(OPERATOR_HEADERS)
+    client.headers.update(session)
     archived = await archived_items(client, runner, mirror["id"])
-    client.headers.pop("Authorization")
+    client.headers.pop("Cookie")
     assert len(archived) == 1
     document = await client.get(feed_path, headers=feed_headers)
     key = feed_media_key(mirror["id"], pair["password"])
@@ -162,13 +187,13 @@ async def test_feed_routes_take_the_feed_pair_or_the_operator_pair(
 
 
 async def test_artwork_logo_and_robots_are_public(
-    client: httpx.AsyncClient, source: Source, runner: Runner
+    client: httpx.AsyncClient, source: Source, runner: Runner, session: dict[str, str]
 ) -> None:
     url = source.write_rss("art", items=[1], artwork=True, assets=True)
-    client.headers.update(OPERATOR_HEADERS)
+    client.headers.update(session)
     mirror = await create_mirror(client, url)
     archived = await archived_items(client, runner, mirror["id"])
-    client.headers.pop("Authorization")
+    client.headers.pop("Cookie")
     pair = mirror["feed_credentials"]
     feed_headers = basic(pair["username"], pair["password"])
     document = (await client.get(FEED_URL(mirror["id"]), headers=feed_headers)).text
@@ -209,9 +234,9 @@ async def test_artwork_logo_and_robots_are_public(
 
 
 async def test_rotate_feed_credentials(
-    client: httpx.AsyncClient, source: Source, container: Container
+    client: httpx.AsyncClient, source: Source, container: Container, session: dict[str, str]
 ) -> None:
-    client.headers.update(OPERATOR_HEADERS)
+    client.headers.update(session)
     mirror = await create_mirror(client, source.write_rss("rotate", items=[1], artwork=False))
     old = mirror["feed_credentials"]
     rotated = await client.post(api(f"/feeds/{mirror['id']}/credentials/rotate"))
@@ -219,7 +244,7 @@ async def test_rotate_feed_credentials(
     new = rotated.json()["feed_credentials"]
     assert new != old and new["username"] != old["username"]
     assert rotated.json()["feed_url"].startswith(f"http://{new['username']}:{new['password']}@")
-    client.headers.pop("Authorization")
+    client.headers.pop("Cookie")
 
     feed_path = FEED_URL(mirror["id"])
     assert (
@@ -243,12 +268,12 @@ async def test_rotate_feed_credentials(
         new["username"],
         new["password"],
     )
-    missing = await client.post(api("/feeds/nope/credentials/rotate"), headers=OPERATOR_HEADERS)
+    missing = await client.post(api("/feeds/nope/credentials/rotate"), headers=session)
     assert missing.status_code == 404
 
 
-async def test_api_keys_lifecycle(client: httpx.AsyncClient) -> None:
-    client.headers.update(OPERATOR_HEADERS)
+async def test_api_keys_lifecycle(client: httpx.AsyncClient, session: dict[str, str]) -> None:
+    client.headers.update(session)
     created = await client.post(api("/keys"), json={"name": "  Claude Code  ", "scope": "read"})
     assert created.status_code == 201, created.text
     payload = created.json()
@@ -279,11 +304,11 @@ async def test_api_keys_lifecycle(client: httpx.AsyncClient) -> None:
     assert json.loads(invalid.text)["type"] == "urn:copycast:problem:validation"
 
 
-async def test_upload_url_is_its_own_credential(client: httpx.AsyncClient) -> None:
+async def test_upload_url_is_its_own_credential(
+    client: httpx.AsyncClient, session: dict[str, str]
+) -> None:
     assert (await client.post(api("/uploads"), json={"filename": "a.mp3"})).status_code == 401
-    staged = await client.post(
-        api("/uploads"), json={"filename": "a.mp3"}, headers=OPERATOR_HEADERS
-    )
+    staged = await client.post(api("/uploads"), json={"filename": "a.mp3"}, headers=session)
     assert staged.status_code == 201
     path = urlsplit(staged.json()["upload_url"]).path
     body = TINY_MP3.read_bytes()

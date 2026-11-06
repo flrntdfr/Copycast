@@ -154,12 +154,19 @@ async def list_feed_objects(ctx: ServiceContext, feed_id: str) -> FeedObjectList
 
 @capability("storage_summary", response=StorageSummary)
 async def storage_summary(ctx: ServiceContext) -> StorageSummary:
-    """How many files every Feed keeps in its bucket and their total size, from one listing
-    of ``feeds/``; a Feed that keeps nothing counts zeros, objects of unknown Feeds are left
-    out."""
+    """How many files each of the caller's own Feeds keeps in its bucket and their total
+    size, from one listing of ``feeds/``; a Feed that keeps nothing counts zeros, objects
+    of other Feeds are left out.
+
+    Always the caller's own Feeds, an Admin's too (an Admin sees every Feed, but this is
+    *their* storage, plan §5); only SYSTEM counts every Feed.
+    """
     layout = ctx.layout
+    owner = ctx.principal.username
     async with ctx.uow_factory() as uow:
-        feed_ids = [feed.id for feed in await uow.feeds.list()]
+        feed_ids = [
+            feed.id for feed in await uow.feeds.list() if owner is None or feed.owner == owner
+        ]
     # One listing of every Feed's objects; no connection is held meanwhile.
     root = layout.feeds_prefix()
     objects = await asyncio.to_thread(layout.store.list, root)

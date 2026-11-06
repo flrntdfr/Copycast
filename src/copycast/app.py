@@ -30,7 +30,9 @@ from copycast.application.models import (
 )
 from copycast.application.ports import CancelToken, Engine
 from copycast.application.services.context import RssFetch, ServiceContext, SourceSnapshot
+from copycast.application.services.engine import cookie_jar_key
 from copycast.application.services.sources import WATCH_LATER_URL
+from copycast.application.users import UserDirectory
 from copycast.domain.credentials import feed_media_key, new_instance_secret
 from copycast.domain.enums import (
     ArchiveState,
@@ -45,6 +47,7 @@ from copycast.domain.enums import (
 from copycast.domain.exceptions import EngineUnavailable
 from copycast.domain.listing import SourceListing, SourceListingItem
 from copycast.domain.urls import youtube_playlist_id
+from copycast.domain.users import Principal
 from copycast.logging import get_logger
 from copycast.settings import Settings, SettingsError, get_settings
 
@@ -89,6 +92,9 @@ class SourceGatewayAdapter:
 
     One probe cache per process (the plan's "probe cache" of the api lifespan)
     so ``create_mirror`` reuses the listing a ``probe_source`` call produced.
+    ``owner`` names the User whose Cookie files an Engine call carries
+    (``application.services.engine.cookie_jar_key``); the cache is kept per owner, so a
+    probe made with one User's cookies is never reused for another.
     """
 
     def __init__(self, settings: Settings, engine: Engine, layout: Any) -> None:
@@ -103,26 +109,38 @@ class SourceGatewayAdapter:
         return cache
 
     def probe(
-        self, url: str, *, options: Mapping[str, Any], cancel: CancelToken
+        self, url: str, *, options: Mapping[str, Any], cancel: CancelToken, owner: str
     ) -> list[SourceSnapshot]:
         probe = _load("copycast.adapters.sources.probe", "probe")
-        result = probe(url, engine=self._engine, options=options, cache=self.cache, cancel=cancel)
+        result = probe(
+            url,
+            engine=self._engine,
+            options=options,
+            cache=self.cache,
+            cancel=cancel,
+            cookie_jar=self._jar(owner),
+            owner=owner,
+        )
         snapshots: list[SourceSnapshot] = []
         for candidate in result.candidates:
-            entry = self.cache.get_by_token(candidate.candidate_token)
+            entry = self.cache.get_by_token(candidate.candidate_token, owner=owner)
             if entry is not None:
                 snapshots.append(self._snapshot(entry))
         return snapshots
 
-    def cached(self, *, token: str | None, url: str | None) -> SourceSnapshot | None:
-        entry = self.cache.get(token=token, url=url)
+    def _jar(self, owner: str) -> str:
+        """The Object store key of ``owner``'s cookie jar."""
+        return cookie_jar_key(self._layout, owner)
+
+    def cached(self, *, token: str | None, url: str | None, owner: str) -> SourceSnapshot | None:
+        entry = self.cache.get(owner=owner, token=token, url=url)
         return self._snapshot(entry) if entry is not None else None
 
-    def search_podcasts(self, query: str, limit: int) -> list[PodcastSearchResult]:
+    def search_podcasts(self, query: str, limit: int, *, owner: str) -> list[PodcastSearchResult]:
         search = _load("copycast.adapters.sources.itunes_search", "search_podcasts")
         source_error = _load("copycast.adapters.sources.http", "SourceError")
         try:
-            results: list[PodcastSearchResult] = search(query, limit)
+            results: list[PodcastSearchResult] = search(query, limit, owner=owner)
         except source_error as exc:
             raise EngineUnavailable(f"podcast search is unavailable: {exc}") from exc
         return results
@@ -132,13 +150,14 @@ class SourceGatewayAdapter:
         tags: AudioTags | None = read(path)
         return tags
 
-    def search_videos(self, query: str, limit: int) -> list[VideoSearchResult]:
+    def search_videos(self, query: str, limit: int, *, owner: str) -> list[VideoSearchResult]:
         """yt-dlp's ``ytsearchN:`` listing, flattened to what an agent or the wizard needs."""
         listing = self._engine.list_source(
             f"ytsearch{limit}:{query}",
             self._settings.engine.options,
             CancelToken(),
             _SearchLog(),
+            cookie_jar=self._jar(owner),
         )
         results: list[VideoSearchResult] = []
         for item in listing.items:
@@ -156,10 +175,14 @@ class SourceGatewayAdapter:
             )
         return results[:limit]
 
-    def list_playlists(self) -> list[YouTubePlaylist]:
+    def list_playlists(self, *, owner: str) -> list[YouTubePlaylist]:
         """``youtube.com/feed/playlists`` listed by the engine: the account's playlists."""
         listing = self._engine.list_source(
-            PLAYLISTS_URL, self._settings.engine.options, CancelToken(), _SearchLog()
+            PLAYLISTS_URL,
+            self._settings.engine.options,
+            CancelToken(),
+            _SearchLog(),
+            cookie_jar=self._jar(owner),
         )
         playlists: list[YouTubePlaylist] = [
             YouTubePlaylist(id="WL", title="Watch Later", url=WATCH_LATER_URL)
@@ -183,7 +206,13 @@ class SourceGatewayAdapter:
         return playlists
 
     def inspect_video(
-        self, url: str, *, feed_id: str, options: Mapping[str, Any], language: str | None
+        self,
+        url: str,
+        *,
+        feed_id: str,
+        options: Mapping[str, Any],
+        language: str | None,
+        owner: str,
     ) -> SourceListingItem | None:
         """One item's full metadata from the engine (a single video is never flat).
 
@@ -191,7 +220,9 @@ class SourceGatewayAdapter:
         """
         engine_options_for = _load("copycast.adapters.engine.options", "engine_options_for")
         merged = engine_options_for(self._settings, options, feed_id=feed_id, language=language)
-        listing = self._engine.list_source(url, merged, CancelToken(), _SearchLog())
+        listing = self._engine.list_source(
+            url, merged, CancelToken(), _SearchLog(), cookie_jar=self._jar(owner)
+        )
         return listing.items[0] if listing.items else None
 
     def save_snapshot(self, feed_id: str, snapshot: SourceSnapshot) -> None:
@@ -248,12 +279,18 @@ class SourceGatewayAdapter:
         language: str | None,
         cancel: CancelToken,
         limit: int,
+        owner: str,
     ) -> SourceListing:
         """The first ``limit`` entries of a yt-dlp Source; options merged like the worker's."""
         engine_options_for = _load("copycast.adapters.engine.options", "engine_options_for")
         merged = engine_options_for(self._settings, options, feed_id=feed_id, language=language)
         return self._engine.list_source(
-            url, merged, cancel, _SearchLog("copycast.light_refresh"), limit=limit
+            url,
+            merged,
+            cancel,
+            _SearchLog("copycast.light_refresh"),
+            limit=limit,
+            cookie_jar=self._jar(owner),
         )
 
     def save_rss_snapshot(self, feed_id: str, body: bytes) -> bool:
@@ -346,6 +383,16 @@ class PublicUrlsAdapter:
     def feed_object_url(self, feed_id: str, path: str) -> str:
         compose = _load("copycast.adapters.feeds.urls", "feed_object_url")
         url: str = compose(self._base_url, feed_id, path)
+        return url
+
+    def play_media_url(self, feed_id: str, item_id: str) -> str:
+        compose = _load("copycast.adapters.feeds.urls", "play_media_url")
+        url: str = compose(self._base_url, feed_id, item_id)
+        return url
+
+    def play_asset_url(self, feed_id: str, item_id: str, name: str) -> str:
+        compose = _load("copycast.adapters.feeds.urls", "play_asset_url")
+        url: str = compose(self._base_url, feed_id, item_id, name)
         return url
 
 
@@ -519,6 +566,9 @@ class Container:
         sources: the Source gateway (probe cache, iTunes search, Source snapshots).
         urls: the public URL composer bound to ``base_url``.
         rows: the ORM row factory.
+        principal: always ``Principal.SYSTEM``: the container's services act as nobody in
+            particular (the worker, the scheduler, the public routes, startup).
+        users: the configured Users (``application.users.UserDirectory``).
         renderer: the public feed renderer (``adapters.feeds.render`` over the rows).
         services: the application services (``application.services.build_services``).
 
@@ -583,6 +633,15 @@ class Container:
                 self.settings.storage.scratch_dir
             ),
         )
+
+    @property
+    def principal(self) -> Principal:
+        return Principal.SYSTEM
+
+    @property
+    def users(self) -> UserDirectory:
+        directory: UserDirectory = self._cached("users", lambda: UserDirectory(self.settings))
+        return directory
 
     @property
     def uow_factory(self) -> Any:
@@ -658,9 +717,33 @@ class Container:
         prepare = _load("copycast.adapters.db.migrate", "prepare_schema")
         not_current = _load("copycast.adapters.db.migrate", "SchemaNotCurrent")
         try:
-            await prepare(self.db_engine, auto_migrate=self.settings.auto_migrate)
+            await prepare(
+                self.db_engine,
+                auto_migrate=self.settings.auto_migrate,
+                owner_of_existing=self.settings.auth.effective_owner_of_existing,
+            )
         except not_current as exc:
             raise SettingsError(str(exc)) from exc
+
+    async def migrate_user_settings(self) -> None:
+        """Copy the legacy Defaults and Cookie files to the owner of existing data's
+        ``users/{owner}/`` keys, once (api and worker start, after preflight).
+
+        The legacy ``engine/`` keys stay (``adapters.storage.user_settings``). An Object
+        store error is fatal, like preflight: a ``SettingsError`` (one line, exit 2).
+        """
+        migrate = _load("copycast.adapters.storage.user_settings", "migrate_legacy_settings")
+        owner = self.users.owner_of_existing
+        try:
+            await asyncio.to_thread(migrate, self.layout, owner)
+        except SettingsError:
+            raise
+        except Exception as exc:
+            first = str(exc).splitlines()[0] if str(exc) else repr(exc)
+            raise SettingsError(
+                f"storage {self.settings.storage.url}: copying the Defaults and Cookie files "
+                f"to users/{owner}/ failed: {first}"
+            ) from exc
 
     async def schema_is_current(self) -> bool:
         current: bool = await _load("copycast.adapters.db.migrate", "schema_is_current")(
@@ -678,6 +761,14 @@ class Container:
             "services", lambda: _load("copycast.application.services", "build_services")(self)
         )
         return services
+
+    def services_for(self, principal: Principal) -> Services:
+        """The services acting as ``principal`` (``Principal.SYSTEM``: :attr:`services`)."""
+        if principal.is_system:
+            return self.services
+        services_for = _load("copycast.application.services", "services_for")
+        scoped: Services = services_for(self, principal)
+        return scoped
 
     async def aclose(self) -> None:
         """Close the unit-of-work factory and dispose the database engine if ever created."""

@@ -1,7 +1,7 @@
 # Operating Copycast
 
-This is the runbook: first run, configuration, the Object store, upgrading to 2.3.0,
-Kubernetes, backup and restore, rebuilding the database from the Object store, and engine
+This is the runbook: first run, configuration, users and quotas, the Object store, upgrading
+to 3.0.0 and 2.3.0, Kubernetes, backup and restore, rebuilding the database from the Object store, and engine
 bumps and rollbacks. The
 product language (Mirror, Local feed, bucket,
 Refresh, ...) is defined in [AGENTS.md](../AGENTS.md).
@@ -22,7 +22,7 @@ finished files; the api proxies objects to podcast apps and holds no state of it
 can run several replicas (its own Scratch only holds an Upload while its tags are read). There is exactly one worker: it holds a session-level advisory lock and a second worker exits
 with a message. By default Copycast has no authentication: put it behind Tailscale (the
 compose `tailscale` profile, the Kubernetes Tailscale Ingress) or on a trusted network, or
-switch authentication on (below) behind TLS.
+configure users (below) behind TLS.
 
 ## First run with Docker Compose
 
@@ -56,9 +56,11 @@ Status: `GET /api/status` (the MCP tool `get_status`, and the dot in the web UI'
 reports each component as ok, warn, error or unknown with a summary and details: the
 Postgres, the worker (from its heartbeat), the scheduler, the job queue, storage, yt-dlp
 (warns when the worker runs another version or the release is over 60 days old), ffmpeg,
-and the crawlers, that is the last 24 h of Refreshes by service with each one's last error.
-It sits behind the operator password and never reaches the internet; probes keep using
-`/healthz/ready`.
+and the crawlers, that is the last 24 h of Refreshes by service with each one's last error,
+plus *Storage*, the caller's Quota (3.0; the Object store component, renamed "Object store",
+keeps the id `storage`). It needs a session or a `read` key and never reaches the internet;
+a Member sees only their own Refreshes, jobs and usage, and the Object store facts and every
+User's quota show to an Admin's session only. Probes keep using `/healthz/ready`.
 
 ## Configuration
 
@@ -97,9 +99,11 @@ stream_timeout_seconds  = 21600       # one GET streamed to a podcast app (a slo
 url = "redis://valkey:6379/0"   # redis://, rediss://, valkey:// or valkeys://
 ttl_seconds = 86400
 
-[auth]                          # prefer the environment for the password (below)
-username = "copycast"           # the operator's username
-# password = ""                 # 8+ characters switches authentication on
+[auth]                          # who signs in ("Authentication" below)
+username = "copycast"           # open and legacy mode: the single Admin's name
+# password = ""                 # legacy mode: 8+ characters; prefer the environment
+default_quota = "unlimited"     # users mode: [[auth.users]] tables, see "Authentication"
+session_days  = 30
 
 [security]                      # the fetch guard ("Fetch guard and browser defences")
 allow_private_hosts = []        # hostnames or CIDRs a server-side fetch may reach although
@@ -166,33 +170,169 @@ does so only if its `environment:` names them or an `env_file:` loads them ("Upg
 
 ## Authentication
 
-Off unless `COPYCAST__AUTH__PASSWORD` is set (`COPYCAST_AUTH_PASSWORD` in the compose `.env`).
-Basic auth is only a gate over TLS: with the `direct` profile put a TLS-terminating proxy in
-front. The decision and its trade-offs are
-[ADR 0011](adr/0011-optional-authentication-for-direct-deployments.md). Once on:
+Copycast has three auth modes, chosen by the configuration
+([ADR 0027](adr/0027-users-from-the-config-file-sessions-and-totp.md)):
+
+| Mode | Set by | Who signs in |
+|---|---|---|
+| open | neither `[[auth.users]]` nor `COPYCAST__AUTH__PASSWORD` | nobody: no authentication, the network is the boundary ([ADR 0004](adr/0004-network-is-the-security-boundary.md)); every request acts as one Admin named after `auth.username` (`copycast`) |
+| legacy | `COPYCAST__AUTH__PASSWORD` only (`COPYCAST_AUTH_PASSWORD` in the compose `.env`) | one Admin, `auth.username` (`copycast` unless `COPYCAST__AUTH__USERNAME` says otherwise) with the operator password, on the login page |
+| users | `[[auth.users]]` in `copycast.toml` | every configured User, each with their own Feeds ([ADR 0028](adr/0028-feeds-are-private-to-their-owner.md)) and Quota ([ADR 0029](adr/0029-storage-quotas.md)) |
+
+`COPYCAST__AUTH__PASSWORD` and `[[auth.users]]` are exclusive: both set stops startup (exit 2,
+"auth.password and auth.users are exclusive: remove COPYCAST__AUTH__PASSWORD"). An empty
+password, as the compose file passes when `.env` has none, counts as unset. Sign-in is only a
+gate over TLS: with the `direct` profile put a TLS-terminating proxy in front.
+
+### Users in `copycast.toml`
+
+```toml
+[auth]
+default_quota     = "10 GB"      # a User without a quota of their own; "unlimited" by default
+session_days      = 30           # a session ends after this many days unused (1 to 365)
+owner_of_existing = "florent"    # who gets the Feeds and API keys of before 3.0 (default: the
+                                 # first admin below); applied once, by migration 0017
+
+[[auth.users]]
+username      = "florent"
+password_hash = '$argon2id$v=19$m=65536,t=3,p=4$...'
+totp_secret   = "..."            # required for an Admin when base_url is https
+admin         = true
+quota         = "unlimited"
+
+[[auth.users]]
+username      = "emilia"
+password_hash = '$argon2id$v=19$m=65536,t=3,p=4$...'
+```
+
+- **Usernames** are 1 to 32 lowercase letters, digits, `.`, `_` or `-`, starting with a letter
+  or digit, and unique. The username is the identity: renaming a user creates a new one (see
+  "Switching to users mode" for moving Feeds).
+- **`password_hash`** must be an argon2id PHC string. A plaintext password, or a `password`
+  key, stops startup with exit 2 and a hint to run `copycast users hash-password`.
+- **Quotas** are decimal: `"10 GB"`, `"500 MB"`, `"1.5 TB"`, a number of bytes, or
+  `"unlimited"`; GiB is refused.
+- At least one user needs `admin = true`, and `owner_of_existing`, when set, must name a
+  configured user. With users, `[engine.options] cookiefile` is refused: each User has their
+  own Cookie files.
+- The list can come from the environment instead, as JSON
+  (`COPYCAST__AUTH__USERS='[{"username":"florent","password_hash":"…","admin":true}]'`); it
+  then **replaces** the file's list, it never merges with it. Prefer the file: see "`$` in
+  hashes" below.
+- Roles and quotas are read from the file at startup: a change applies at the next restart
+  (`docker compose up -d --force-recreate api worker`, or `api-direct`).
+- **Removing a user** takes effect at the next restart. Their sessions are deleted, their API
+  keys and their Feeds' pairs and media keys answer 401, their Feeds are no longer Refreshed or
+  pruned and their blocked items are not released, but nothing is deleted: Admins see their
+  Feeds as "owner removed" and can still act on them, and adding the user back restores
+  everything. Startup logs `auth.removed_owner_has_feeds` for each such owner.
+
+**Passwords and TOTP secrets** come from the image's CLI, which needs no database. The image's
+entrypoint is already `copycast`, so the subcommand follows the image name:
+
+```bash
+docker run --rm -it ghcr.io/flrntdfr/copycast:3.0.0 users hash-password      # prompts twice, hidden
+read -rs PW && printf '%s\n' "$PW" | docker run --rm -i ghcr.io/flrntdfr/copycast:3.0.0 users hash-password --stdin
+docker run --rm ghcr.io/flrntdfr/copycast:3.0.0 users totp florent
+```
+
+(`docker compose exec api copycast users …` works too: `exec` does not go through the
+entrypoint.) `hash-password` refuses a password under 8 characters and prints the PHC string.
+`totp` prints a new base32 secret, its `otpauth://totp/Copycast:florent?…` URI and a QR code
+for an authenticator app, and the line to paste under that user (`--secret` reuses an existing
+secret). Codes are 6 digits, 30 s, SHA-1, accepted one step either side, and each code works
+once.
+
+- **`$` in hashes.** A PHC string is full of `$` signs. Put it in `copycast.toml` (single
+  quotes are safest), never in `.env`, a compose file's `environment:` or any YAML that
+  Compose interpolates, where `$argon2id` silently becomes an empty variable.
+- **One set of argon2 parameters.** A sign-in for an unknown name runs a dummy verify with the
+  slowest parameters among the configured hashes, so it never answers faster than a known
+  name. A hash with cheaper parameters answers faster than an unknown name, which tells a
+  stranger that the name exists; startup warns (`auth.hash_parameters_differ`). Hash every
+  password with the same `copycast users hash-password` (argon2id, t=3, m=64 MiB, p=4): each
+  sign-in then costs about 64 MiB and a few hundred milliseconds of one core, two at a time
+  per api process.
+- **TOTP on https.** When `base_url` is https, an Admin without a `totp_secret` cannot sign
+  in (the same 401 as a wrong password; the log says `auth.login_refused
+  reason=admin_without_totp` and startup warns `auth.admin_without_totp`); their API keys keep
+  working. A Member's TOTP is optional, and the legacy single Admin is never required to have
+  one (startup warns `auth.legacy_without_totp` on https).
+- **Replacing a password or a TOTP secret** signs that user out of every session at the next
+  restart (`auth.credentials_changed`): Copycast keeps a digest of each user's hash and secret
+  in `users.credential_digest` and deletes the sessions of a user whose digest changed. This
+  is also how sample passwords are retired.
+
+**File permissions.** Once it lists users the file holds secrets: TOTP secrets, and hashes an
+attacker can try offline. The container runs as uid and gid 1000 (`copycast`) and mounts
+`./config` read-only, so:
+
+```bash
+sudo chown root:1000 config config/copycast.toml
+sudo chmod 0750 config
+sudo chmod 0640 config/copycast.toml
+```
+
+Keep it out of git and out of any backup shared with others. The image reads it from
+`/config/copycast.toml` (`COPYCAST_CONFIG`); the compose file mounts `./config` there on the
+api and the worker.
+
+### Signing in
 
 | Surface | Credential | Notes |
 |---|---|---|
-| Web UI, `/api/*`, `/api/events` | the operator pair (HTTP Basic) | `auth.username` defaults to `copycast`; the browser prompts once |
-| `/feeds/<id>.xml`, media, assets | that feed's own pair, or the operator pair | one pair opens one feed; every refusal is the same 401 with a `Basic` challenge |
+| The web UI, `/api/*`, `/api/events`, `/api/docs` | a session (the login page), or under `/api/` an API key as `Authorization: Bearer cck_…` | no session: `401` problem+json with **no** `WWW-Authenticate` challenge, so the UI shows its login page |
+| `/login`, the UI shell and its assets, `POST /auth/login`, `POST /auth/logout` | none | the shell holds no data |
+| `/feeds/<id>.xml` | that feed's own pair; its Owner's or an Admin's session; in legacy mode also the operator pair | every refusal is the same 401 with a `Basic` challenge |
+| `/feeds/<id>/media/…`, `…/assets/…` | that feed's pair; in legacy mode also the operator pair | |
 | `/feeds/<id>/k/<key>/media/…`, `…/assets/…` | the feed's media key in the path (or a pair) | what the feed publishes its enclosures, chapters, transcripts and attachments under |
+| `/api/feeds/<id>/items/<item>/media`, `…/assets/<name>` | a session only | the web player and the Catalog's download links (they count as downloads) |
 | `/art/<asset_id>-<mac>.<ext>`, `/feeds/copycast-artwork.png` | none | Artwork; the MAC is the credential |
-| `/uploads/<id>/<token>` | the one-time token | an Upload's `PUT` |
-| `/mcp` | an API key as `Authorization: Bearer cck_…` | keys only; the operator pair is refused |
+| `/uploads/<id>/<token>` | the one-time token | an Upload's `PUT`, no session needed |
+| `/mcp` | an API key as `Authorization: Bearer cck_…` | keys only |
 | `/healthz/*` | none | probes and healthchecks stay open |
+
+- **The session cookie** is `__Host-copycast_session` with `Secure` when `base_url` is https,
+  `copycast_session` without it on plain http; both `HttpOnly`, `SameSite=Lax`, `Path=/`, for
+  `session_days`. A session slides: it is extended at most once a minute while used, and the UI
+  renews the cookie on every load. *Sign out* in the user menu deletes it. On an https site a
+  sign-in that reaches Copycast over plain http is refused with `400 https-required`, since the
+  browser could not keep the cookie: check `COPYCAST_FORWARDED_ALLOW_IPS` behind a proxy.
+- **Legacy names.** In legacy mode the login name is `auth.username` typed in any case. A name
+  that is not a valid username (`Florent`, `me@example.org`) still works; its Feeds and
+  settings belong to its lower-cased or slugged form (`florent`, `me-example.org`), which
+  startup logs once as `auth.legacy_owner_normalised`.
+- **Throttling.** Per username, known or not: after 5 failures a name is locked for 30 s,
+  doubling with each further failure up to 15 minutes (`429 login-locked` with
+  `Retry-After`). Sessions that exist are untouched. Behind a proxy every client has the same
+  address, so there is no per-IP limit, and anyone who knows a username can keep it locked;
+  clear a lock by hand with
+  `docker compose exec postgres psql -U copycast -d copycast -c "DELETE FROM login_attempts WHERE username = 'emilia'"`.
+  Unknown names are counted under an HMAC, never in clear. When more than 16 sign-ins wait for
+  one of the two password-hash slots of an api process, the next gets `503 login-busy` with
+  `Retry-After: 5`.
+- Every refused sign-in (unknown name, wrong password, missing or wrong code, an Admin without
+  TOTP on https) is the same `401 login-failed`, "wrong username, password or code". In open
+  mode `POST /auth/login` answers 404: there is nothing to sign in to.
+
+**Feed credentials.** Every feed has a random username (8 characters) and password (24) minted
+at creation; migration 0002 minted them for feeds that existed before. They live in Postgres
+and in `feed.json`, so a rebuild keeps every subscription working. The UI shows them under the
+feed URL, which already carries them as `https://user:pass@host/feeds/<id>.xml`. *Rotate*
+(`POST /api/feeds/{id}/credentials/rotate`) mints a new pair and cuts off every client holding
+the old one. A feed whose Owner is no longer configured refuses its pair too.
 
 Under `/feeds` every refusal gets the same 401, detail "this feed requires its username and
 password": a missing or wrong pair, another feed's pair, a wrong media key, or a feed, item or
 asset that does not exist. No answer tells a stranger what this server mirrors
-([ADR 0022](adr/0022-public-artwork-under-opaque-tokens.md)). The operator's 401 on `/api`
-still says "wrong username or password".
+([ADR 0022](adr/0022-public-artwork-under-opaque-tokens.md)).
 
-**Feed credentials.** Every feed has a random username (8 characters) and password (24) minted
-at creation; migration 0002 mints them for feeds that existed before. They live in Postgres
-and in `feed.json`, so a rebuild keeps every subscription working. The UI shows them under the
-feed URL, which already carries them as `https://user:pass@host/feeds/<id>.xml`. *Rotate*
-(`POST /api/feeds/{id}/credentials/rotate`) mints a new pair and cuts off every client holding
-the old one.
+**The operator pair on `/feeds`.** In legacy mode the operator pair still opens every feed, as
+in 2.x, so a podcast app subscribed with it keeps working. It is throttled like a sign-in,
+on the same counter: a wrong operator password on `/feeds` counts as a failed login, and
+while the name is locked even the right pair answers 401 (podcast apps using it fail until the
+lock ends, at most 15 minutes). In users mode it opens nothing (there is no operator password
+any more): subscribe with each feed's own URL.
 
 **Media keys.** A player streaming an enclosure (iOS AVPlayer in Overcast) sends no
 credentials and never answers a challenge, so while authentication is on a feed publishes its
@@ -203,7 +343,7 @@ for Traefik). Bare `/feeds/<id>/media/…` URLs still work with the pair. The up
 moved every enclosure URL once, so apps may have downloaded Episodes they already had again
 (ADR 0020).
 
-**Artwork** is published at `/art/<asset_id>-<mac>.<ext>` in both auth modes, in every feed
+**Artwork** is published at `/art/<asset_id>-<mac>.<ext>` in every auth mode, in every feed
 and in the API's `AssetRead.url`. The `mac` is an HMAC of the asset id under the instance
 secret, 32 random bytes the api mints on its first start in the Postgres table
 `instance_secrets`. The URL needs no credential (podcast apps fetch images bare) and cannot be
@@ -211,14 +351,19 @@ computed from a Source URL. Every bad token is the same 404, and images are serv
 `Cache-Control: public, max-age=86400`. The old path `/feeds/<id>/assets/*.artwork.*` takes
 the pair or the media key like any asset while authentication is on.
 
-**API keys.** Minted and revoked on the *MCP* page (`/keys` in the UI, `/api/keys` in the API),
-shown once as two `.env` lines (`COPYCAST_MCP_URL=<base URL>/mcp` and `COPYCAST_MCP_KEY=cck_…`),
-stored as a SHA-256 digest, with a scope: `read` (read-only tools), `write` (everything but deletions) or
-`full` (everything, including `delete_feed`, `delete_item`, `prune_bucket`, and setting a
-Local feed's Retention through `create_bucket` or `update_bucket`, since autoprune deletes). Every tool
-checks the scope before running and refuses with a `ToolError` naming the scope it needs.
-`last_used_at` is updated at most once a minute per key. Keys cannot mint keys: the key
-capabilities have no MCP tools. For Claude Code:
+**API keys.** Minted and revoked on the *MCP* page (`/keys` in the UI, `/api/keys` in the API)
+by a signed-in User, shown once as two `.env` lines (`COPYCAST_MCP_URL=<base URL>/mcp` and
+`COPYCAST_MCP_KEY=cck_…`), stored as a SHA-256 digest. A key acts as the User who minted it and
+never sees more than that User's own Feeds, an Admin's key included; each User lists and
+revokes only their own. Its scope is `read` (read-only tools), `write` (everything but
+deletions) or `full` (everything, including `delete_feed`, `delete_item`, `prune_bucket`,
+setting a Local feed's Retention through `create_bucket` or `update_bucket`, a Rolling or
+expiring backfill, and a Mirror's `engine_options`, which are Admin-only besides). Over MCP every
+tool checks the scope before running and refuses with a `ToolError` naming the scope it needs.
+On `/api` a key reaches only the routes that have an MCP tool, with `read` for `GET` and `HEAD`,
+`write` for other methods and `full` for deletions; the key, cookie and Defaults routes,
+`/api/me` and the web player's routes refuse keys (`403 forbidden`). `last_used_at` is updated
+at most once a minute per key. Keys cannot mint keys. For Claude Code:
 
 ```bash
 export COPYCAST_MCP_KEY=cck_...
@@ -241,26 +386,143 @@ or in `.mcp.json`:
 
 Claude Desktop and claude.ai custom connectors accept OAuth only and cannot use a key.
 
+**Roles.** Admins see every User's Feeds, labelled with their Owner, and alone may run
+the `rebuild` capability, purge every unlocked Episode (`POST /api/admin/purge`, every
+User's) and set a Mirror's `engine_options`; a Member gets `403 forbidden` there and `404` for
+anything of another User. Defaults, Cookie files and API keys are each User's own, Admins
+included. The About page's Engine, ffmpeg and layout rows, and the Object store facts of the
+status popover, show to Admins only.
+
 **Turning it on later** breaks every existing subscription until each podcast app is given
 its feed's pair; agents need a key. Turning it off makes everything open again; the pairs
 and keys are kept for the next time.
 
-Kubernetes: the example overlay's `api-auth.yaml` reads the password from a Secret named
-`copycast-auth` (key `password`) and stays valid while the Secret is absent.
+Kubernetes: the example overlay's `api-auth.yaml` reads the legacy password from a Secret named
+`copycast-auth` (key `password`) and stays valid while the Secret is absent. For users mode,
+put `[[auth.users]]` in the `copycast.toml` the overlay mounts, and generate it as a Secret
+instead of the `copycast-config` ConfigMap once it holds hashes and TOTP secrets.
+
+### Switching to users mode
+
+Migration 0017 gives every Feed and API key that exists before 3.0 to one owner, once:
+`owner_of_existing` in users mode (else the first Admin), or the legacy owner in open and
+legacy mode (`auth.username` lower-cased, `copycast` by default). It never runs again, and
+Copycast never moves data between owners on its own. Two traps follow:
+
+- **The mode switch.** Upgrade to 3.0 in open or legacy mode, then configure `[[auth.users]]`
+  without a user named after the legacy owner, and every existing Feed becomes "owner
+  removed": its pair, its media key and the API keys answer 401, and nobody but an Admin sees
+  it.
+- **The legacy rename.** The same happens without leaving legacy mode when `auth.username`
+  changes (2.x allowed it freely), or when a password is set with another
+  `COPYCAST__AUTH__USERNAME` after an open-mode upgrade: the legacy owner changes with it, and
+  `owner_of_existing` cannot help (it must equal `auth.username` without users).
+
+Either way startup logs, for each such owner,
+`auth.removed_owner_has_feeds owner=copycast feeds=12 hint="configure the user, or run: copycast users reassign copycast <new>"`
+(legacy mode: `hint="set auth.username back to copycast, or run: copycast users reassign copycast florent"`).
+The easy way out is to configure a user with that name. Otherwise give the Feeds to a
+configured user:
+
+```bash
+docker compose stop worker                                   # reassign needs the worker's lock
+docker compose exec api copycast users reassign copycast florent   # api-direct with that profile
+docker compose start worker
+```
+
+`reassign OLD NEW` moves, in one transaction, every Feed and job of OLD to NEW, then
+re-exports each moved `feed.json` and moves `users/OLD/` (Defaults, Cookie files) to
+`users/NEW/`, keeping NEW's own file wherever both exist. Feed ids, pairs and media keys do not
+change, so podcast apps notice nothing once the Feed has a configured Owner again. OLD's
+default Local feed becomes an ordinary Local feed of NEW. It refuses, changing nothing, when NEW
+is not configured, when OLD equals NEW, when the worker runs, or when OLD and NEW mirror the same
+Source (it lists each clashing pair: delete one of the two Feeds first). OLD's API keys stay
+OLD's and stay dead while OLD is not configured; `--move-keys` moves them too, only for the same
+person under a new name, since whoever holds them then acts as NEW. `--yes` skips the
+confirmation.
+
+To start users mode cleanly from legacy mode: write `copycast.toml` with the users, set
+`owner_of_existing` to the user who should get the data (on a database already at 0017 it has
+no effect, so reassign instead), remove `COPYCAST__AUTH__PASSWORD` from the compose file and
+`.env`, and restart. Podcast apps subscribed with the operator pair need their feed's own URL.
+
+### Quotas
+
+A User's usage is the sum of their Feeds' `storage_bytes` (media and archived assets; Scratch,
+Postgres, the Feed cache and staged Uploads are not counted). Their quota is their `quota`, else
+`auth.default_quota`. The status popover's **Storage** row shows "3.2 GB of 10 GB (32 %)", amber
+from 90 % and red from 100 %; an Admin also sees one line per User, removed ones included
+([ADR 0029](adr/0029-storage-quotas.md)).
+
+Once a User is **Over quota**:
+
+- no new download starts for them. An archive job meeting an Over quota Owner leaves the item
+  wanted, with an "Over quota" badge in the Catalog, and succeeds without counting an attempt.
+  A yt-dlp download whose announced size is larger than the room left is blocked the same way
+  before it starts;
+- *Archive*, *Archive all available*, *Retry failed* and a selection answer `507 over-quota`;
+  so does a podcast app's first play of an Ephemeral Episode (no `Retry-After`, with one generic
+  detail);
+- an Upload that does not fit is refused when it is created with its size, when its bytes
+  arrive (the partial file is discarded) or when a batch is added. Staged Uploads not yet
+  added count against the room left: a received one by its size, a pending one by its
+  declared size for an hour, and not at all once its PUT failed or was refused. The web app
+  gives up the uploads it could not add (`DELETE /api/uploads/{id}`, the MCP tool
+  `delete_upload`), so uploading them again after freeing space works at once;
+- Refreshes, Light Refreshes, Backfill and Follow keep queuing: feeds always answer, and the
+  archive job blocks what does not fit;
+- running jobs finish, and nothing is deleted on the User's behalf. Retention (autoprune,
+  Ephemeral expiry) frees space as before.
+
+Blocked items queue again by themselves: every minute, and after a prune that freed bytes, the
+scheduler releases up to 20 of each Owner's blocked items, in archive priority order, as long as
+their estimated size fits the room left (an item blocked without an estimate is released as
+soon as the Owner is no longer over). Deleting Episodes, purging a bucket or raising the quota
+(at the next restart) is enough.
+
+**The overshoot.** A running job always finishes, and each archive job reads the room left when
+it starts. With the worker's `[refresh] concurrency` of N, an Owner can therefore end up over
+quota by up to one Episode per archive job running in parallel for them (N, plus the on-demand
+slot of a first play), plus RSS enclosures, whose size is never estimated. Uploads are admitted
+one at a time per Owner and never overshoot. Leave headroom on the disk accordingly.
 
 ### The Object store
 
 ```
 LAYOUT_VERSION                     "2"; written on first start into an empty bucket, a mismatch refuses to start
-engine/cookies.txt                 the engine's cookie jar, merged from the files below
-engine/cookies/<name>.txt          the stored cookie files, one per upload (optional)
-engine/defaults.json               the Settings-page defaults
+users/<username>/defaults.json     that User's Defaults (the Settings page's Mirrors half)
+users/<username>/cookies.txt       that User's cookie jar, merged from the files below
+users/<username>/cookie-files/<name>.txt   that User's Cookie files, one per upload (optional)
+users/.legacy-settings-copied      written once 3.0 has copied the engine/ keys below
+engine/cookies.txt                 2.x: the one global cookie jar (kept, no longer read)
+engine/cookies/<name>.txt          2.x: the global cookie files (kept, no longer read)
+engine/defaults.json               2.x: the global Defaults (kept, no longer read)
 feeds/<feed_id>/feed.json          descriptor of the feed, its policy, items, assets and requests
 feeds/<feed_id>/source/            verbatim Source XML or the last engine listing
 feeds/<feed_id>/media/             audio, <item_id>.info.json, <item_id>.item.xml (original RSS item)
 feeds/<feed_id>/assets/            Artwork, chapters, transcripts, Attachments
 uploads/<upload_id>/               a staged Upload (upload.json, file.<ext>), swept after 24 h
+                                   (counted per Owner in Postgres, table staged_uploads)
 ```
+
+Defaults and Cookie files belong to each User. Every Engine call made for a Feed (Refresh,
+archive, Request expansion, metadata fetch, Light Refresh) carries its owner's jar, also when
+an Admin acts on it; a probe, a search or the playlists listing carries the acting User's. On
+its first start 3.0 copies the global `engine/` keys of 2.x to the owner of existing data
+(`auth.owner_of_existing`, else the first Admin, else `auth.username` without users): a
+target already there is kept (logged as `user_settings.migration_conflict`), and the marker
+`users/.legacy-settings-copied` makes the copy run once only. The `engine/` keys stay, so a
+2.3.0 image rolled back still finds them (a later release deletes them), but whatever changed
+under 3.0 is not in them. The way back is not automatic either: before upgrading to 3.0 again
+after a rollback, delete `users/.legacy-settings-copied` and the copies under `users/<owner>/`
+(`defaults.json`, `cookies.txt`, `cookie-files/`), or 3.0 keeps using the copies of the first
+upgrade; each start logs `user_settings.legacy_newer_than_copy` for a legacy key changed after
+the copy and `user_settings.legacy_removed_since_copy` for one deleted since (cookies removed
+under 2.x stay in use under 3.0 until removed there too). `copycast users reassign OLD NEW` moves `users/OLD/` to `users/NEW/` with the Feeds;
+a file NEW already has stays OLD's and is reported. OLD's API keys stay OLD's (they stop
+working while OLD is not configured); `--move-keys` moves them too, for the same person under
+a new name only, since whoever holds them then acts as NEW. `copycast rebuild` needs
+nothing for them: they are read live from `users/`.
 
 The descriptor is rewritten after every change of intent and is what `copycast rebuild`
 reads. Only the worker writes into `media/`, and only finished files: partial downloads and
@@ -391,6 +653,120 @@ sets itself wins.
 | 403 | `unknown-host` | a request (anywhere but `/healthz`) to a host name that is not this Copycast's |
 | 422 | `destination-not-allowed` | a Source URL, or a link it leads to, that the fetch guard refuses |
 | 422 | `engine-option-rejected` | a Mirror's `engine_options` key off the allowlist; `keys` names each one, `scope` is `feed` (the slug is older; before 2.3.0 it refused only a deny-list) |
+
+## Upgrading to 3.0.0
+
+3.0.0 brings users from the configuration file, sessions with TOTP, Feeds private to their
+Owner, per-user Defaults and Cookie files, and storage quotas
+([ADR 0027](adr/0027-users-from-the-config-file-sessions-and-totp.md),
+[ADR 0028](adr/0028-feeds-are-private-to-their-owner.md),
+[ADR 0029](adr/0029-storage-quotas.md)). Migration 0017 runs when the api or the worker
+starts (whichever wins the migration lock; both hand it the same owner) and gives every
+existing Feed and API key to the owner of existing data ("Switching to users mode");
+migration 0018 adds the empty `staged_uploads` table. The api and the worker also **copy** `engine/defaults.json` and the Cookie files to `users/<owner>/`;
+the `engine/` keys stay, for a rollback.
+
+**What podcast apps see: nothing.** Feed ids, feed URLs, pairs, media keys and enclosure URLs
+are byte-identical in every mode, so no app downloads anything again (feeds re-render once
+with the new version in `<generator>`, as at every release, so their ETags change). The one
+exception is an app subscribed with the operator pair on
+a server switched to users mode (below).
+
+**Breaking changes.**
+
+| Who | What breaks | What to do |
+|---|---|---|
+| Scripts using HTTP Basic on `/api` (legacy mode, or 2.x with a password) | `/api` takes sessions and Bearer API keys only; Basic answers 401, with no challenge | mint an API key on the *MCP* page and send `Authorization: Bearer cck_…` |
+| API keys on `/api` routes that have no MCP tool (`/api/keys`, `/api/engine/cookies`, `/api/settings/defaults`, `/api/me`, the web player's routes, …) | `403 forbidden` | use the MCP tool, or a session |
+| Podcast apps subscribed with the **operator pair**, after a switch to **users mode** | the operator pair opens no feed any more: 401 | subscribe with the feed's own URL, shown in the UI. Legacy mode keeps the operator pair |
+| Self-hosters who upgrade in open or legacy mode and later switch to users mode (or rename `auth.username`) | the Feeds stay owned by the old name; unless it is configured they become "owner removed" and their pairs, media keys and API keys answer 401 | configure that name, or `copycast users reassign` ("Switching to users mode"); startup warns |
+| Dashboards reading the status component `storage` by its name | renamed "Object store" (its id `storage` is unchanged); the new `quota` component is named "Storage" | read components by id |
+| Anything reading `engine/defaults.json` or `engine/cookies*` | Defaults and Cookie files are per User under `users/<username>/`; the `engine/` keys are copied once and no longer read (a later release deletes them) | read `users/<username>/` |
+| Members (users mode) | `engine_options`, purge and rebuild are Admin-only (`403`); another User's Feed is `404` | — |
+| A rollback to 2.3.0 | the schema is at 0018, which 2.3.0 refuses, and settings changed under 3.0 are not in `engine/` | restore the dump, then the old tag ("Rolling back to 2.3.0" below) |
+
+In legacy mode the browser's Basic prompt is replaced by the login page: sign in with
+`auth.username` and the operator password.
+
+**Problem types new in 3.0.0** (`urn:copycast:problem:<slug>`):
+
+| Status | Slug | When |
+|---|---|---|
+| 400 | `https-required` | a sign-in over plain http when `base_url` is https |
+| 401 | `unauthorized` | `/api` without a session or a key (no `WWW-Authenticate` challenge) |
+| 401 | `login-failed` | any refused sign-in: "wrong username, password or code" |
+| 403 | `forbidden` | an Admin-only capability for a Member, a key on a route it may not use, a key scope too narrow |
+| 413 | `payload-too-large` | an `/auth` request body over 16 KiB (refused before it is read) |
+| 429 | `login-locked` | a username locked after 5 failures; `retry_after` and `Retry-After` |
+| 503 | `login-busy` | every password-hash slot busy; `Retry-After: 5` |
+| 507 | `over-quota` | a manual archive, an Upload or a first play of an Over quota User; `used_bytes` and `quota_bytes` on `/api` only |
+
+**Upgrade steps.**
+
+1. **Back up**, with 2.3.0 still running: `pg_dump -Fc` ("Backup and restore"), the compose
+   file and `.env` (`compose.yaml.bak-2.3.0`, `.env.bak-2.3.0`), and the Object store's
+   `engine/` prefix, copied to `backup/engine-2.3.0/` in the same bucket with an S3 client on
+   the `objects` network. 3.0 only copies those keys, so this is a second line of defence.
+2. **Open or legacy mode**: nothing else to prepare. In legacy mode scripts move to an API key.
+3. **Users mode**:
+   - Write `config/copycast.toml` with `[auth]` and the `[[auth.users]]` ("Authentication"),
+     hashed with the **3.0.0 image** (2.3.0 has no `users` command), with the file permissions
+     above. Set `owner_of_existing` to the user who gets today's Feeds, API keys, Defaults and
+     Cookie files. An Admin on an https site needs a `totp_secret`.
+   - Prepare the file next to the compose file (`config/copycast.toml.3.0`, say) and move it
+     into place in the same step as the image: 2.3.0 refuses `[[auth.users]]` and
+     `default_quota` at startup (exit 2).
+   - Mount `./config:/config:ro` on the api and the worker (the repository's
+     `docker-compose.yml` does; a compose file of your own may not).
+   - Remove `COPYCAST__AUTH__PASSWORD` from the compose file's environment and
+     `COPYCAST_AUTH_PASSWORD` from `.env`: the two are exclusive and the api would not start.
+   - Check that your podcast apps use each feed's own URL (with its pair), not the operator
+     pair, and note the prefix of the API keys you use, to check them afterwards.
+4. Set `COPYCAST_IMAGE` to the 3.0.0 tag and `docker compose up -d`.
+5. **Check**:
+   - `curl -u <pair> https://<host>/feeds/<id>.xml` on two feeds, and a `curl -I` of an
+     enclosure URL: 200, unchanged URLs;
+   - `curl -i https://<host>/api/me`: `401` with no `WWW-Authenticate` header;
+   - sign in as each user (the Admin with the TOTP code); a new Member sees only their own
+     empty "Copycast" Local feed;
+   - an MCP key still works, as the user who minted it (`owner_of_existing` for keys from before
+     3.0), and sees that user's Feeds only;
+   - no `auth.removed_owner_has_feeds` line in `docker compose logs api`;
+   - for the next hours, no burst of 401s from podcast apps (`Overcast/1.0` and the like) in
+     the request log.
+
+**Replacing users later.** A new password is a new hash and a restart
+(`docker compose up -d --force-recreate api worker`); the restart signs that user out of every
+session, so nobody keeps a session opened with the old password. A new TOTP secret works the
+same way. Renaming a user is a new user: add the new `[[auth.users]]` entry (and, if the old
+name is `owner_of_existing`, point that at the new name: startup refuses an
+`owner_of_existing` that names no configured user), restart, then `docker compose stop worker`,
+`docker compose exec api copycast users reassign <old> <new>`, `docker compose start worker`,
+and finally remove the old entry and restart. Removing a Member leaves their Feeds as "owner
+removed" for Admins, and startup says so.
+
+### Rolling back to 2.3.0
+
+Only if 3.0.0 misbehaves: whatever changed under 3.0 (new Feeds, Defaults, Cookie files,
+sessions) is lost.
+
+1. `docker compose stop api worker`.
+2. Restore the dump into a fresh database (2.3.0 refuses a schema at 0018, and `pg_restore
+   --clean` alone would leave the tables of 0017 and 0018 behind):
+   `docker compose exec postgres sh -c 'dropdb -U copycast copycast && createdb -U copycast -O copycast copycast'`,
+   then `docker compose exec -T postgres pg_restore -U copycast -d copycast < copycast-2.3.0.dump`.
+3. The `engine/` keys are still in place (3.0 only copied them); if they were changed by hand,
+   restore them from `backup/engine-2.3.0/`.
+4. Restore the 2.3.0 compose file and `.env` (they bring back `COPYCAST__AUTH__PASSWORD`), and
+   move `config/copycast.toml` aside if it lists users: 2.3.0 refuses `[[auth.users]]`.
+5. Set `COPYCAST_IMAGE` to the 2.3.0 tag and `docker compose up -d`.
+6. Before upgrading to 3.0 again, delete `users/.legacy-settings-copied` and the copies under
+   `users/<owner>/` (`defaults.json`, `cookies.txt`, `cookie-files/`), so the next start copies
+   what 2.3.0 has now. Otherwise 3.0 keeps the copies of the first upgrade and logs
+   `user_settings.legacy_newer_than_copy` for each legacy key changed since, and
+   `user_settings.legacy_removed_since_copy` for each one deleted since. This matters most
+   for cookies removed under 2.3.0 (a compromised account's, say): without this step 3.0
+   goes on fetching with their copies under `users/<owner>/`.
 
 ## Upgrading to 2.3.0
 
@@ -695,9 +1071,11 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   file) are mirrored as `attachment` assets under `assets/{item}.attachment.{slot}.{ext}`,
   and the Mirror Feed's description points at the local copies. A file that cannot be fetched
   is recorded as a failed asset and its original URL stays in the notes.
-- **OPML.** *Export OPML* on the Settings page (`GET /api/feeds.opml`) lists every feed with
-  its credentialed URL, to subscribe to all of them in one go.
-- **Player.** The web player has a seek bar with chapter marks and the time left, a chapter
+- **OPML.** *Export OPML* on the Settings page (`GET /api/feeds.opml`) lists every feed you
+  can see with its credentialed URL, to subscribe to all of them in one go.
+- **Player.** The web player streams from `/api/feeds/<id>/items/<item>/media` with the
+  session (never a feed's secret), and the Catalog's download link adds `?download=1` for a
+  file named after the Episode; both count as downloads. It has a seek bar with chapter marks and the time left, a chapter
   list under the current chapter's title (from the Episode's chapters asset), skip back 15 s /
   forward 30 s, and volume and mute (no volume slider on iPhone and iPad, where the hardware
   buttons own it).
@@ -736,20 +1114,23 @@ weeks ago (approximate date from YouTube; exact once downloaded)".
   them.
 - `/robots.txt` disallows everything and every response carries
   `X-Robots-Tag: noindex, nofollow, noarchive`; the UI shell adds the equivalent meta tag.
-- `POST /api/admin/purge` (`dry_run` true by default) deletes every archived Episode of every
-  feed except the Locked ones; feeds, Catalogs, artwork and credentials stay, and the Episodes
-  leave Tombstones. It has no button in the UI (the About page shows versions and totals only).
+- `POST /api/admin/purge` (`dry_run` true by default; an Admin's session only) deletes every
+  archived Episode of every feed of every User except the Locked ones; feeds, Catalogs, artwork
+  and credentials stay, and the Episodes leave Tombstones. It has no button in the UI (the
+  About page shows versions and totals only).
 
 ## Settings page: Authentications, Mirror defaults, OPML
 
-The Settings page saves every change as it is made, with no Save button. *Authentications*
-shows YouTube, Twitch, Vimeo and Mixcloud with a green check once a stored cookie file covers
-them (see below). *Export OPML* downloads every feed for a podcast app. Each Feed's own settings
+The Settings page ("Your settings") saves every change as it is made, with no Save button.
+Everything on it is the signed-in User's own, Admins included. *Authentications* shows
+YouTube, Twitch, Vimeo and Mixcloud with a green check once one of your stored cookie files
+covers them (see below). *Export OPML* downloads every feed for a podcast app. Each Feed's own settings
 live on its page, and its files on its bucket's page.
 
-The *Mirrors* section holds defaults that live in the Object store (`engine/defaults.json`,
-`PUT /api/settings/defaults`) rather than in the environment, because they are policy the
-operator changes from the UI:
+The *Mirrors* section holds your Defaults, which live in the Object store
+(`users/<username>/defaults.json`, `PUT /api/settings/defaults`) rather than in the
+environment, because they are policy each User changes from the UI. A new User starts from
+the built-in values below; the scheduler Refreshes each Mirror on its Owner's interval:
 
 | Default | Effect | Per-Mirror override |
 |---|---|---|
@@ -785,14 +1166,18 @@ recommends is the cookies of a logged-in browser session:
 
 The image also ships `deno`, the JavaScript runtime yt-dlp needs for YouTube's signature
 and "n" challenges; without it YouTube extraction degrades to a warning-laden fallback that
-is refused far more often. Each file is stored in the Object store at
-`engine/cookies/<name>.txt` and never shown again; a file with the same name replaces it,
-another name adds a row. The files are merged into `engine/cookies.txt`, handed to yt-dlp as
-`cookiefile` on every listing and fetch, in both processes. Each call works on a private
+is refused far more often. Cookie files are each User's own: each file is stored in the Object
+store at `users/<username>/cookie-files/<name>.txt` and never shown again, not even to an
+Admin; a file with the same name replaces it, another name adds a row. A User's files are
+merged into `users/<username>/cookies.txt`, handed to yt-dlp as `cookiefile` on every listing
+and fetch made for that User's Feeds (also when an Admin acts on them) and on that User's own
+probes, searches and playlist listings, in both processes. A Capture uses its Owner's YouTube
+account. Each call works on a private
 Scratch copy (mode 0600) and the jar is replaced when the site rotated a cookie, so two jobs
 never tear it; every later change to the files first carries the jar's rotated cookies back
 into the file they came from. A jar stored before cookie files existed shows as the file
-`cookies`. An explicit `cookiefile` under `[engine.options]` still wins. Remove a file from
+`cookies`. An explicit `cookiefile` under `[engine.options]` still wins, outside users mode
+only (with users it is refused at startup). Remove a file from
 the same page (`DELETE /api/engine/cookies?name=`) to drop its sites back to anonymous
 fetches. An agent cannot
 read or replace it: the three capabilities have routes but no MCP tools.
@@ -870,7 +1255,9 @@ worker before touching objects under `feeds/*/media/`.
 `copycast rebuild` lists each feed's prefix once and reconstructs feeds, items, assets and
 requests from `feed.json` and the sidecars, reconciles `media/` with the item rows (audio
 present ⇒ archived; object without a row ⇒ a row from its `.info.json` / `.item.xml`), checks
-the assets, recounts storage and recreates the default Bucket. It is idempotent and refuses
+the assets, recounts storage and recreates every configured User's default Local feed. Each
+Feed gets the Owner its `feed.json` names (a descriptor written before 3.0 names none and goes
+to `owner_of_existing`), removed users included. It is idempotent and refuses
 to run while the worker holds its
 lock, so stop the worker first.
 
@@ -896,8 +1283,8 @@ pushes the lock change to `main`; `image.yml` then builds and publishes:
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
-| `2.3.0` | yes, on every engine bump | "the current 2.3.0" |
-| `2.3.0-yt2026.10.29.232701.dev0` | never (until pruned) | exactly this app + engine combination |
+| `3.0.0` | yes, on every engine bump | "the current 3.0.0" |
+| `3.0.0-yt2026.10.29.232701.dev0` | never (until pruned) | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
 Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. After each build the
@@ -906,7 +1293,7 @@ are deleted, so roll back within that window or pull and keep the image yourself
 runs with `GITHUB_TOKEN`, which needs the package to grant the repository the Admin role
 (Package settings → Manage Actions access). To roll back an engine that broke a site, pin
 the previous immutable tag in `.env`
-(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:2.3.0-yt<previous>`) or in the kustomize overlay
+(`COPYCAST_IMAGE=ghcr.io/flrntdfr/copycast:3.0.0-yt<previous>`) or in the kustomize overlay
 (`images[].newTag`), and `docker compose up -d` / `kubectl apply -k`. The About page and
 `copycast --version` show which engine is running; `jobs.engine_version` records which engine
 archived each item.
@@ -954,7 +1341,13 @@ console form, tracebacks included. URL userinfo becomes `scheme://***@host`, med
 and `Cookie` values and Basic, Bearer and Digest credentials `***`. Console tracebacks show no
 frame locals. The security events are `fetch.destination_refused` (a Source fetch the guard
 refused, with the address and its class), `http.cross_site_refused` (method, path, reason)
-and `engine_options.refused` (a stored Mirror option the allowlist dropped).
+and `engine_options.refused` (a stored Mirror option the allowlist dropped). Sign-in logs
+`auth.login` and `auth.login_failed` (username only for a configured User, never the typed
+name of an unknown one) and `auth.login_refused reason=admin_without_totp`; startup logs
+`auth.users_synced`, `auth.credentials_changed` (a user whose sessions were ended),
+`auth.removed_owner_has_feeds`, and the warnings `auth.admin_without_totp`,
+`auth.legacy_without_totp`, `auth.hash_parameters_differ` and `auth.legacy_owner_normalised`.
+The archive job logs `archive.blocked` for an item it leaves Over quota.
 
 Feeds are rendered in a thread and gzipped once per revision when they enter the Feed
 cache; a client that sends `Accept-Encoding: gzip` gets those bytes as they are

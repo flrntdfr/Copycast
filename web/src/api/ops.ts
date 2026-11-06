@@ -50,6 +50,7 @@ export const OPS = {
   create_upload: ["post", "/api/uploads"],
   put_upload: ["put", "/uploads/{upload_id}/{token}"],
   get_upload: ["get", "/api/uploads/{upload_id}"],
+  delete_upload: ["delete", "/api/uploads/{upload_id}"],
   create_serial_bucket: ["post", "/api/serial-buckets"],
   add_uploads: ["post", "/api/buckets/{bucket_id}/uploads"],
   list_jobs: ["get", "/api/jobs"],
@@ -68,6 +69,9 @@ export const OPS = {
   delete_engine_cookies: ["delete", "/api/engine/cookies"],
   get_mirror_defaults: ["get", "/api/settings/defaults"],
   set_mirror_defaults: ["put", "/api/settings/defaults"],
+  login: ["post", "/auth/login"],
+  logout: ["post", "/auth/logout"],
+  get_me: ["get", "/api/me"],
 } as const satisfies Record<string, Op>;
 
 export type Capability = keyof typeof OPS;
@@ -77,6 +81,8 @@ export const EXTRA_OPS = {
   resume_mirror: ["post", "/api/mirrors/{feed_id}/resume"],
   download_feed_object: ["get", "/api/feeds/{feed_id}/objects/{path}"],
   health_ready: ["get", "/healthz/ready"],
+  play_item_media: ["get", "/api/feeds/{feed_id}/items/{item_id}/media"],
+  play_item_asset: ["get", "/api/feeds/{feed_id}/items/{item_id}/assets/{name}"],
 } as const satisfies Record<string, Op>;
 
 export function opOf<C extends Capability>(capability: C): (typeof OPS)[C] {

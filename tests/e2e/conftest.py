@@ -12,6 +12,10 @@ Environment:
                                 (default http://fixtures:8000, the compose service name)
     COPYCAST_E2E_TIMEOUT        seconds to wait for archiving and readiness (default 180)
 
+The stack runs in users mode (``tests/e2e/config/copycast.toml``): ``admin`` (an Admin),
+``alice`` and ``bob`` (Members), each signing in with ``<username>-e2e-password``. ``http``
+is signed in as admin, ``alice`` as alice, ``anonymous`` holds no session.
+
 Every test here is synchronous: the stack is a black box reached over HTTP, so no
 asyncio plumbing is needed and module-scoped fixtures stay trivial.
 """
@@ -37,6 +41,13 @@ DEFAULT_BASE_URL = "http://localhost:8080"
 DEFAULT_FIXTURES_URL = "http://fixtures:8000"
 DEFAULT_TIMEOUT = 180.0
 E2E_FEED_PATH = "/rss/e2e_feed.xml"
+ADMIN = "admin"
+ALICE = "alice"
+
+
+def password_of(username: str) -> str:
+    """The test password of a configured e2e User (tests/e2e/config/copycast.toml)."""
+    return f"{username}-e2e-password"
 
 
 @dataclass(frozen=True)
@@ -79,20 +90,53 @@ def stack() -> Stack:
     )
 
 
+def _client(stack: Stack) -> httpx.Client:
+    """A client that never follows redirects, so 3xx answers stay visible."""
+    return httpx.Client(base_url=stack.base_url, timeout=httpx.Timeout(30.0))
+
+
+def sign_in(client: httpx.Client, username: str) -> None:
+    """POST /auth/login; the session cookie stays in the client's jar."""
+    response = client.post(
+        "/auth/login", json={"username": username, "password": password_of(username)}
+    )
+    assert response.status_code == 204, response.text
+    assert any(cookie.name == "copycast_session" for cookie in client.cookies.jar), (
+        response.headers.get("set-cookie")
+    )
+
+
 @pytest.fixture(scope="session")
-def http(stack: Stack) -> Iterator[httpx.Client]:
-    """A session-wide client; it never follows redirects so 3xx answers stay visible."""
-    with httpx.Client(base_url=stack.base_url, timeout=httpx.Timeout(30.0)) as client:
+def anonymous(stack: Stack) -> Iterator[httpx.Client]:
+    """No session: what a podcast app or a stranger sees."""
+    with _client(stack) as client:
+        yield client
+
+
+@pytest.fixture(scope="session")
+def http(stack: Stack, stack_ready: None) -> Iterator[httpx.Client]:
+    """Signed in as the Admin ``admin``, for the whole session."""
+    with _client(stack) as client:
+        sign_in(client, ADMIN)
+        yield client
+
+
+@pytest.fixture(scope="session")
+def alice(stack: Stack, stack_ready: None) -> Iterator[httpx.Client]:
+    """Signed in as the Member ``alice``."""
+    with _client(stack) as client:
+        sign_in(client, ALICE)
         yield client
 
 
 @pytest.fixture(scope="session", autouse=True)
-def stack_ready(http: httpx.Client, stack: Stack) -> None:
+def stack_ready(stack: Stack) -> None:
     """Fail fast with a clear message when nothing listens at the base URL."""
 
     def live() -> bool:
         try:
-            return http.get("/healthz/live").status_code == 200
+            with _client(stack) as client:
+                return client.get("/healthz/live").status_code == 200
         except httpx.TransportError:
             return False
 

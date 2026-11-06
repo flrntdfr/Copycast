@@ -6,6 +6,10 @@
 # a localhost base URL so feed and media links resolve from the test runner; `fixtures` is exempt
 # from the fetch guard ([security] allow_private_hosts). COPYCAST_IMAGE (set
 # by the Makefile's e2e targets) names that image; it is never pulled.
+#
+# The stack runs in users mode: tests/e2e/config replaces ./config at /config, and its
+# copycast.toml configures admin (an Admin), alice and bob (Members, bob with a quota of 0)
+# with cheap test hashes. The httpx smoke and the Playwright setup project sign in as them.
 
 services:
   fixtures:
@@ -23,6 +27,9 @@ services:
   api-direct:
     image: ${COPYCAST_IMAGE:-copycast:ci}
     pull_policy: never
+    volumes:
+      # Same container path as docker-compose.yml's ./config, so this mount replaces it.
+      - ./tests/e2e/config:/config:ro
     environment:
       COPYCAST__BASE_URL: http://localhost:8080
       COPYCAST_LOG_LEVEL: DEBUG
@@ -39,6 +46,9 @@ services:
   worker:
     image: ${COPYCAST_IMAGE:-copycast:ci}
     pull_policy: never
+    volumes:
+      # Same container path as docker-compose.yml's ./config, so this mount replaces it.
+      - ./tests/e2e/config:/config:ro
     environment:
       COPYCAST__BASE_URL: http://localhost:8080
       COPYCAST_LOG_LEVEL: DEBUG

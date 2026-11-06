@@ -13,12 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from copycast.adapters.db.base import rows_affected
 from copycast.adapters.db.models import EngineVersion, Feed, RefreshRun, WorkerHeartbeat
 from copycast.application.models import CrawlerStats
+from copycast.application.services.context import Scope
 from copycast.domain.enums import JobTrigger, RefreshRunStatus
 
 
 class TelemetryRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, scope: Scope = Scope.SYSTEM) -> None:
         self._session = session
+        self._scope = scope
 
     # ------------------------------------------------------------------ refresh runs
 
@@ -82,7 +84,11 @@ class TelemetryRepository:
         return list(result.scalars())
 
     async def crawler_stats(self, since: datetime) -> list[CrawlerStats]:
-        """Finished Refresh runs (full and light) since ``since``, by the Feed's service."""
+        """Finished Refresh runs (full and light) since ``since``, by the Feed's service.
+
+        Only runs of Feeds the scope may see: a Member counts their own Refreshes and
+        sees their own errors; an Admin session and SYSTEM see every run.
+        """
         service = func.coalesce(Feed.service, Feed.source_kind)
         failed = RefreshRun.status == RefreshRunStatus.failed.value
         succeeded = RefreshRun.status.in_(
@@ -91,7 +97,7 @@ class TelemetryRepository:
         errors = func.array_agg(
             aggregate_order_by(RefreshRun.error, RefreshRun.started_at.desc())
         ).filter(failed)
-        result = await self._session.execute(
+        stmt = (
             select(
                 service,
                 func.count(),
@@ -101,9 +107,10 @@ class TelemetryRepository:
             )
             .join(Feed, Feed.id == RefreshRun.feed_id)
             .where(RefreshRun.started_at >= since, failed | succeeded)
-            .group_by(service)
-            .order_by(service)
         )
+        if self._scope.visible_owner is not None:
+            stmt = stmt.where(Feed.owner == self._scope.visible_owner)
+        result = await self._session.execute(stmt.group_by(service).order_by(service))
         return [
             CrawlerStats(
                 service=name,

@@ -8,6 +8,7 @@ nothing else, so the Mirror keeps serving what it has.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -29,6 +30,7 @@ from copycast.application.ports import (
 )
 from copycast.application.services.context import FeedRow, ItemRow, UnitOfWorkPort
 from copycast.application.services.defaults import effective, load_defaults
+from copycast.application.services.engine import cookie_jar_key
 from copycast.application.services.policy import apply_policy, delete_rows, shortest_for
 from copycast.domain.enums import (
     ArchiveState,
@@ -80,6 +82,8 @@ class _FeedSnapshot:
     last_modified: str | None
     first_listing: bool
     options: dict[str, Any]
+    cookie_jar: str
+    """The jar of the Feed's Owner the listing carries."""
 
 
 def list_rss(url: str, *, etag: str | None, last_modified: str | None, follow_next: bool) -> Listed:
@@ -104,9 +108,15 @@ def list_rss(url: str, *, etag: str | None, last_modified: str | None, follow_ne
 
 
 def list_engine(
-    engine: Engine, url: str, options: Mapping[str, Any], cancel: CancelToken, log_: EngineLog
+    engine: Engine,
+    url: str,
+    options: Mapping[str, Any],
+    cancel: CancelToken,
+    log_: EngineLog,
+    *,
+    cookie_jar: str | None = None,
 ) -> Listed:
-    listing = engine.list_source(url, options, cancel, log_)
+    listing = engine.list_source(url, options, cancel, log_, cookie_jar=cookie_jar)
     return Listed(listing, engine_version=engine.version().version)
 
 
@@ -144,12 +154,13 @@ async def run(ctx: JobContext) -> JobOutcome:
             etag=feed.source_etag,
             last_modified=feed.source_last_modified,
             first_listing=feed.last_refresh_success_at is None,
+            cookie_jar=cookie_jar_key(ctx.container.layout, feed.owner),
             options=engine_options_for(
                 ctx.container.settings,
                 feed.engine_options,
                 feed_id=feed.id,
                 language=effective(
-                    load_defaults(ctx.container.layout),
+                    load_defaults(ctx.container.layout, feed.owner),
                     language=feed.preferred_language,
                     min_duration_seconds=feed.min_duration_seconds,
                 ).language,
@@ -220,7 +231,9 @@ async def run(ctx: JobContext) -> JobOutcome:
         wanted = await apply_policy(
             cast("UnitOfWorkPort", uow),
             feed_row,
-            min_duration_seconds=shortest_for(feed_row, load_defaults(ctx.container.layout)),
+            min_duration_seconds=shortest_for(
+                feed_row, load_defaults(ctx.container.layout, feed_row.owner)
+            ),
         )
         wanted_rows = await uow.catalog.get_many(
             await uow.catalog.ids_in_state(feed_id, ArchiveState.wanted)
@@ -282,7 +295,12 @@ async def _list(ctx: JobContext, feed: _FeedSnapshot) -> Listed:
                 follow_next=feed.first_listing,
             )
         return await ctx.run_blocking(
-            list_engine, ctx.container.engine, feed.source_url, feed.options, ctx.cancel, ctx.log
+            functools.partial(list_engine, cookie_jar=feed.cookie_jar),
+            ctx.container.engine,
+            feed.source_url,
+            feed.options,
+            ctx.cancel,
+            ctx.log,
         )
     except DestinationNotAllowed as exc:
         raise PermanentError(str(exc)) from exc

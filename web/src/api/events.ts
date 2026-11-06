@@ -85,6 +85,11 @@ export function keysForEvent(event: CopycastEvent): QueryKey[] {
   ];
   // Every bucket's file count and size (the Feeds page's Buckets box).
   const storageSummary: QueryKey = [OPS.storage_summary[0], OPS.storage_summary[1]];
+  // The User's storage against their quota: `/api/me` and the status popover's Storage row.
+  const usage: QueryKey[] = [
+    [OPS.get_me[0], OPS.get_me[1]],
+    [OPS.get_status[0], OPS.get_status[1]],
+  ];
   switch (event.event) {
     case "feed":
       return [
@@ -92,6 +97,7 @@ export function keysForEvent(event: CopycastEvent): QueryKey[] {
         feedKey(event.data.feed_id),
         objectsKey(event.data.feed_id),
         storageSummary,
+        ...usage,
       ];
     case "item":
       return [
@@ -106,6 +112,7 @@ export function keysForEvent(event: CopycastEvent): QueryKey[] {
           { params: { path: { feed_id: event.data.feed_id, item_id: event.data.item_id } } },
         ],
         objectsKey(event.data.feed_id),
+        ...usage,
       ];
     case "job": {
       const keys: QueryKey[] = [

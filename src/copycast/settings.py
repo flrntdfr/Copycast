@@ -13,10 +13,14 @@ import ipaddress
 import os
 import re
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit, urlunsplit
 
+from argon2 import Type as Argon2Type
+from argon2 import extract_parameters
+from argon2.exceptions import InvalidHashError
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -34,6 +38,11 @@ from pydantic_settings import (
 
 from copycast.domain.destinations import DestinationPolicy
 from copycast.domain.engine_options import EngineOptionRejected, EngineOptions
+from copycast.domain.enums import AuthMode
+from copycast.domain.quota import parse_quota_limit
+from copycast.domain.totp import decode_secret
+from copycast.domain.users import USERNAME_PATTERN as USERNAME_PATTERN
+from copycast.domain.users import is_valid_username, owner_slug
 
 DEFAULT_CONFIG_PATH = "./config/copycast.toml"
 CONFIG_ENV = "COPYCAST_CONFIG"
@@ -71,20 +80,120 @@ class EngineSettings(BaseModel):
 
 AUTH_PASSWORD_MIN_LEN = 8
 DEFAULT_AUTH_USERNAME = "copycast"
+TOTP_SECRET_MIN_LEN = 16
+"""Base32 characters: 80 bits."""
+QuotaLimit = int | Literal["unlimited"]
+"""Bytes, or no limit. The configuration also takes ``"10 GB"``-style strings."""
+USERNAME_HELP = (
+    "must be 1-32 lowercase letters, digits, '.', '_' or '-', starting with a letter or digit"
+)
+PASSWORD_HASH_HELP = "must be an argon2id PHC string (run: copycast users hash-password)"
+TOTP_SECRET_HELP = "must be base32, at least 16 characters (run: copycast users totp)"
+QUOTA_HELP = 'must be like "10 GB", "500 MB" or "unlimited"'
+
+
+def _quota_limit(value: object) -> QuotaLimit:
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError(QUOTA_HELP)
+    try:
+        return parse_quota_limit(value)
+    except ValueError:
+        raise ValueError(QUOTA_HELP) from None
+
+
+def is_argon2id_phc(value: str) -> bool:
+    """Whether ``value`` is an argon2id PHC string argon2 can read the parameters of."""
+    if not value.startswith("$argon2id$"):
+        return False
+    try:
+        parameters = extract_parameters(value)
+    except (InvalidHashError, ValueError):
+        return False
+    return parameters.type is Argon2Type.ID
+
+
+class UserConfig(BaseModel):
+    """One ``[[auth.users]]`` entry: a User who signs in with a password (and a TOTP code).
+
+    The password is never in the file, only its argon2id hash (``copycast users
+    hash-password``); a plaintext password is refused at startup.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    username: str
+    password_hash: str
+    totp_secret: str | None = None
+    admin: bool = False
+    quota: QuotaLimit | None = None
+    """None means ``auth.default_quota``."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_plaintext(cls, data: object) -> object:
+        if isinstance(data, Mapping) and "password" in cast(Mapping[str, object], data):
+            raise ValueError(
+                f"a plaintext password is refused: set password_hash, which {PASSWORD_HASH_HELP}"
+            )
+        return cast(object, data)
+
+    @field_validator("username")
+    @classmethod
+    def _username(cls, value: str) -> str:
+        value = value.strip()
+        if not is_valid_username(value):
+            raise ValueError(USERNAME_HELP)
+        return value
+
+    @field_validator("password_hash")
+    @classmethod
+    def _password_hash(cls, value: str) -> str:
+        value = value.strip()
+        if not is_argon2id_phc(value):
+            raise ValueError(PASSWORD_HASH_HELP)
+        return value
+
+    @field_validator("totp_secret")
+    @classmethod
+    def _totp_secret(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = "".join(value.split()).upper()
+        if not value:
+            return None
+        try:
+            decode_secret(value)
+        except ValueError:
+            raise ValueError(TOTP_SECRET_HELP) from None
+        if len(value.rstrip("=")) < TOTP_SECRET_MIN_LEN:
+            raise ValueError(TOTP_SECRET_HELP)
+        return value
+
+    @field_validator("quota", mode="before")
+    @classmethod
+    def _quota(cls, value: object) -> QuotaLimit | None:
+        return None if value is None else _quota_limit(value)
 
 
 class AuthSettings(BaseModel):
-    """The operator credential; setting ``password`` switches authentication on.
+    """Who may sign in: the auth mode (open, legacy or users) and its Users.
 
-    With a password set, the web UI and the API require this pair (HTTP Basic),
-    the published feeds accept it or the feed's own pair, and MCP requires an
-    API key minted from the UI. Unset, Copycast is open (ADR 0004).
+    * **users**: ``[[auth.users]]`` lists Users with argon2id hashes (and TOTP secrets);
+      the web UI and the API take a session cookie (``POST /auth/login``) or, for tool
+      capabilities, an API key.
+    * **legacy**: ``password`` alone (``COPYCAST__AUTH__PASSWORD``) makes one Admin who
+      signs in as ``username``; the operator pair still opens every feed.
+    * **open**: neither; one implicit Admin and the network is the boundary (ADR 0004).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     username: str = DEFAULT_AUTH_USERNAME
     password: str | None = None
+    users: tuple[UserConfig, ...] = ()
+    default_quota: QuotaLimit = "unlimited"
+    session_days: int = Field(default=30, ge=1, le=365)
+    owner_of_existing: str | None = None
 
     @field_validator("username")
     @classmethod
@@ -103,9 +212,78 @@ class AuthSettings(BaseModel):
             raise ValueError(f"auth.password must be at least {AUTH_PASSWORD_MIN_LEN} characters")
         return value
 
+    @field_validator("default_quota", mode="before")
+    @classmethod
+    def _default_quota(cls, value: object) -> QuotaLimit:
+        return _quota_limit(value)
+
+    @field_validator("owner_of_existing")
+    @classmethod
+    def _owner_of_existing(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return value.strip()
+
+    @model_validator(mode="after")
+    def _check_users(self) -> AuthSettings:
+        seen: set[str] = set()
+        for user in self.users:
+            if user.username in seen:
+                raise ValueError(f'auth.users: duplicate username "{user.username}"')
+            seen.add(user.username)
+        if self.users and not any(user.admin for user in self.users):
+            raise ValueError("auth.users: at least one user needs admin = true")
+        if self.users and self.password is not None:
+            raise ValueError(
+                "auth.password and auth.users are exclusive: remove COPYCAST__AUTH__PASSWORD"
+            )
+        if self.owner_of_existing is not None:
+            if self.users and self.owner_of_existing not in seen:
+                raise ValueError(
+                    f'auth.owner_of_existing names no configured user: "{self.owner_of_existing}"'
+                )
+            if not self.users and self.owner_of_existing != self.legacy_owner:
+                raise ValueError("auth.owner_of_existing must be auth.username without auth.users")
+        return self
+
     @property
     def enabled(self) -> bool:
-        return self.password is not None
+        """Authentication is on: users mode or legacy mode."""
+        return bool(self.users) or self.password is not None
+
+    @property
+    def mode(self) -> AuthMode:
+        if self.users:
+            return AuthMode.users
+        return AuthMode.legacy if self.password is not None else AuthMode.open
+
+    @property
+    def legacy_owner(self) -> str:
+        """The owner name (and ``users/`` segment) of the open- or legacy-mode Admin."""
+        return owner_slug(self.username)
+
+    @property
+    def effective_owner_of_existing(self) -> str:
+        """Who owns the Feeds that exist before 3.0 (migration 0017, rebuild).
+
+        Users mode: ``owner_of_existing``, else the first Admin in file order; open and
+        legacy mode: :attr:`legacy_owner`.
+        """
+        if self.users:
+            if self.owner_of_existing is not None:
+                return self.owner_of_existing
+            return next(user.username for user in self.users if user.admin)
+        return self.legacy_owner
+
+    def user(self, username: str) -> UserConfig | None:
+        return next((user for user in self.users if user.username == username), None)
+
+    def quota_for(self, username: str) -> QuotaLimit:
+        """The User's own quota, else ``default_quota`` (removed Users too)."""
+        user = self.user(username)
+        if user is not None and user.quota is not None:
+            return user.quota
+        return self.default_quota
 
 
 DEFAULT_STORAGE_URL = "s3://copycast"
@@ -378,6 +556,15 @@ class Settings(BaseSettings):
             raise ValueError("COPYCAST_PORT and COPYCAST_WORKER_PORT must differ")
         return self
 
+    @model_validator(mode="after")
+    def _check_cookiefile(self) -> Settings:
+        if self.auth.users and "cookiefile" in self.engine.options:
+            raise ValueError(
+                "engine.options.cookiefile cannot be set with auth.users "
+                "(each user has their own Cookie files)"
+            )
+        return self
+
     def check_scratch_dir(self) -> Path:
         """Create the Scratch directory when absent and prove it is writable.
 
@@ -406,6 +593,10 @@ class Settings(BaseSettings):
         data["database_url"] = redact_url(self.database_url)
         if self.auth.password is not None:
             data["auth"]["password"] = "***"
+        for entry in data["auth"]["users"]:
+            entry["password_hash"] = "***"
+            if entry["totp_secret"] is not None:
+                entry["totp_secret"] = "***"
         if self.storage.secret_access_key is not None:
             data["storage"]["secret_access_key"] = "***"
         if self.cache.url is not None:
@@ -436,10 +627,18 @@ def get_settings(**overrides: Any) -> Settings:
         raise SettingsError(_first_line(exc)) from exc
 
 
+def _dotted(loc: tuple[int | str, ...]) -> str:
+    """``("auth", "users", 0, "username")`` -> ``auth.users[0].username``."""
+    text = ""
+    for part in loc:
+        text += f"[{part}]" if isinstance(part, int) else (f".{part}" if text else part)
+    return text
+
+
 def _first_line(exc: ValueError) -> str:
     if isinstance(exc, ValidationError):
         for err in exc.errors():
-            loc = ".".join(str(part) for part in err["loc"])
+            loc = _dotted(err["loc"])
             msg = err["msg"].removeprefix("Value error, ")
             prefix = f"invalid configuration: {loc}" if loc else "invalid configuration"
             return f"{prefix}: {msg}"

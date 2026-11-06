@@ -101,10 +101,13 @@ def spotify_show_title(show_url: str, *, client: httpx.Client | None = None) -> 
     return title or None
 
 
-def resolve_directory_link(url: str, *, client: httpx.Client | None = None) -> list[str] | None:
+def resolve_directory_link(
+    url: str, *, client: httpx.Client | None = None, owner: str = ""
+) -> list[str] | None:
     """Feed URLs behind an Apple Podcasts or Spotify link; ``None`` when it is neither.
 
-    An empty list means the link was recognised but nothing was found.
+    An empty list means the link was recognised but nothing was found. ``owner`` keys the
+    podcast search cache a Spotify link goes through.
     """
     show_id = apple_show_id(url)
     if show_id is not None:
@@ -115,7 +118,7 @@ def resolve_directory_link(url: str, *, client: httpx.Client | None = None) -> l
         title = spotify_show_title(show_url, client=client)
         if not title:
             return []
-        results = search_podcasts(title, SPOTIFY_MATCH_LIMIT, client=client)
+        results = search_podcasts(title, SPOTIFY_MATCH_LIMIT, client=client, owner=owner)
         # An exact name match wins outright; otherwise every hit is a candidate.
         exact = [r.feed_url for r in results if r.title.strip().casefold() == title.casefold()]
         return exact[:1] if exact else [r.feed_url for r in results]

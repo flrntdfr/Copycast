@@ -15,7 +15,9 @@ from copycast.adapters.api.routes import (
     items,
     jobs,
     keys,
+    me,
     mirrors,
+    play,
     sources,
     uploads,
 )
@@ -26,6 +28,8 @@ def create_api_router() -> APIRouter:
     for module in (
         feeds,
         items,
+        play,
+        me,
         sources,
         mirrors,
         buckets,

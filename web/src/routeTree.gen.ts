@@ -9,136 +9,152 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from "./routes/__root";
-import { Route as IndexRouteImport } from "./routes/index";
-import { Route as AboutRouteImport } from "./routes/about";
-import { Route as JobsRouteImport } from "./routes/jobs";
-import { Route as KeysRouteImport } from "./routes/keys";
-import { Route as SettingsRouteImport } from "./routes/settings";
-import { Route as BucketsIndexRouteImport } from "./routes/buckets/index";
-import { Route as BucketsBucketIdRouteImport } from "./routes/buckets/$bucketId";
-import { Route as FeedIndexRouteImport } from "./routes/feed/index";
-import { Route as FeedFeedIdRouteImport } from "./routes/feed/$feedId";
-import { Route as InboxesIndexRouteImport } from "./routes/inboxes/index";
-import { Route as InboxesInboxIdRouteImport } from "./routes/inboxes/$inboxId";
-import { Route as MirrorsIndexRouteImport } from "./routes/mirrors/index";
-import { Route as MirrorsMirrorIdRouteImport } from "./routes/mirrors/$mirrorId";
+import { Route as AppRouteImport } from "./routes/_app";
+import { Route as LoginRouteImport } from "./routes/login";
+import { Route as AppIndexRouteImport } from "./routes/_app/index";
+import { Route as AppAboutRouteImport } from "./routes/_app/about";
+import { Route as AppJobsRouteImport } from "./routes/_app/jobs";
+import { Route as AppKeysRouteImport } from "./routes/_app/keys";
+import { Route as AppSettingsRouteImport } from "./routes/_app/settings";
+import { Route as AppBucketsIndexRouteImport } from "./routes/_app/buckets/index";
+import { Route as AppBucketsBucketIdRouteImport } from "./routes/_app/buckets/$bucketId";
+import { Route as AppFeedIndexRouteImport } from "./routes/_app/feed/index";
+import { Route as AppFeedFeedIdRouteImport } from "./routes/_app/feed/$feedId";
+import { Route as AppInboxesIndexRouteImport } from "./routes/_app/inboxes/index";
+import { Route as AppInboxesInboxIdRouteImport } from "./routes/_app/inboxes/$inboxId";
+import { Route as AppMirrorsIndexRouteImport } from "./routes/_app/mirrors/index";
+import { Route as AppMirrorsMirrorIdRouteImport } from "./routes/_app/mirrors/$mirrorId";
 
-const IndexRoute = IndexRouteImport.update({
+const AppRoute = AppRouteImport.update({
+  id: "/_app",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const LoginRoute = LoginRouteImport.update({
+  id: "/login",
+  path: "/login",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const AppIndexRoute = AppIndexRouteImport.update({
   id: "/",
   path: "/",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
-const AboutRoute = AboutRouteImport.update({
+const AppAboutRoute = AppAboutRouteImport.update({
   id: "/about",
   path: "/about",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
-const JobsRoute = JobsRouteImport.update({
+const AppJobsRoute = AppJobsRouteImport.update({
   id: "/jobs",
   path: "/jobs",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
-const KeysRoute = KeysRouteImport.update({
+const AppKeysRoute = AppKeysRouteImport.update({
   id: "/keys",
   path: "/keys",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
-const SettingsRoute = SettingsRouteImport.update({
+const AppSettingsRoute = AppSettingsRouteImport.update({
   id: "/settings",
   path: "/settings",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
-const BucketsIndexRoute = BucketsIndexRouteImport.update({
+const AppBucketsIndexRoute = AppBucketsIndexRouteImport.update({
   id: "/buckets/",
   path: "/buckets/",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
-const BucketsBucketIdRoute = BucketsBucketIdRouteImport.update({
+const AppBucketsBucketIdRoute = AppBucketsBucketIdRouteImport.update({
   id: "/buckets/$bucketId",
   path: "/buckets/$bucketId",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
-const FeedIndexRoute = FeedIndexRouteImport.update({
+const AppFeedIndexRoute = AppFeedIndexRouteImport.update({
   id: "/feed/",
   path: "/feed/",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
-const FeedFeedIdRoute = FeedFeedIdRouteImport.update({
+const AppFeedFeedIdRoute = AppFeedFeedIdRouteImport.update({
   id: "/feed/$feedId",
   path: "/feed/$feedId",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
-const InboxesIndexRoute = InboxesIndexRouteImport.update({
+const AppInboxesIndexRoute = AppInboxesIndexRouteImport.update({
   id: "/inboxes/",
   path: "/inboxes/",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
-const InboxesInboxIdRoute = InboxesInboxIdRouteImport.update({
+const AppInboxesInboxIdRoute = AppInboxesInboxIdRouteImport.update({
   id: "/inboxes/$inboxId",
   path: "/inboxes/$inboxId",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
-const MirrorsIndexRoute = MirrorsIndexRouteImport.update({
+const AppMirrorsIndexRoute = AppMirrorsIndexRouteImport.update({
   id: "/mirrors/",
   path: "/mirrors/",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
-const MirrorsMirrorIdRoute = MirrorsMirrorIdRouteImport.update({
+const AppMirrorsMirrorIdRoute = AppMirrorsMirrorIdRouteImport.update({
   id: "/mirrors/$mirrorId",
   path: "/mirrors/$mirrorId",
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any);
 
 export interface FileRoutesByFullPath {
-  "/": typeof IndexRoute;
-  "/about": typeof AboutRoute;
-  "/jobs": typeof JobsRoute;
-  "/keys": typeof KeysRoute;
-  "/settings": typeof SettingsRoute;
-  "/buckets/$bucketId": typeof BucketsBucketIdRoute;
-  "/feed/$feedId": typeof FeedFeedIdRoute;
-  "/inboxes/$inboxId": typeof InboxesInboxIdRoute;
-  "/mirrors/$mirrorId": typeof MirrorsMirrorIdRoute;
-  "/buckets/": typeof BucketsIndexRoute;
-  "/feed/": typeof FeedIndexRoute;
-  "/inboxes/": typeof InboxesIndexRoute;
-  "/mirrors/": typeof MirrorsIndexRoute;
+  "/": typeof AppIndexRoute;
+  "/login": typeof LoginRoute;
+  "/about": typeof AppAboutRoute;
+  "/jobs": typeof AppJobsRoute;
+  "/keys": typeof AppKeysRoute;
+  "/settings": typeof AppSettingsRoute;
+  "/buckets/$bucketId": typeof AppBucketsBucketIdRoute;
+  "/feed/$feedId": typeof AppFeedFeedIdRoute;
+  "/inboxes/$inboxId": typeof AppInboxesInboxIdRoute;
+  "/mirrors/$mirrorId": typeof AppMirrorsMirrorIdRoute;
+  "/buckets/": typeof AppBucketsIndexRoute;
+  "/feed/": typeof AppFeedIndexRoute;
+  "/inboxes/": typeof AppInboxesIndexRoute;
+  "/mirrors/": typeof AppMirrorsIndexRoute;
 }
 export interface FileRoutesByTo {
-  "/": typeof IndexRoute;
-  "/about": typeof AboutRoute;
-  "/jobs": typeof JobsRoute;
-  "/keys": typeof KeysRoute;
-  "/settings": typeof SettingsRoute;
-  "/buckets/$bucketId": typeof BucketsBucketIdRoute;
-  "/feed/$feedId": typeof FeedFeedIdRoute;
-  "/inboxes/$inboxId": typeof InboxesInboxIdRoute;
-  "/mirrors/$mirrorId": typeof MirrorsMirrorIdRoute;
-  "/buckets": typeof BucketsIndexRoute;
-  "/feed": typeof FeedIndexRoute;
-  "/inboxes": typeof InboxesIndexRoute;
-  "/mirrors": typeof MirrorsIndexRoute;
+  "/login": typeof LoginRoute;
+  "/about": typeof AppAboutRoute;
+  "/jobs": typeof AppJobsRoute;
+  "/keys": typeof AppKeysRoute;
+  "/settings": typeof AppSettingsRoute;
+  "/": typeof AppIndexRoute;
+  "/buckets/$bucketId": typeof AppBucketsBucketIdRoute;
+  "/feed/$feedId": typeof AppFeedFeedIdRoute;
+  "/inboxes/$inboxId": typeof AppInboxesInboxIdRoute;
+  "/mirrors/$mirrorId": typeof AppMirrorsMirrorIdRoute;
+  "/buckets": typeof AppBucketsIndexRoute;
+  "/feed": typeof AppFeedIndexRoute;
+  "/inboxes": typeof AppInboxesIndexRoute;
+  "/mirrors": typeof AppMirrorsIndexRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
-  "/": typeof IndexRoute;
-  "/about": typeof AboutRoute;
-  "/jobs": typeof JobsRoute;
-  "/keys": typeof KeysRoute;
-  "/settings": typeof SettingsRoute;
-  "/buckets/$bucketId": typeof BucketsBucketIdRoute;
-  "/feed/$feedId": typeof FeedFeedIdRoute;
-  "/inboxes/$inboxId": typeof InboxesInboxIdRoute;
-  "/mirrors/$mirrorId": typeof MirrorsMirrorIdRoute;
-  "/buckets/": typeof BucketsIndexRoute;
-  "/feed/": typeof FeedIndexRoute;
-  "/inboxes/": typeof InboxesIndexRoute;
-  "/mirrors/": typeof MirrorsIndexRoute;
+  "/_app": typeof AppRouteWithChildren;
+  "/login": typeof LoginRoute;
+  "/_app/about": typeof AppAboutRoute;
+  "/_app/jobs": typeof AppJobsRoute;
+  "/_app/keys": typeof AppKeysRoute;
+  "/_app/settings": typeof AppSettingsRoute;
+  "/_app/": typeof AppIndexRoute;
+  "/_app/buckets/$bucketId": typeof AppBucketsBucketIdRoute;
+  "/_app/feed/$feedId": typeof AppFeedFeedIdRoute;
+  "/_app/inboxes/$inboxId": typeof AppInboxesInboxIdRoute;
+  "/_app/mirrors/$mirrorId": typeof AppMirrorsMirrorIdRoute;
+  "/_app/buckets/": typeof AppBucketsIndexRoute;
+  "/_app/feed/": typeof AppFeedIndexRoute;
+  "/_app/inboxes/": typeof AppInboxesIndexRoute;
+  "/_app/mirrors/": typeof AppMirrorsIndexRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
     | "/"
+    | "/login"
     | "/about"
     | "/jobs"
     | "/keys"
@@ -153,11 +169,12 @@ export interface FileRouteTypes {
     | "/mirrors/";
   fileRoutesByTo: FileRoutesByTo;
   to:
-    | "/"
+    | "/login"
     | "/about"
     | "/jobs"
     | "/keys"
     | "/settings"
+    | "/"
     | "/buckets/$bucketId"
     | "/feed/$feedId"
     | "/inboxes/$inboxId"
@@ -168,147 +185,175 @@ export interface FileRouteTypes {
     | "/mirrors";
   id:
     | "__root__"
-    | "/"
-    | "/about"
-    | "/jobs"
-    | "/keys"
-    | "/settings"
-    | "/buckets/$bucketId"
-    | "/feed/$feedId"
-    | "/inboxes/$inboxId"
-    | "/mirrors/$mirrorId"
-    | "/buckets/"
-    | "/feed/"
-    | "/inboxes/"
-    | "/mirrors/";
+    | "/_app"
+    | "/login"
+    | "/_app/about"
+    | "/_app/jobs"
+    | "/_app/keys"
+    | "/_app/settings"
+    | "/_app/"
+    | "/_app/buckets/$bucketId"
+    | "/_app/feed/$feedId"
+    | "/_app/inboxes/$inboxId"
+    | "/_app/mirrors/$mirrorId"
+    | "/_app/buckets/"
+    | "/_app/feed/"
+    | "/_app/inboxes/"
+    | "/_app/mirrors/";
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute;
-  AboutRoute: typeof AboutRoute;
-  JobsRoute: typeof JobsRoute;
-  KeysRoute: typeof KeysRoute;
-  SettingsRoute: typeof SettingsRoute;
-  BucketsBucketIdRoute: typeof BucketsBucketIdRoute;
-  FeedFeedIdRoute: typeof FeedFeedIdRoute;
-  InboxesInboxIdRoute: typeof InboxesInboxIdRoute;
-  MirrorsMirrorIdRoute: typeof MirrorsMirrorIdRoute;
-  BucketsIndexRoute: typeof BucketsIndexRoute;
-  FeedIndexRoute: typeof FeedIndexRoute;
-  InboxesIndexRoute: typeof InboxesIndexRoute;
-  MirrorsIndexRoute: typeof MirrorsIndexRoute;
+  AppRoute: typeof AppRouteWithChildren;
+  LoginRoute: typeof LoginRoute;
 }
 
 declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
-    "/": {
-      id: "/";
+    "/_app": {
+      id: "/_app";
+      path: "";
+      fullPath: "/";
+      preLoaderRoute: typeof AppRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/login": {
+      id: "/login";
+      path: "/login";
+      fullPath: "/login";
+      preLoaderRoute: typeof LoginRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/_app/": {
+      id: "/_app/";
       path: "/";
       fullPath: "/";
-      preLoaderRoute: typeof IndexRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppIndexRouteImport;
+      parentRoute: typeof AppRoute;
     };
-    "/about": {
-      id: "/about";
+    "/_app/about": {
+      id: "/_app/about";
       path: "/about";
       fullPath: "/about";
-      preLoaderRoute: typeof AboutRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppAboutRouteImport;
+      parentRoute: typeof AppRoute;
     };
-    "/jobs": {
-      id: "/jobs";
+    "/_app/jobs": {
+      id: "/_app/jobs";
       path: "/jobs";
       fullPath: "/jobs";
-      preLoaderRoute: typeof JobsRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppJobsRouteImport;
+      parentRoute: typeof AppRoute;
     };
-    "/keys": {
-      id: "/keys";
+    "/_app/keys": {
+      id: "/_app/keys";
       path: "/keys";
       fullPath: "/keys";
-      preLoaderRoute: typeof KeysRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppKeysRouteImport;
+      parentRoute: typeof AppRoute;
     };
-    "/settings": {
-      id: "/settings";
+    "/_app/settings": {
+      id: "/_app/settings";
       path: "/settings";
       fullPath: "/settings";
-      preLoaderRoute: typeof SettingsRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppSettingsRouteImport;
+      parentRoute: typeof AppRoute;
     };
-    "/buckets/": {
-      id: "/buckets/";
+    "/_app/buckets/": {
+      id: "/_app/buckets/";
       path: "/buckets";
       fullPath: "/buckets/";
-      preLoaderRoute: typeof BucketsIndexRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppBucketsIndexRouteImport;
+      parentRoute: typeof AppRoute;
     };
-    "/buckets/$bucketId": {
-      id: "/buckets/$bucketId";
+    "/_app/buckets/$bucketId": {
+      id: "/_app/buckets/$bucketId";
       path: "/buckets/$bucketId";
       fullPath: "/buckets/$bucketId";
-      preLoaderRoute: typeof BucketsBucketIdRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppBucketsBucketIdRouteImport;
+      parentRoute: typeof AppRoute;
     };
-    "/feed/": {
-      id: "/feed/";
+    "/_app/feed/": {
+      id: "/_app/feed/";
       path: "/feed";
       fullPath: "/feed/";
-      preLoaderRoute: typeof FeedIndexRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppFeedIndexRouteImport;
+      parentRoute: typeof AppRoute;
     };
-    "/feed/$feedId": {
-      id: "/feed/$feedId";
+    "/_app/feed/$feedId": {
+      id: "/_app/feed/$feedId";
       path: "/feed/$feedId";
       fullPath: "/feed/$feedId";
-      preLoaderRoute: typeof FeedFeedIdRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppFeedFeedIdRouteImport;
+      parentRoute: typeof AppRoute;
     };
-    "/inboxes/": {
-      id: "/inboxes/";
+    "/_app/inboxes/": {
+      id: "/_app/inboxes/";
       path: "/inboxes";
       fullPath: "/inboxes/";
-      preLoaderRoute: typeof InboxesIndexRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppInboxesIndexRouteImport;
+      parentRoute: typeof AppRoute;
     };
-    "/inboxes/$inboxId": {
-      id: "/inboxes/$inboxId";
+    "/_app/inboxes/$inboxId": {
+      id: "/_app/inboxes/$inboxId";
       path: "/inboxes/$inboxId";
       fullPath: "/inboxes/$inboxId";
-      preLoaderRoute: typeof InboxesInboxIdRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppInboxesInboxIdRouteImport;
+      parentRoute: typeof AppRoute;
     };
-    "/mirrors/": {
-      id: "/mirrors/";
+    "/_app/mirrors/": {
+      id: "/_app/mirrors/";
       path: "/mirrors";
       fullPath: "/mirrors/";
-      preLoaderRoute: typeof MirrorsIndexRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppMirrorsIndexRouteImport;
+      parentRoute: typeof AppRoute;
     };
-    "/mirrors/$mirrorId": {
-      id: "/mirrors/$mirrorId";
+    "/_app/mirrors/$mirrorId": {
+      id: "/_app/mirrors/$mirrorId";
       path: "/mirrors/$mirrorId";
       fullPath: "/mirrors/$mirrorId";
-      preLoaderRoute: typeof MirrorsMirrorIdRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof AppMirrorsMirrorIdRouteImport;
+      parentRoute: typeof AppRoute;
     };
   }
 }
 
+interface AppRouteChildren {
+  AppAboutRoute: typeof AppAboutRoute;
+  AppJobsRoute: typeof AppJobsRoute;
+  AppKeysRoute: typeof AppKeysRoute;
+  AppSettingsRoute: typeof AppSettingsRoute;
+  AppIndexRoute: typeof AppIndexRoute;
+  AppBucketsBucketIdRoute: typeof AppBucketsBucketIdRoute;
+  AppFeedFeedIdRoute: typeof AppFeedFeedIdRoute;
+  AppInboxesInboxIdRoute: typeof AppInboxesInboxIdRoute;
+  AppMirrorsMirrorIdRoute: typeof AppMirrorsMirrorIdRoute;
+  AppBucketsIndexRoute: typeof AppBucketsIndexRoute;
+  AppFeedIndexRoute: typeof AppFeedIndexRoute;
+  AppInboxesIndexRoute: typeof AppInboxesIndexRoute;
+  AppMirrorsIndexRoute: typeof AppMirrorsIndexRoute;
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppAboutRoute: AppAboutRoute,
+  AppJobsRoute: AppJobsRoute,
+  AppKeysRoute: AppKeysRoute,
+  AppSettingsRoute: AppSettingsRoute,
+  AppIndexRoute: AppIndexRoute,
+  AppBucketsBucketIdRoute: AppBucketsBucketIdRoute,
+  AppFeedFeedIdRoute: AppFeedFeedIdRoute,
+  AppInboxesInboxIdRoute: AppInboxesInboxIdRoute,
+  AppMirrorsMirrorIdRoute: AppMirrorsMirrorIdRoute,
+  AppBucketsIndexRoute: AppBucketsIndexRoute,
+  AppFeedIndexRoute: AppFeedIndexRoute,
+  AppInboxesIndexRoute: AppInboxesIndexRoute,
+  AppMirrorsIndexRoute: AppMirrorsIndexRoute,
+};
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren);
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  AboutRoute: AboutRoute,
-  JobsRoute: JobsRoute,
-  KeysRoute: KeysRoute,
-  SettingsRoute: SettingsRoute,
-  BucketsBucketIdRoute: BucketsBucketIdRoute,
-  FeedFeedIdRoute: FeedFeedIdRoute,
-  InboxesInboxIdRoute: InboxesInboxIdRoute,
-  MirrorsMirrorIdRoute: MirrorsMirrorIdRoute,
-  BucketsIndexRoute: BucketsIndexRoute,
-  FeedIndexRoute: FeedIndexRoute,
-  InboxesIndexRoute: InboxesIndexRoute,
-  MirrorsIndexRoute: MirrorsIndexRoute,
+  AppRoute: AppRouteWithChildren,
+  LoginRoute: LoginRoute,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

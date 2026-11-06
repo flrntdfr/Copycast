@@ -54,10 +54,14 @@ async def enqueue_archive_jobs(
     request_id: Any = None,
     priority: int | None = None,
 ) -> list[Job]:
-    """One ``archive_item`` job per wanted item lacking an active one (dedup by item)."""
+    """One ``archive_item`` job per wanted item lacking an active one (dedup by item).
+
+    Items blocked by their Owner's quota are skipped: the scheduler's sweep releases them
+    (``application.services.quota.release_if_room``) once there is room.
+    """
     created: list[Job] = []
     for item in items:
-        if item.archive_state != ArchiveState.wanted:
+        if item.archive_state != ArchiveState.wanted or item.blocked_reason is not None:
             continue
         job = await uow.jobs.enqueue(
             JobKind.archive_item,

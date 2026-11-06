@@ -14,12 +14,15 @@ Ephemeral feed's unarchived item is archived on the first request, which holds
 the line (no byte sent, woken by the item's ``archived`` event) for up to
 ``ON_DEMAND_WAIT_SECONDS`` and then serves the finished object, bit-perfect,
 or answers 503 with ``Retry-After`` before a podcast app gives up (iOS drops a
-silent request after 60 s). ``/feeds/{id}/assets/{basename}`` is matched
-against the feed's archived asset rows and never counted. While authentication
-is on, every route here takes the operator pair or the feed's own pair
-(``adapters.api.auth.require_feed_access``), Artwork included; media and assets
-are also served under ``/feeds/{id}/k/{key}/``, the feed's media key standing in
-for the pair, which is the form a feed publishes its enclosures in while auth is on.
+silent request after 60 s). An Owner who is Over quota gets ``507 over-quota`` at once,
+without ``Retry-After`` (which apps would retry forever): when the first play finds them
+over, or when the archive job blocks the item because it does not fit (ADR 0029).
+``/feeds/{id}/assets/{basename}`` is matched against the feed's archived asset
+rows and never counted. While authentication is on, every route here takes the
+operator pair or the feed's own pair (``adapters.api.auth.require_feed_access``),
+Artwork included; media and assets are also served under ``/feeds/{id}/k/{key}/``,
+the feed's media key standing in for the pair, which is the form a feed publishes its
+enclosures in while auth is on.
 
 ``GET|HEAD /art/{asset_id}-{mac}.{ext}`` (``art_router``, no credentials in either
 mode) is where every feed and response publishes Artwork: the MAC
@@ -47,16 +50,18 @@ from starlette.background import BackgroundTask
 from copycast.adapters.api.auth import FeedAccess
 from copycast.adapters.api.cache import CachedFeed, FeedCache
 from copycast.adapters.api.container import ApiContainer, FeedHeadLike
-from copycast.adapters.api.deps import ContainerDep, FeedCacheDep, ServicesDep
+from copycast.adapters.api.deps import ContainerDep, FeedCacheDep, SystemServicesDep
+from copycast.adapters.api.media_response import counts_as_download, media_object
 from copycast.adapters.api.objects import ObjectResponse
-from copycast.adapters.api.problems import problem_response
+from copycast.adapters.api.problems import problem_response, slug_responses
 from copycast.application.models import ItemRead
 from copycast.application.services import Services
 from copycast.application.services.light_refresh import LIGHT_REFRESH_DEADLINE_SECONDS
 from copycast.domain.credentials import ARTWORK_MAC_LEN, artwork_mac_ok
 from copycast.domain.enums import ArchiveState, AssetKind, AssetState, FeedKind, JobTrigger
-from copycast.domain.exceptions import Conflict, Unsupported
+from copycast.domain.exceptions import Conflict, OverQuota, Unsupported
 from copycast.domain.urls import COPYCAST_ARTWORK_PATH, artwork_ext
+from copycast.domain.users import Principal
 from copycast.logging import get_logger
 
 if TYPE_CHECKING:
@@ -75,6 +80,8 @@ ON_DEMAND_WAIT_SECONDS = 50.0
 ON_DEMAND_POLL_SECONDS = 5.0
 """The re-check interval when no event arrives (the event hub reconnecting, a missed NOTIFY)."""
 ON_DEMAND_RETRY_AFTER = 30
+FEED_OVER_QUOTA_DETAIL = "this episode cannot be archived now: the feed's storage is full"
+"""The 507 detail on ``/feeds``: no usage, no quota, the same whether over or not fitting."""
 ASSET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 ART_TOKEN_RE = re.compile(
     rf"^(?P<asset_id>[0-9a-f]{{16}})-(?P<mac>[a-z2-7]{{{ARTWORK_MAC_LEN}}})"
@@ -137,19 +144,6 @@ def accepts_gzip(header: str | None) -> bool:
     return weights.get("*", 0.0) > 0
 
 
-def counts_as_download(method: str, range_header: str | None) -> bool:
-    """Full GET or a Range starting at byte 0; HEAD and later ranges never count."""
-    if method.upper() != "GET":
-        return False
-    if range_header is None:
-        return True
-    value = range_header.strip().lower()
-    if not value.startswith("bytes="):
-        return False
-    first = value.removeprefix("bytes=").split(",", 1)[0].strip()
-    return first.startswith("0-")
-
-
 async def _safe_count(services: Services, feed_id: str, item_id: str) -> None:
     try:
         await services.record_download(feed_id, item_id)
@@ -166,7 +160,7 @@ async def _cached_feed(
 async def feed_xml(
     request: Request,
     container: ContainerDep,
-    services: ServicesDep,
+    services: SystemServicesDep,
     cache: FeedCacheDep,
     feed_id: str,
 ) -> Response:
@@ -214,7 +208,7 @@ async def feed_xml(
 async def media(
     request: Request,
     container: ContainerDep,
-    services: ServicesDep,
+    services: SystemServicesDep,
     feed_id: str,
     filename: str,
 ) -> Response:
@@ -237,7 +231,13 @@ async def media(
         if head is None or not head.automatic or not _on_demand(item):
             return problem_response(request, status=404, slug="not-found", detail="no such media")
         hub: EventHub | None = getattr(request.app.state, "event_hub", None)
-        item = await _archive_on_demand(services, hub, feed_id, item_id)
+        try:
+            item = await _archive_on_demand(services, hub, feed_id, item_id)
+        except OverQuota:
+            # A Feed's pair or media key opens that Feed only: never the Owner's usage.
+            return problem_response(
+                request, status=507, slug="over-quota", detail=FEED_OVER_QUOTA_DETAIL
+            )
         if item.media is None:
             return problem_response(
                 request,
@@ -246,21 +246,19 @@ async def media(
                 detail="the episode is being archived; try again shortly",
                 headers={"Retry-After": str(ON_DEMAND_RETRY_AFTER)},
             )
-    layout = container.layout
-    store = layout.store
-    obj = await store.head_async(layout.media_key(feed_id, item_id, item.media.ext))
-    if obj is None:
-        return problem_response(request, status=404, slug="not-found", detail="media missing")
     background: BackgroundTask | None = None
     if counts_as_download(request.method, request.headers.get("range")):
         background = BackgroundTask(_safe_count, services, feed_id, item_id)
-    return ObjectResponse(
-        store,
-        obj,
-        media_type=item.media.mime,
+    response = await media_object(
+        container.layout,
+        feed_id,
+        item,
         headers={"Cache-Control": MEDIA_CACHE_CONTROL},
         background=background,
     )
+    if response is None:
+        return problem_response(request, status=404, slug="not-found", detail="media missing")
+    return response
 
 
 def _public_ext(item: ItemRead) -> str:
@@ -282,8 +280,13 @@ async def _archive_on_demand(
     wakes on the feed's events (the worker's NOTIFY) and re-checks every
     ``ON_DEMAND_POLL_SECONDS`` in case one is missed. The job keeps running when the
     wait ends; the client is told to retry.
+
+    ``OverQuota`` leaves at once: from ``archive_item`` when the Owner is over, or as
+    soon as a pass finds the item blocked by the quota (the job's ``ItemEvent`` wakes the
+    wait), rather than polling out the deadline. :func:`media` answers it with a bare
+    507 that says nothing of the Owner's usage or quota.
     """
-    subscription = hub.subscribe(feed_id=feed_id) if hub is not None else None
+    subscription = hub.subscribe(Principal.SYSTEM, feed_id=feed_id) if hub is not None else None
     try:
         try:
             await services.archive_item(feed_id, item_id, trigger=JobTrigger.feed_fetch)
@@ -297,6 +300,8 @@ async def _archive_on_demand(
             item = await services.get_item(feed_id, item_id)
             if item.media is not None or item.state is ArchiveState.failed:
                 return item
+            if item.blocked_reason is not None:
+                raise OverQuota(0, 0, FEED_OVER_QUOTA_DETAIL)
             remaining = deadline - loop.time()
             if remaining <= 0:
                 return item
@@ -452,6 +457,7 @@ _get_and_head(
     media,
     operation_id="public_media",
     summary="An archived Episode's audio (Range supported)",
+    responses=slug_responses({507: "over-quota"}),
 )
 _get_and_head(
     "/{feed_id}/assets/{filename}",

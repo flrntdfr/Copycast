@@ -26,7 +26,7 @@ def test_rss_url_is_one_candidate_with_the_listing_cached(
 ) -> None:
     cache = ProbeCache()
     url = origin.url_for("/rss/itunes_podcast20.xml")
-    result = probe(url, engine=engine, cache=cache)
+    result = probe(url, engine=engine, cache=cache, owner="alice")
     assert result.input_url == url
     assert len(result.candidates) == 1
     candidate = result.candidates[0]
@@ -38,11 +38,11 @@ def test_rss_url_is_one_candidate_with_the_listing_cached(
     assert candidate.artwork_url == "https://podcast.example/artwork.jpg"
     assert candidate.item_count == 6
     assert candidate.candidate_token
-    entry = cache.get_by_token(candidate.candidate_token)
+    entry = cache.get_by_token(candidate.candidate_token, owner="alice")
     assert entry is not None and entry.listing.title == "Copycast Test Podcast"
     assert entry.feed is not None and entry.feed.parsed is not None and entry.feed.body
-    assert cache.get_by_url(url + "/") is entry
-    assert cache.get(token="nope", url=url) is entry
+    assert cache.get_by_url(url + "/", owner="alice") is entry
+    assert cache.get(owner="alice", token="nope", url=url) is entry
     assert engine.records.listings == []
 
 
@@ -131,14 +131,15 @@ def test_probe_cache_expires_and_keys_by_normalized_url() -> None:
     now = [1000.0]
     cache = ProbeCache(ttl=PROBE_TTL_SECONDS, clock=lambda: now[0])
     candidate = rss_candidate("https://WWW.Podcast.example/feed.xml?utm_source=x&b=1", listing(1))
-    cache.put(ProbeEntry(candidate, listing(1)))
+    cache.put(ProbeEntry(candidate, listing(1)), owner="alice")
     assert len(cache) == 1
-    assert cache.get_by_url("http://podcast.example/feed.xml/?b=1") is not None
-    assert cache.get_by_token(candidate.candidate_token) is not None
-    assert cache.get_by_token(None) is None and cache.get_by_url(None) is None
+    assert cache.get_by_url("http://podcast.example/feed.xml/?b=1", owner="alice") is not None
+    assert cache.get_by_token(candidate.candidate_token, owner="alice") is not None
+    assert cache.get_by_token(None, owner="alice") is None
+    assert cache.get_by_url(None, owner="alice") is None
     now[0] += PROBE_TTL_SECONDS + 1
-    assert cache.get_by_token(candidate.candidate_token) is None
-    assert cache.get_by_url(candidate.source_url) is None
+    assert cache.get_by_token(candidate.candidate_token, owner="alice") is None
+    assert cache.get_by_url(candidate.source_url, owner="alice") is None
     cache.purge()
     assert len(cache) == 0
 

@@ -81,6 +81,24 @@ def feed_object_url(base_url: str, feed_id: str, path: str) -> str:
     return f"{_base(base_url)}{OBJECTS_PREFIX}/{quote(feed_id, safe='')}/objects/{segments}"
 
 
+def play_media_url(base_url: str, feed_id: str, item_id: str) -> str:
+    """``{base_url}/api/feeds/{id}/items/{item}/media``: the web player's media, by session.
+
+    No extension: the route answers with the archived object's own type, whatever it is.
+    """
+    return f"{_item(base_url, feed_id, item_id)}/media"
+
+
+def play_asset_url(base_url: str, feed_id: str, item_id: str, name: str) -> str:
+    """``{base_url}/api/feeds/{id}/items/{item}/assets/{name}``: an item asset by session."""
+    return f"{_item(base_url, feed_id, item_id)}/assets/{quote(name, safe='')}"
+
+
+def _item(base_url: str, feed_id: str, item_id: str) -> str:
+    feed = quote(feed_id, safe="")
+    return f"{_base(base_url)}{OBJECTS_PREFIX}/{feed}/items/{quote(item_id, safe='')}"
+
+
 __all__ = [
     "FEEDS_PREFIX",
     "KEY_SEGMENT",
@@ -90,5 +108,7 @@ __all__ = [
     "feed_object_url",
     "feed_url",
     "media_url",
+    "play_asset_url",
+    "play_media_url",
     "with_credentials",
 ]

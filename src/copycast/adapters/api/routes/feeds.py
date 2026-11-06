@@ -78,7 +78,7 @@ async def list_buckets(
     operation_id="storage_summary",
     openapi_extra={"x-capability": "storage_summary"},
     response_model=StorageSummary,
-    summary="How many files every Feed keeps in its bucket, and their total size",
+    summary="How many files each of your own Feeds keeps in its bucket, and their total size",
 )
 async def storage_summary(services: ServicesDep) -> StorageSummary:
     return await services.storage_summary()

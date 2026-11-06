@@ -21,6 +21,7 @@ import {
 } from "react";
 
 import { $api } from "@/api/client";
+import { ownsFeed, useMe } from "@/api/session";
 import type { FeedRead, ItemRead, ItemSort } from "@/api/types";
 import { EmptyState } from "@/components/common/EmptyState";
 import { SkeletonRows } from "@/components/common/SkeletonRows";
@@ -43,9 +44,8 @@ import { useBulkActions } from "./mutations";
 import { type CatalogSearch, toCatalogFilters } from "./search";
 import { useCatalogPages } from "./useCatalogPages";
 import { count } from "@/lib/labels";
+import { storageKey } from "@/lib/storage";
 import { cn } from "@/lib/utils";
-
-const COLUMNS_STORAGE_KEY = "copycast.catalog.columns";
 
 /** Which header sorts by which `list_items` sort key. */
 const SORTABLE: Partial<Record<string, ItemSort>> = {
@@ -84,7 +84,7 @@ const OVERSCAN = 10;
 
 function readColumnVisibility(): ColumnVisibilityState {
   try {
-    const raw = window.localStorage.getItem(COLUMNS_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey("catalog.columns"));
     if (raw) return JSON.parse(raw) as ColumnVisibilityState;
   } catch {
     // ignore
@@ -173,7 +173,7 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(columnVisibility));
+      window.localStorage.setItem(storageKey("catalog.columns"), JSON.stringify(columnVisibility));
     } catch {
       // ignore
     }
@@ -202,19 +202,22 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
     [],
   );
 
-  // The Mirror's effective minimum length greys out the items the policy ignores.
+  // The Mirror's effective minimum length greys out the items the policy ignores. The
+  // Defaults endpoint answers the caller's own, so on another User's Mirror only the
+  // Mirror's own override counts (its owner's default is not known here).
+  const own = ownsFeed(useMe(), feed);
   const defaults = $api.useQuery("get", "/api/settings/defaults", undefined, {
-    enabled: feed.kind === "mirror",
+    enabled: feed.kind === "mirror" && own,
     staleTime: 60_000,
   });
   const minimum = useMemo(() => {
     if (feed.kind !== "mirror") return null;
     if (feed.min_duration_seconds)
       return { seconds: feed.min_duration_seconds, source: "mirror" as const };
-    if (defaults.data?.min_duration_seconds)
+    if (own && defaults.data?.min_duration_seconds)
       return { seconds: defaults.data.min_duration_seconds, source: "default" as const };
     return null;
-  }, [feed, defaults.data]);
+  }, [feed, own, defaults.data]);
 
   const columns = useMemo(
     // eslint-disable-next-line react-hooks/refs -- onToggleRow reads its refs only from click handlers

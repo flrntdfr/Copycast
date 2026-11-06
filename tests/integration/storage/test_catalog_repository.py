@@ -524,11 +524,29 @@ async def test_count_by_state_derives_catalog_states(uow_factory: UnitOfWorkFact
             "wanted": 1,
             "archived": 2,
             "failed": 1,
+            "blocked": 0,
         }
         many = await uow.catalog.count_by_state_many([feed.id, "unknown"])
         assert set(many) == {feed.id}
         assert await uow.catalog.count_by_state_many([]) == {}
         assert (await uow.catalog.count_by_state("unknown")).archived == 0
+
+
+async def test_count_by_state_counts_wanted_items_blocked_by_the_quota(
+    uow_factory: UnitOfWorkFactory,
+) -> None:
+    async with uow_factory() as uow:
+        feed = await uow.feeds.add(mirror_row())
+        await seed(
+            uow,
+            item_row(feed, 1, state=ArchiveState.wanted, blocked_reason="quota", blocked_bytes=9),
+            item_row(feed, 2, state=ArchiveState.wanted, blocked_reason="quota"),
+            item_row(feed, 3, state=ArchiveState.wanted),
+        )
+        counts = await uow.catalog.count_by_state(feed.id)
+        assert counts.wanted == 3 and counts.blocked == 2
+        blocked = await uow.catalog.require(item_id(feed.id, "urn:test:item:1"))
+        assert blocked.blocked_reason == "quota" and blocked.blocked_bytes == 9
 
 
 # --------------------------------------------------------------------------- downloads

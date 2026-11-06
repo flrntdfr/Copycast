@@ -7,6 +7,7 @@ here so the three surfaces agree on the wording.
 
 from __future__ import annotations
 
+import posixpath
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 
@@ -35,6 +36,7 @@ from copycast.application.services.context import (
     RequestRow,
     UnitOfWorkPort,
 )
+from copycast.application.users import UserDirectory
 from copycast.domain.engine_options import EngineOptions
 from copycast.domain.enums import (
     ArchiveState,
@@ -43,6 +45,7 @@ from copycast.domain.enums import (
     AssetProvenance,
     AssetState,
     BackfillMode,
+    BlockedReason,
     FeedKind,
     HealthStatus,
     KeyScope,
@@ -86,11 +89,14 @@ def mirror_read(
     *,
     counts: CatalogCounts,
     selected_count: int = 0,
+    owner_removed: bool = False,
 ) -> MirrorRead:
     if feed.source_url is None or feed.source_kind is None or feed.backfill_mode is None:
         raise ValueError(f"feed {feed.id} is not a Mirror")
     return MirrorRead(
         id=feed.id,
+        owner=feed.owner,
+        owner_removed=owner_removed,
         title=feed.title_override or feed.title,
         source_title=feed.title,
         title_override=feed.title_override,
@@ -132,10 +138,17 @@ def mirror_read(
 
 
 def bucket_read(
-    feed: FeedRow, urls: PublicUrls, *, counts: CatalogCounts, request_count: int = 0
+    feed: FeedRow,
+    urls: PublicUrls,
+    *,
+    counts: CatalogCounts,
+    request_count: int = 0,
+    owner_removed: bool = False,
 ) -> BucketRead:
     return BucketRead(
         id=feed.id,
+        owner=feed.owner,
+        owner_removed=owner_removed,
         title=feed.title,
         name=feed.title,
         description=feed.description,
@@ -160,10 +173,15 @@ def feed_read(
     counts: CatalogCounts,
     request_count: int = 0,
     selected_count: int = 0,
+    owner_removed: bool = False,
 ) -> FeedRead:
     if feed.kind == FeedKind.bucket:
-        return bucket_read(feed, urls, counts=counts, request_count=request_count)
-    return mirror_read(feed, urls, counts=counts, selected_count=selected_count)
+        return bucket_read(
+            feed, urls, counts=counts, request_count=request_count, owner_removed=owner_removed
+        )
+    return mirror_read(
+        feed, urls, counts=counts, selected_count=selected_count, owner_removed=owner_removed
+    )
 
 
 async def selected_counts(uow: UnitOfWorkPort, feeds: Iterable[FeedRow]) -> dict[str, int]:
@@ -180,8 +198,9 @@ async def selected_counts(uow: UnitOfWorkPort, feeds: Iterable[FeedRow]) -> dict
 
 
 async def feed_reads(
-    uow: UnitOfWorkPort, urls: PublicUrls, feeds: Sequence[FeedRow]
+    uow: UnitOfWorkPort, urls: PublicUrls, users: UserDirectory, feeds: Sequence[FeedRow]
 ) -> list[FeedRead]:
+    """FeedReads with counts; ``owner_removed`` when the Owner is no longer configured."""
     ids = [feed.id for feed in feeds]
     counts = await uow.catalog.count_by_state_many(ids)
     bucket_ids = [feed.id for feed in feeds if feed.kind == FeedKind.bucket]
@@ -196,13 +215,16 @@ async def feed_reads(
             counts=counts.get(feed.id, CatalogCounts()),
             request_count=request_counts.get(feed.id, 0),
             selected_count=selected.get(feed.id, 0),
+            owner_removed=not users.is_configured(feed.owner),
         )
         for feed in feeds
     ]
 
 
-async def one_feed_read(uow: UnitOfWorkPort, urls: PublicUrls, feed: FeedRow) -> FeedRead:
-    return (await feed_reads(uow, urls, [feed]))[0]
+async def one_feed_read(
+    uow: UnitOfWorkPort, urls: PublicUrls, users: UserDirectory, feed: FeedRow
+) -> FeedRead:
+    return (await feed_reads(uow, urls, users, [feed]))[0]
 
 
 def asset_read(asset: AssetRow, urls: PublicUrls) -> AssetRead:
@@ -210,11 +232,16 @@ def asset_read(asset: AssetRow, urls: PublicUrls) -> AssetRead:
     without credentials); every other asset's is under its feed."""
     served = asset.state == AssetState.archived and bool(asset.local_path)
     url: str | None = None
+    name: str | None = None
+    play_url: str | None = None
     if served and asset.local_path:
+        name = posixpath.basename(asset.local_path)
         if asset.kind == AssetKind.artwork:
             url = urls.artwork_url(asset.id, asset.local_path)
         else:
             url = urls.asset_url(asset.feed_id, asset.local_path)
+        if asset.item_id is not None:
+            play_url = urls.play_asset_url(asset.feed_id, asset.item_id, name)
     return AssetRead(
         id=asset.id,
         feed_id=asset.feed_id,
@@ -224,6 +251,8 @@ def asset_read(asset: AssetRow, urls: PublicUrls) -> AssetRead:
         language=asset.language,
         format=AssetFormat(asset.format) if asset.format else None,
         url=url,
+        name=name,
+        play_url=play_url,
         remote_url=asset.remote_url,
         mime=asset.mime,
         size_bytes=asset.size_bytes,
@@ -250,6 +279,7 @@ def item_read(
     ):
         media = ItemMedia(
             url=urls.media_url(item.feed_id, item.id, ext),
+            play_url=urls.play_media_url(item.feed_id, item.id),
             bytes=item.media_bytes,
             mime=item.media_mime,
             ext=ext,
@@ -272,6 +302,11 @@ def item_read(
         live_status=LiveStatus(item.live_status) if item.live_status else None,
         attempt_count=item.attempt_count,
         last_error=item.last_error,
+        blocked_reason=(
+            BlockedReason(item.blocked_reason)
+            if item.blocked_reason and item.archive_state == ArchiveState.wanted
+            else None
+        ),
         media=media,
         public_media_url=urls.media_url(item.feed_id, item.id, item.public_ext),
         artwork_url=item.artwork_url,
@@ -307,6 +342,7 @@ def job_read(job: JobRow) -> JobRead:
 def api_key_read(key: ApiKeyRow) -> ApiKeyRead:
     return ApiKeyRead(
         id=key.id,
+        owner=key.owner,
         name=key.name,
         scope=KeyScope(key.scope),
         prefix=key.prefix,

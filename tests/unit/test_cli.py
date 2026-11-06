@@ -7,7 +7,10 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
+from copycast.application.passwords import PasswordHasher
 from copycast.cli import main
+from copycast.domain.totp import decode_secret
+from copycast.settings import get_settings
 from copycast.version import APP_VERSION
 
 
@@ -17,7 +20,7 @@ def test_version_prints_app_and_engine() -> None:
     lines = result.output.strip().splitlines()
     assert lines[0] == f"copycast {APP_VERSION}"
     assert lines[1].startswith("engine ")
-    assert APP_VERSION == "2.3.0"
+    assert APP_VERSION == "3.0.0"
 
 
 def test_config_prints_redacted_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,6 +55,7 @@ def test_every_plan_command_is_registered() -> None:
         "storage",
         "config",
         "openapi",
+        "users",
     }
     result = CliRunner().invoke(main, ["rebuild", "--help"])
     assert result.exit_code == 0 and "--yes" in result.output
@@ -81,3 +85,47 @@ def test_api_trusts_forwarded_headers_only_from_the_configured_proxies(
     (kwargs,) = calls
     assert kwargs["proxy_headers"] is True
     assert kwargs["forwarded_allow_ips"] == expected
+
+
+def test_users_hash_password_from_stdin_verifies() -> None:
+    result = CliRunner().invoke(main, ["users", "hash-password", "--stdin"], input="s3cret pass\n")
+    assert result.exit_code == 0, result.output
+    phc = result.output.strip()
+    assert phc.startswith("$argon2id$v=19$m=65536,t=3,p=4$")
+    assert PasswordHasher().verify(phc, "s3cret pass")
+    assert not PasswordHasher().verify(phc, "s3cret pass\n")
+    # The hash is what the settings accept for password_hash.
+    settings = get_settings(
+        auth={"users": [{"username": "a", "password_hash": phc, "admin": True}]}
+    )
+    assert settings.auth.users[0].password_hash == phc
+
+
+def test_users_hash_password_prompts_twice_and_refuses_short_ones() -> None:
+    prompted = CliRunner().invoke(
+        main, ["users", "hash-password"], input="long enough\nlong enough\n"
+    )
+    assert prompted.exit_code == 0, prompted.output
+    assert PasswordHasher().verify(prompted.output.strip().splitlines()[-1], "long enough")
+    short = CliRunner().invoke(main, ["users", "hash-password", "--stdin"], input="short\n")
+    assert short.exit_code == 2 and "at least 8 characters" in short.output
+
+
+def test_users_totp_prints_the_secret_the_uri_and_a_qr_code() -> None:
+    result = CliRunner().invoke(main, ["users", "totp", "florent"])
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    secret = lines[0].removeprefix("secret: ")
+    assert len(secret) == 32 and decode_secret(secret)
+    assert lines[1] == (
+        f"uri:    otpauth://totp/Copycast:florent?secret={secret}"
+        "&issuer=Copycast&digits=6&period=30"
+    )
+    assert any("\u2588" in line for line in lines[2:])  # the QR code's blocks
+    assert lines[-1].endswith(f'totp_secret = "{secret}"')
+
+    given = CliRunner().invoke(main, ["users", "totp", "alice", "--secret", "jbsw y3dp ehpk 3pxp"])
+    assert given.exit_code == 0 and given.output.startswith("secret: JBSWY3DPEHPK3PXP\n")
+    for args in (["Alice"], ["alice", "--secret", "short"], ["alice", "--secret", "not base32!!"]):
+        refused = CliRunner().invoke(main, ["users", "totp", *args])
+        assert refused.exit_code == 2, args

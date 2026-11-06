@@ -2,6 +2,7 @@
 import type {
   AboutRead,
   ApiKeyRead,
+  ComponentStatus,
   CookieServiceRead,
   EngineCookieFileRead,
   EngineCookiesRead,
@@ -10,10 +11,12 @@ import type {
   MirrorDefaults,
   ItemRead,
   JobRead,
+  MeRead,
   MirrorRead,
   ProbeCandidate,
   ProbeResult,
   Problem,
+  QuotaStatus,
   ReadyRead,
   RequestRead,
   SelectionResult,
@@ -32,6 +35,8 @@ export function mirror(overrides: Partial<MirrorRead> = {}): MirrorRead {
   return {
     id,
     kind: "mirror",
+    owner: "copycast",
+    owner_removed: false,
     title: "Example Podcast",
     description: null,
     artwork_url: null,
@@ -61,7 +66,7 @@ export function mirror(overrides: Partial<MirrorRead> = {}): MirrorRead {
     last_light_refresh_at: null,
     last_error: null,
     health: { status: "ok", reason: null },
-    counts: { listed: 3, available: 2, delisted: 0, wanted: 0, archived: 3, failed: 0 },
+    counts: { listed: 3, available: 2, delisted: 0, wanted: 0, archived: 3, failed: 0, blocked: 0 },
     selection: null,
     ...overrides,
   };
@@ -72,6 +77,8 @@ export function bucket(overrides: Partial<BucketRead> = {}): BucketRead {
   return {
     id,
     kind: "bucket",
+    owner: "copycast",
+    owner_removed: false,
     title: "Copycast",
     name: "Copycast",
     description: null,
@@ -119,6 +126,7 @@ export function item(overrides: Partial<ItemRead> = {}): ItemRead {
             bytes: 4_407,
             mime: "audio/mp4",
             ext: "m4a",
+            play_url: `http://localhost:8080/api/feeds/${feedId}/items/${id}/media`,
           }
         : null,
     public_media_url: `http://localhost:8080/feeds/${feedId}/media/${id}.m4a`,
@@ -237,6 +245,7 @@ export function about(overrides: Partial<AboutRead> = {}): AboutRead {
     layout_version: "1",
     totals: { feeds: 2, episodes: 42, storage_bytes: 1_500_000_000 },
     auth_enabled: false,
+    auth_mode: "open",
     ...overrides,
   };
 }
@@ -244,11 +253,37 @@ export function about(overrides: Partial<AboutRead> = {}): AboutRead {
 export function apiKey(overrides: Partial<ApiKeyRead> = {}): ApiKeyRead {
   return {
     id: overrides.id ?? `00000000-0000-4000-8000-${(++sequence).toString().padStart(12, "0")}`,
+    owner: "copycast",
     name: "Claude Code",
     scope: "write",
     prefix: "cck_a1b2c3d4",
     created_at: "2024-01-15T09:00:00Z",
     last_used_at: null,
+    ...overrides,
+  };
+}
+
+export function quotaStatus(overrides: Partial<QuotaStatus> = {}): QuotaStatus {
+  return {
+    username: "copycast",
+    used_bytes: 1_500_000_000,
+    quota_bytes: null,
+    state: "ok",
+    removed: false,
+    ...overrides,
+  };
+}
+
+/** The signed-in User; the default is open mode's implicit Admin. */
+export function me(overrides: Partial<MeRead> = {}): MeRead {
+  const username = overrides.username ?? "copycast";
+  return {
+    username,
+    admin: true,
+    auth_mode: "open",
+    via: "open",
+    totp: false,
+    quota: quotaStatus({ username }),
     ...overrides,
   };
 }
@@ -347,6 +382,31 @@ export function problem(
     detail: `Problem ${slug}`,
     instance: null,
     ...extra,
+  };
+}
+
+/**
+ * The status popover's Storage row (`id: "quota"`): 3.2 GB of 10 GB by default; pass
+ * `quota_bytes: null` for an unlimited User, `facts` for an Admin's per-User lines.
+ */
+export function storageComponent(
+  overrides: Partial<ComponentStatus> & { used_bytes?: number; quota_bytes?: number | null } = {},
+): ComponentStatus {
+  const {
+    used_bytes: used = 3_200_000_000,
+    quota_bytes: quota = 10_000_000_000,
+    ...rest
+  } = overrides;
+  const ratio = quota == null ? null : quota > 0 ? used / quota : 1;
+  const state = ratio == null ? "ok" : ratio >= 1 ? "error" : ratio >= 0.9 ? "warn" : "ok";
+  return {
+    id: "quota",
+    name: "Storage",
+    state,
+    summary: "",
+    facts: [],
+    meter: { used_bytes: used, quota_bytes: quota, ratio },
+    ...rest,
   };
 }
 

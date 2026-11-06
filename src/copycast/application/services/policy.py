@@ -210,8 +210,13 @@ async def expire_automatic(
         return result
 
 
-def defaults_for(ctx: ServiceContext) -> MirrorDefaults:
-    return load_defaults(ctx.layout)
+def defaults_for(ctx: ServiceContext, owner: str) -> MirrorDefaults:
+    """``owner``'s effective Defaults (the Feed's Owner, or the acting User for a new one)."""
+    return effective(
+        load_defaults(ctx.layout, owner),
+        language=None,
+        min_duration_seconds=None,
+    )
 
 
 __all__ = [

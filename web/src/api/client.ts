@@ -12,9 +12,36 @@ import type { paths } from "./schema";
 
 export { ApiProblem, asError, describeProblem } from "./problem";
 
+/**
+ * Called once per 401 from `/api` (no session, or it expired): the app clears its caches,
+ * stops the event stream and shows the sign-in page. `/api/me` is left to the route that asked
+ * for it (the layout's `beforeLoad` redirects itself), so one sign-out never navigates twice.
+ */
+type UnauthorizedHandler = (request: Request) => void;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+/** Install the app's 401 handler; returns a function that removes it. */
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): () => void {
+  unauthorizedHandler = handler;
+  return () => {
+    if (unauthorizedHandler === handler) unauthorizedHandler = null;
+  };
+}
+
+/** The path every session-only route lives under, and the one route that reports the session. */
+const API_PREFIX = "/api/";
+export const ME_PATH = "/api/me";
+
+function signalUnauthorized(request: Request): void {
+  const { pathname } = new URL(request.url, API_BASE_URL || "http://localhost");
+  if (!pathname.startsWith(API_PREFIX) || pathname === ME_PATH) return;
+  unauthorizedHandler?.(request);
+}
+
 const problemMiddleware: Middleware = {
   async onResponse({ request, response }) {
     if (response.ok) return undefined;
+    if (response.status === 401) signalUnauthorized(request);
     let body: unknown = null;
     const text = await response.clone().text();
     if (text) {
@@ -68,10 +95,14 @@ export const $api = createQueryClient(fetchClient);
 /** Errors the UI handles inline and must not toast globally. */
 const SILENT_SLUGS = new Set([
   "aborted",
+  "unauthorized",
   "feed-exists",
   "candidates-ambiguous",
   "invalid-selection",
 ]);
+
+/** Background query failures that never toast: a cancel, and a sign-out (the app redirects). */
+const SILENT_QUERY_SLUGS = new Set(["aborted", "unauthorized"]);
 
 export function createAppQueryClient(): QueryClient {
   return new QueryClient({
@@ -90,7 +121,7 @@ export function createAppQueryClient(): QueryClient {
       onError: (error, query) => {
         // Only surface background failures for data we already showed once.
         if (query.state.data === undefined) return;
-        if (ApiProblem.is(error) && error.slug === "aborted") return;
+        if (ApiProblem.is(error) && SILENT_QUERY_SLUGS.has(error.slug)) return;
         const { title, description } = describeProblem(error);
         toast.error(title, { description, id: `query:${title}` });
       },

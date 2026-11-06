@@ -176,6 +176,8 @@ class _Plan:
     last_modified: str | None
     options: dict[str, Any]
     language: str | None
+    owner: str
+    """Whose Cookie files the listing carries: the Feed's Owner."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,7 +200,7 @@ def _plan(ctx: ServiceContext, feed: FeedRow) -> _Plan:
     else:
         mode = "shallow"
     language = effective(
-        load_defaults(ctx.layout),
+        load_defaults(ctx.layout, feed.owner),
         language=feed.preferred_language,
         min_duration_seconds=feed.min_duration_seconds,
     ).language
@@ -210,6 +212,7 @@ def _plan(ctx: ServiceContext, feed: FeedRow) -> _Plan:
         last_modified=feed.source_last_modified,
         options=dict(feed.engine_options or {}),
         language=language,
+        owner=feed.owner,
     )
 
 
@@ -239,6 +242,7 @@ def _list(ctx: ServiceContext, plan: _Plan, cancel: CancelToken, timeout: float)
         language=plan.language,
         cancel=cancel,
         limit=LIGHT_LISTING_LIMIT,
+        owner=plan.owner,
     )
     if listing.listing_order is ListingOrder.oldest_first:
         # A playlist-like Source: its first page is its oldest items, not its newest.
@@ -258,10 +262,16 @@ def _priority(reason: str | None) -> int:
 
 
 async def _enqueue_wanted(uow: UnitOfWorkPort, feed_id: str) -> int:
-    """One archive job per wanted row lacking an active one; returns how many were created."""
+    """One archive job per wanted row lacking an active one; returns how many were created.
+
+    Rows blocked by the Owner's quota wait for the scheduler's release: a podcast app's
+    fetch never queues (nor refuses) anything because of the quota.
+    """
     rows = await uow.catalog.get_many(await uow.catalog.ids_in_state(feed_id, ArchiveState.wanted))
     created = 0
     for item in rows:
+        if item.blocked_reason is not None:
+            continue
         if await uow.jobs.active_by_dedup_key(archive_dedup_key(item.id)) is not None:
             continue
         job = await enqueue_archive(
@@ -277,7 +287,7 @@ async def _apply(
 ) -> tuple[LightRefreshResult, int]:
     """Apply what was listed in one transaction; returns the result and the jobs created."""
     feed_id = plan.feed_id
-    defaults = load_defaults(ctx.layout)
+    defaults = load_defaults(ctx.layout, plan.owner)
     async with ctx.uow_factory() as uow:
         feed = await uow.feeds.get_for_update(feed_id)
         rss = listed.rss

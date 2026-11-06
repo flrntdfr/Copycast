@@ -28,6 +28,7 @@ NOW = datetime(2024, 3, 1, tzinfo=UTC)
 MIRROR: dict[str, Any] = {
     "id": "0123456789abcdef",
     "kind": "mirror",
+    "owner": "copycast",
     "title": "T",
     "source_title": "T",
     "feed_url": "http://localhost:8080/feeds/0123456789abcdef.xml",
@@ -40,6 +41,7 @@ MIRROR: dict[str, Any] = {
 BUCKET: dict[str, Any] = {
     "id": "copycast-abc234",
     "kind": "bucket",
+    "owner": "copycast",
     "title": "Copycast",
     "name": "Copycast",
     "feed_url": "http://localhost:8080/feeds/copycast-abc234.xml",
@@ -197,3 +199,16 @@ def test_problem_carries_extension_members() -> None:
     )
     assert problem.type == "urn:copycast:problem:feed-exists"
     assert problem.model_dump()["existing_feed_id"] == "abc"
+
+
+def test_login_request_normalises_the_username() -> None:
+    from copycast.application.models import LoginRequest
+
+    body = LoginRequest(username="  Florent ", password="pw", totp="123 456")
+    assert body.username == "florent" and body.totp == "123 456"
+    with pytest.raises(ValidationError):
+        LoginRequest(username="   ", password="pw")
+    with pytest.raises(ValidationError):
+        LoginRequest(username="a", password="")
+    with pytest.raises(ValidationError):
+        LoginRequest.model_validate({"username": "a", "password": "b", "extra": 1})

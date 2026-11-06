@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Text
+from sqlalchemy import ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,13 +17,20 @@ class ApiKey(TimestampMixin, Base):
     __tablename__ = "api_keys"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.username", ondelete="RESTRICT"), nullable=False
+    )
+    """The User the key acts as: never more than that User's own Feeds."""
     name: Mapped[str] = mapped_column(Text, nullable=False)
     scope: Mapped[str] = mapped_column(Text, nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     prefix: Mapped[str] = mapped_column(String(16), nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(TZDateTime)
 
-    __table_args__ = (enum_check("scope", KeyScope, "scope"),)
+    __table_args__ = (
+        enum_check("scope", KeyScope, "scope"),
+        Index("ix_api_keys_owner", "owner"),
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<ApiKey {self.prefix} {self.name!r} {self.scope}>"

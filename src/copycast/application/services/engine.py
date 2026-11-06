@@ -1,19 +1,27 @@
-"""The Engine's cookie files: stored for every fetch, never shown back.
+"""Each User's Cookie files: stored for every fetch of theirs, never shown back.
 
 Sites such as YouTube refuse downloads from a server's address unless a
-logged-in session's cookies come along; the operator exports them from a
-browser and adds them here, one file per site or session. Each file lives in the
-Object store at ``engine/cookies/{name}.txt``; the Engine reads one jar,
-``engine/cookies.txt``, merged from them on every change (yt-dlp gets a private 0600
-Scratch copy of it). yt-dlp writes rotated cookies into that jar, so every change first
-carries the jar back into the files. A jar stored before files existed shows as the file
-``cookies``.
+logged-in session's cookies come along; a User exports them from a browser and
+adds them here, one file per site or session. Each file lives in the Object store
+at ``users/{owner}/cookie-files/{name}.txt``; the Engine calls made for that User
+(their Feeds' Refreshes and archives, their probes, searches and Captures) carry one
+jar, ``users/{owner}/cookies.txt``, merged from them on every change (yt-dlp gets a
+private 0600 Scratch copy of it). yt-dlp writes rotated cookies into that jar, so
+every change first carries the jar back into the files. A jar stored before files
+existed shows as the file ``cookies``. The capabilities act on the caller's own files
+only, Admins included; the pre-3.0 ``engine/`` keys are copied once to the owner of
+existing data (``adapters.storage.user_settings``) and no longer read.
+
+A User holds at most :data:`MAX_COOKIE_FILES` files of :data:`MAX_COOKIE_BYTES` in all
+(409 past either), checked under the Owner's quota lock so parallel calls cannot add past
+it: every change loads them all, and they sit outside the storage quota.
 """
 
 from __future__ import annotations
 
 import asyncio
 import stat
+from typing import Final
 
 from copycast.application.capabilities import capability
 from copycast.application.models import (
@@ -22,7 +30,8 @@ from copycast.application.models import (
     EngineCookiesRead,
     EngineCookiesWrite,
 )
-from copycast.application.services.context import ObjectStorePort, ServiceContext
+from copycast.application.services.context import LayoutPort, ObjectStorePort, ServiceContext
+from copycast.application.services.owners import acting_owner
 from copycast.domain.cookies import (
     COOKIE_SERVICES,
     YOUTUBE_DOMAINS,
@@ -33,13 +42,18 @@ from copycast.domain.cookies import (
     services_for,
     split_cookie_jar,
 )
-from copycast.domain.exceptions import NotFound
+from copycast.domain.exceptions import Conflict, NotFound
+from copycast.domain.quota import format_size
 from copycast.logging import get_logger
 
 log = get_logger(__name__)
 
 COOKIES_MODE = stat.S_IRUSR | stat.S_IWUSR
 LEGACY_NAME = "cookies"
+MAX_COOKIE_FILES: Final = 32
+"""Cookie files one User may hold (one per site or session is the use)."""
+MAX_COOKIE_BYTES: Final = 4 * 1024 * 1024
+"""Their total size: each change loads every one of them, and the merged jar."""
 
 
 def _text(store: ObjectStorePort, key: str) -> str | None:
@@ -69,6 +83,26 @@ class _Store:
         if not listed:
             return {LEGACY_NAME: self.jar} if self.store.head(self.jar) is not None else {}
         return {o.name.removesuffix(".txt"): o.key for o in listed}
+
+    def check_room(self, name: str, content: str) -> None:
+        """Conflict when storing ``content`` as ``name`` would pass either limit."""
+        sizes = {
+            o.name.removesuffix(".txt"): o.size
+            for o in self.store.list(self.folder)
+            if o.name.endswith(".txt")
+        }
+        if name not in sizes and len(sizes) >= MAX_COOKIE_FILES:
+            raise Conflict(
+                f"{len(sizes)} cookie files are stored, the most one User may hold; "
+                "remove one, or replace a file by storing it under the same name"
+            )
+        total = sum(size for other, size in sizes.items() if other != name)
+        total += len(content.encode("utf-8"))
+        if total > MAX_COOKIE_BYTES:
+            raise Conflict(
+                f"cookie files are limited to {format_size(MAX_COOKIE_BYTES)} in all; "
+                f"this one would make {format_size(total)}: remove one first"
+            )
 
     def load(self) -> dict[str, str]:
         files = {name: _text(self.store, key) for name, key in self.keys().items()}
@@ -156,42 +190,66 @@ def _services(files: list[EngineCookieFileRead]) -> list[CookieServiceRead]:
     return rows
 
 
-def _store(ctx: ServiceContext) -> _Store:
-    layout = ctx.layout
-    return _Store(layout.store, layout.cookies_key(), layout.cookie_files_prefix())
+def cookie_jar_key(layout: LayoutPort, owner: str) -> str:
+    """The Object store key of the jar ``owner``'s Engine calls carry (``cookie_jar``):
+    ``users/{owner}/cookies.txt``."""
+    return layout.user_cookies_key(owner)
+
+
+def cookie_store(layout: LayoutPort, owner: str) -> _Store:
+    """``owner``'s jar and the Cookie files it is merged from (also ``copycast users
+    reassign``, which moves one User's files to another)."""
+    return _Store(
+        layout.store, cookie_jar_key(layout, owner), layout.user_cookie_files_prefix(owner)
+    )
+
+
+def _store(ctx: ServiceContext, owner: str) -> _Store:
+    """``owner``'s jar and the Cookie files it is merged from."""
+    return cookie_store(ctx.layout, owner)
 
 
 @capability("get_engine_cookies", response=EngineCookiesRead)
 async def get_engine_cookies(ctx: ServiceContext) -> EngineCookiesRead:
-    """The stored cookie files, which domains they cover and which services they unlock."""
-    return await asyncio.to_thread(_store(ctx).read)
+    """The caller's Cookie files, which domains they cover and which services they unlock."""
+    return await asyncio.to_thread(_store(ctx, acting_owner(ctx)).read)
 
 
 @capability("set_engine_cookies", request=EngineCookiesWrite, response=EngineCookiesRead)
 async def set_engine_cookies(ctx: ServiceContext, body: EngineCookiesWrite) -> EngineCookiesRead:
-    """Store a Netscape cookie file under its name, replacing a file of the same name
-    (422 when it is not one); every future fetch carries it."""
+    """Store a Netscape cookie file under its name among the caller's, replacing a file of
+    the same name (422 when it is not one); every future fetch of theirs carries it."""
     summary = parse_cookies(body.content)
     name = cookie_file_name(body.name)
-    store = _store(ctx)
+    owner = acting_owner(ctx)
+    store = _store(ctx, owner)
 
     def _add() -> EngineCookiesRead:
+        store.check_room(name, body.content)
         files = store.synced()
         files[name] = body.content
         store.save(files)
         return store.read()
 
-    read = await asyncio.to_thread(_add)
+    # Under the Owner's lock: parallel calls each see what the previous one stored.
+    async with ctx.uow_factory() as uow:
+        await uow.quota.lock_owner(owner)
+        read = await asyncio.to_thread(_add)
     log.info(
-        "engine.cookies_stored", file=name, cookies=summary.cookie_count, domains=summary.domains
+        "engine.cookies_stored",
+        owner=owner,
+        file=name,
+        cookies=summary.cookie_count,
+        domains=summary.domains,
     )
     return read
 
 
 @capability("delete_engine_cookies")
 async def delete_engine_cookies(ctx: ServiceContext, name: str | None = None) -> None:
-    """Remove one stored cookie file, or every one without ``name``."""
-    store = _store(ctx)
+    """Remove one of the caller's Cookie files, or every one of theirs without ``name``."""
+    owner = acting_owner(ctx)
+    store = _store(ctx, owner)
 
     def _remove() -> None:
         files = store.synced()
@@ -200,7 +258,16 @@ async def delete_engine_cookies(ctx: ServiceContext, name: str | None = None) ->
         store.save({} if name is None else {k: v for k, v in files.items() if k != name})
 
     await asyncio.to_thread(_remove)
-    log.info("engine.cookies_removed", file=name)
+    log.info("engine.cookies_removed", owner=owner, file=name)
 
 
-__all__ = ["COOKIES_MODE", "delete_engine_cookies", "get_engine_cookies", "set_engine_cookies"]
+__all__ = [
+    "COOKIES_MODE",
+    "MAX_COOKIE_BYTES",
+    "MAX_COOKIE_FILES",
+    "cookie_jar_key",
+    "cookie_store",
+    "delete_engine_cookies",
+    "get_engine_cookies",
+    "set_engine_cookies",
+]

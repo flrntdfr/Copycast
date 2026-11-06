@@ -2,6 +2,7 @@ import { CircleCheck, Loader2, Trash2, Upload } from "lucide-react";
 import { useRef, useState, type ChangeEvent } from "react";
 
 import { $api } from "@/api/client";
+import { useMe } from "@/api/session";
 import type { CookieServiceRead, EngineCookieFileRead } from "@/api/types";
 import { SectionHeader } from "@/components/common/PageHeader";
 import { RelativeTime } from "@/components/common/RelativeTime";
@@ -31,11 +32,12 @@ import { HelpTip } from "./HelpTip";
 import { useDeleteCookies, useSetCookies } from "./mutations";
 
 /**
- * The sites that need a login: an Add tile, then one tile per service, unlocked (green check)
+ * The signed-in User's Cookie files. The sites that need a login: an Add tile, then one tile per service, unlocked (green check)
  * once a stored cookie file covers it; below, the stored files that hold cookies, if any.
  */
 export function AuthenticationsSection() {
   const cookies = $api.useQuery("get", "/api/engine/cookies");
+  const username = useMe()?.username ?? "you";
   const save = useSetCookies();
   const fileInput = useRef<HTMLInputElement>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -60,7 +62,8 @@ export function AuthenticationsSection() {
               YouTube answers a server’s address with “Sign in to confirm you’re not a bot”. In a
               private browser window, sign in to the site, export its cookies with a “Get
               cookies.txt LOCALLY” extension, then close the window without signing out. Add the
-              file here: the engine sends it along with every fetch, and it is never shown again.
+              file here: the engine sends it along with every fetch for your Mirrors, and it is
+              never shown again, not even to an Admin. Other Users add files of their own.
             </HelpTip>
           </span>
         }
@@ -102,7 +105,7 @@ export function AuthenticationsSection() {
       {cookies.isError ? (
         <p className="text-sm text-destructive">The cookie files could not be loaded.</p>
       ) : files.length > 0 ? (
-        <CookieFilesTable files={files} onRemove={setRemoving} />
+        <CookieFilesTable files={files} username={username} onRemove={setRemoving} />
       ) : null}
       <RemoveDialog name={removing} onClose={() => setRemoving(null)} />
     </section>
@@ -151,9 +154,11 @@ function ServiceTile({ service, onClick }: { service: CookieServiceRead; onClick
 /** The stored files that hold cookies: when each was added, where it lives, what it unlocks. */
 function CookieFilesTable({
   files,
+  username,
   onRemove,
 }: {
   files: EngineCookieFileRead[];
+  username: string;
   onRemove: (name: string) => void;
 }) {
   return (
@@ -176,7 +181,7 @@ function CookieFilesTable({
                 <RelativeTime value={file.updated_at} fallback="unknown" />
               </TableCell>
               <TableCell className="max-w-48 truncate font-mono text-xs">
-                {cookieFilePath(file.name)}
+                {cookieFilePath(username, file.name)}
               </TableCell>
               <TableCell>
                 <span className="flex items-center gap-1.5">
@@ -209,9 +214,9 @@ function CookieFilesTable({
   );
 }
 
-/** Where a cookie file lives in the data directory (`data/engine/cookies/{name}.txt`). */
-function cookieFilePath(name: string): string {
-  return `data/engine/cookies/${name}.txt`;
+/** Where a User's cookie file lives in the Object store. */
+export function cookieFilePath(username: string, name: string): string {
+  return `users/${username}/cookie-files/${name}.txt`;
 }
 
 function RemoveDialog({ name, onClose }: { name: string | null; onClose: () => void }) {

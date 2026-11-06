@@ -132,6 +132,36 @@ def required_scope(*, destructive: bool, read_only: bool) -> KeyScope:
     return KeyScope.write
 
 
+SESSION_TOKEN_BYTES: Final = 32
+
+
+def mint_session_token() -> str:
+    """A browser session's secret: 32 random bytes as unpadded base64url (43 characters)."""
+    return (
+        base64.urlsafe_b64encode(secrets.token_bytes(SESSION_TOKEN_BYTES))
+        .decode("ascii")
+        .rstrip("=")
+    )
+
+
+def session_digest(token: str) -> bytes:
+    """What ``sessions.id_hash`` stores for a session token: its SHA-256 (32 bytes)."""
+    return hashlib.sha256(token.encode("utf-8")).digest()
+
+
+def credential_digest(password_hash: str | None, totp_secret: str | None) -> bytes:
+    """A fingerprint of a User's configured credentials (``users.credential_digest``).
+
+    SHA-256 of the password hash and the normalised TOTP secret (spaces and padding
+    dropped, upper-cased), one per line. A new password or TOTP secret changes it, which
+    signs that User's sessions out at the next start. Users mode only: legacy mode stores
+    a salted argon2 hash of the operator password instead (``UserDirectory``), since an
+    unsalted SHA-256 of a password is cheap to crack from a database dump.
+    """
+    totp = "".join((totp_secret or "").split()).rstrip("=").upper()
+    return hashlib.sha256(f"{password_hash or ''}\n{totp}".encode()).digest()
+
+
 __all__ = [
     "API_KEY_PREFIX",
     "ARTWORK_MAC_LEN",
@@ -140,13 +170,16 @@ __all__ = [
     "FEED_PASSWORD_LEN",
     "FEED_USERNAME_LEN",
     "INSTANCE_SECRET_BYTES",
+    "SESSION_TOKEN_BYTES",
     "api_key_hash",
     "api_key_prefix",
     "artwork_mac",
     "artwork_mac_ok",
     "constant_time_equals",
+    "credential_digest",
     "feed_media_key",
     "looks_like_api_key",
+    "mint_session_token",
     "new_api_key",
     "new_feed_password",
     "new_feed_username",
@@ -154,4 +187,5 @@ __all__ = [
     "required_scope",
     "scope_allows",
     "scopes_granted",
+    "session_digest",
 ]

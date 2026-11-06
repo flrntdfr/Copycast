@@ -26,9 +26,9 @@ from copycast.domain.enums import (
     JobStatus,
     JobTrigger,
 )
-from copycast.settings import Settings
+from copycast.settings import Settings, SettingsError
 from copycast.worker import main as worker_main
-from copycast.worker.constants import EXIT_LOCKED, EXIT_STUCK
+from copycast.worker.constants import EXIT_CONFIG, EXIT_LOCKED, EXIT_STUCK
 from copycast.worker.health import HealthServer, WorkerState, create_health_app, readiness
 from copycast.worker.runner import SHUTDOWN_ERROR, Runner
 from copycast.worker.scheduler import Scheduler
@@ -137,10 +137,10 @@ async def test_soft_timeout_quarantines_the_feed_and_exits_3_when_all_stuck(
     # Make the fake engine ignore the token: it polls `cancel`, so give it one that never sets.
     original_fetch = engine.fetch_item
 
-    def ignoring_token(spec, options, cancel, on_progress, log):  # type: ignore[no-untyped-def]
+    def ignoring_token(spec, options, cancel, on_progress, log, *, cookie_jar=None):  # type: ignore[no-untyped-def]
         from copycast.application.ports import CancelToken
 
-        return original_fetch(spec, options, CancelToken(), on_progress, log)
+        return original_fetch(spec, options, CancelToken(), on_progress, log, cookie_jar=cookie_jar)
 
     engine.fetch_item = ignoring_token  # type: ignore[method-assign]
     exit_code = await asyncio.wait_for(runner.run(), timeout=15)
@@ -279,6 +279,23 @@ async def test_second_worker_exits_locked(
     async with SessionLock(container.db_engine, WORKER_LOCK) as lock:
         assert lock.held
         assert await worker_main.main(settings, engine=engine) == EXIT_LOCKED
+
+
+async def test_a_failed_user_settings_copy_exits_2_with_one_line(
+    container: Container,
+    settings: Settings,
+    engine: FakeEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    del container  # migrated database
+
+    async def fail(self: Container) -> None:
+        raise SettingsError("could not copy the legacy settings: store unreachable")
+
+    monkeypatch.setattr(Container, "migrate_user_settings", fail)
+    assert await worker_main.main(settings, engine=engine) == EXIT_CONFIG
+    assert "store unreachable" in capsys.readouterr().err
 
 
 async def test_main_starts_serves_and_stops_on_sigterm(

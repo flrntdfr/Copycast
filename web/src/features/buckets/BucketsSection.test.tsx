@@ -4,10 +4,11 @@ import { delay, http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import type { StorageSummary } from "@/api/types";
-import { bucket, mirror } from "@/test/factories";
+import { bucket, me, mirror } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
-import { BUCKETS_OPEN_KEY } from "./BucketsSection";
+import { BUCKETS_OPEN_NAME } from "./BucketsSection";
+import { storageKey } from "@/lib/storage";
 
 const podcast = mirror({ id: "mirror-1", title: "Example Podcast", storage_bytes: 12_345_678 });
 const copycast = bucket({
@@ -92,12 +93,12 @@ describe("Buckets on the Feeds page", () => {
       expect(card).not.toHaveTextContent(/Synced|Episode/);
       expect(card.querySelector("[data-sync]")).toBeNull();
     }
-    expect(window.localStorage.getItem(BUCKETS_OPEN_KEY)).toBe("1");
+    expect(window.localStorage.getItem(storageKey(BUCKETS_OPEN_NAME))).toBe("1");
 
     await user.click(header);
     expect(header).toHaveAttribute("aria-expanded", "false");
     await waitFor(() => expect(screen.queryAllByTestId("bucket-card")).toHaveLength(0));
-    expect(window.localStorage.getItem(BUCKETS_OPEN_KEY)).toBe("0");
+    expect(window.localStorage.getItem(storageKey(BUCKETS_OPEN_NAME))).toBe("0");
   });
 
   it("shows the Feeds' own sizes while the files are being counted", async () => {
@@ -131,6 +132,41 @@ describe("Buckets on the Feeds page", () => {
     expect(screen.getByRole("button", { name: /Buckets/ })).toHaveAttribute(
       "aria-expanded",
       "true",
+    );
+  });
+
+  it("lists only an Admin's own buckets, which the storage summary counts", async () => {
+    const bobsDefault = bucket({ id: "bob-default", name: "Copycast", owner: "bob" });
+    const bobsMirror = mirror({ id: "bob-mirror", title: "Bob's show", owner: "bob" });
+    server.use(
+      http.get("/api/me", () =>
+        HttpResponse.json(me({ username: "copycast", auth_mode: "users", via: "session" })),
+      ),
+      http.get("/api/feeds", () =>
+        HttpResponse.json({ feeds: [podcast, bobsMirror, copycast, bobsDefault] }),
+      ),
+      http.get("/api/jobs", () => HttpResponse.json({ jobs: [], total: 0, limit: 500, offset: 0 })),
+      http.get("/api/storage", () =>
+        HttpResponse.json({
+          feeds: [
+            { feed_id: "mirror-1", file_count: 43, total_bytes: 554_000_000 },
+            { feed_id: "bucket-1", file_count: 1, total_bytes: 9_000 },
+          ],
+          file_count: 44,
+          total_bytes: 554_009_000,
+        }),
+      ),
+    );
+    renderApp("/#buckets");
+    const cards = await screen.findAllByTestId("bucket-card");
+    expect(cards.map((card) => card.getAttribute("href"))).toEqual([
+      "/buckets/mirror-1",
+      "/buckets/bucket-1",
+    ]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Buckets/ })).toHaveTextContent(
+        "2 buckets · 44 files · 554 MB",
+      ),
     );
   });
 });

@@ -1,4 +1,5 @@
-"""Command line entry point: ``copycast api | worker | migrate | rebuild | config | openapi``.
+"""Command line entry point: ``copycast api | worker | migrate | rebuild | config | openapi``,
+plus ``storage push``, the ``users`` credential helpers and ``users reassign``.
 
 Command implementations are imported lazily so the CLI loads (and ``config``
 and ``--version`` work) even when an adapter package is absent.
@@ -144,7 +145,10 @@ def migrate() -> None:
 
     async def _run() -> None:
         try:
-            await ensure_schema(container.db_engine)
+            await ensure_schema(
+                container.db_engine,
+                owner_of_existing=settings.auth.effective_owner_of_existing,
+            )
         finally:
             await container.aclose()
 
@@ -228,6 +232,151 @@ def openapi() -> None:
 
     app = create_asgi_app(settings)
     click.echo(json.dumps(app.openapi(), indent=2, sort_keys=False))
+
+
+PASSWORD_MIN_LEN = 8
+
+
+@main.group()
+def users() -> None:
+    """Credentials for ``[[auth.users]]`` (no database needed), and ``reassign``."""
+
+
+@users.command("hash-password")
+@click.option(
+    "--stdin", "from_stdin", is_flag=True, help="Read the password from one line of stdin."
+)
+def users_hash_password(from_stdin: bool) -> None:
+    """Print the argon2id hash of a password, for ``password_hash`` in copycast.toml.
+
+    Prompts twice (hidden) unless ``--stdin``. Put the hash in the TOML file, never in
+    an ``.env`` or compose file: it contains ``$`` signs.
+    """
+    from copycast.application.passwords import PasswordHasher
+
+    if from_stdin:
+        password = sys.stdin.readline().rstrip("\r\n")
+    else:
+        password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
+    if len(password) < PASSWORD_MIN_LEN:
+        click.echo(f"copycast: a password needs at least {PASSWORD_MIN_LEN} characters", err=True)
+        sys.exit(EXIT_CONFIG)
+    click.echo(PasswordHasher().hash(password))
+
+
+@users.command("totp")
+@click.argument("username")
+@click.option("--secret", default=None, help="Use this base32 secret instead of a new one.")
+def users_totp(username: str, secret: str | None) -> None:
+    """Print a TOTP secret for USERNAME, its otpauth:// URI and a QR code to scan.
+
+    Put the secret in ``totp_secret``; an authenticator app scans the QR code.
+    """
+    import io
+
+    import segno
+
+    from copycast.domain.totp import decode_secret, generate_secret, provisioning_uri
+    from copycast.domain.users import is_valid_username
+
+    username = username.strip()
+    if not is_valid_username(username):
+        click.echo(
+            "copycast: a username is 1-32 lowercase letters, digits, '.', '_' or '-', "
+            "starting with a letter or digit",
+            err=True,
+        )
+        sys.exit(EXIT_CONFIG)
+    if secret is None:
+        secret = generate_secret()
+    else:
+        secret = "".join(secret.split()).upper().rstrip("=")
+        try:
+            decode_secret(secret)
+        except ValueError:
+            secret = ""
+        if len(secret) < 16:
+            click.echo("copycast: --secret must be base32, at least 16 characters", err=True)
+            sys.exit(EXIT_CONFIG)
+    uri = provisioning_uri(secret, username)
+    qr = io.StringIO()
+    segno.make(uri, error="m").terminal(out=qr, compact=True)
+    click.echo(f"secret: {secret}")
+    click.echo(f"uri:    {uri}")
+    click.echo(qr.getvalue().rstrip("\n"))
+    click.echo(f'copycast.toml, under this user\'s [[auth.users]]: totp_secret = "{secret}"')
+
+
+@users.command("reassign")
+@click.argument("old")
+@click.argument("new")
+@click.option("--yes", is_flag=True, help="Do not ask for confirmation.")
+@click.option(
+    "--move-keys",
+    is_flag=True,
+    help="Also give OLD's API keys to NEW: whoever holds them then acts as NEW.",
+)
+def users_reassign(old: str, new: str, yes: bool, move_keys: bool) -> None:
+    """Give every Feed and job of OLD, and its Defaults and Cookie files, to NEW.
+
+    For Feeds whose owner is no longer configured (a renamed user, a switch to users
+    mode). NEW must be configured. Refused while the worker runs (stop it first), and when
+    OLD and NEW mirror the same Source. Feed URLs, pairs and media keys do not change.
+
+    OLD's API keys stay OLD's (they stop working while OLD is not configured). Pass
+    --move-keys only when OLD and NEW are the same person: a moved key acts as NEW, with
+    NEW's Admin powers if NEW is an Admin.
+    """
+    settings = _load_settings()
+    configure_logging(settings, process="cli")
+    old, new = old.strip(), new.strip()
+    check_names = _lazy("copycast.adapters.db.reassign", "check_names")
+    old_is_configured = _lazy("copycast.adapters.db.reassign", "old_is_configured")
+    refused = _lazy("copycast.adapters.db.reassign", "ReassignRefused")
+    run_reassign = _lazy("copycast.adapters.db.reassign", "reassign")
+    try:
+        check_names(settings, old, new)
+    except refused as exc:
+        click.echo(f"copycast: {exc}", err=True)
+        sys.exit(1)
+    if old_is_configured(settings, old):
+        click.echo(
+            f"warning: {old} is still a configured User; they keep signing in, with no Feeds",
+            err=True,
+        )
+    if move_keys:
+        click.echo(
+            f"warning: whoever holds {old}'s API keys will act as {new}, "
+            f"with everything {new} may do",
+            err=True,
+        )
+    if not yes:
+        what = "Feeds, API keys, jobs" if move_keys else "Feeds, jobs"
+        click.confirm(f"Give everything {old} owns ({what}, users/{old}/) to {new}?", abort=True)
+    try:
+        report = asyncio.run(run_reassign(settings, old, new, move_keys=move_keys))
+    except SettingsError as exc:
+        click.echo(f"copycast: {exc}", err=True)
+        sys.exit(EXIT_CONFIG)
+    except refused as exc:
+        click.echo(f"copycast: {exc}", err=True)
+        sys.exit(1)
+    if report.demoted_default is not None:
+        click.echo(
+            f"{old}'s default Local feed {report.demoted_default} is now an ordinary "
+            f"Local feed of {new}"
+        )
+    for key in report.conflicts:
+        click.echo(f"{key} kept: {new} has its own")
+    if report.keys_kept:
+        click.echo(
+            f"{report.keys_kept} API keys left with {old} (dead while {old} is not "
+            "configured; --move-keys moves them)"
+        )
+    click.echo(
+        f"moved from {old} to {new}: {len(report.feeds)} Feeds, {report.keys} API keys, "
+        f"{report.jobs} jobs, {len(report.files)} files; {len(report.conflicts)} conflicts"
+    )
 
 
 if __name__ == "__main__":

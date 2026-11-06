@@ -9,15 +9,17 @@ counters and schedules the descriptor export as such a hook.
 from __future__ import annotations
 
 import inspect
+import uuid
 from collections.abc import Awaitable, Callable
 from types import TracebackType
 from typing import Any, Self
 
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from copycast.adapters.db.models import Feed, Job
 from copycast.adapters.db.repositories import (
     ApiKeyRepository,
     AssetRepository,
@@ -25,8 +27,13 @@ from copycast.adapters.db.repositories import (
     FeedRepository,
     InstanceSecretRepository,
     JobRepository,
+    LoginAttemptRepository,
+    QuotaRepository,
     RequestRepository,
+    SessionRepository,
+    StagedUploadRepository,
     TelemetryRepository,
+    UserRepository,
 )
 from copycast.adapters.storage.descriptor import (
     DEBOUNCE_SECONDS,
@@ -35,6 +42,7 @@ from copycast.adapters.storage.descriptor import (
 )
 from copycast.adapters.storage.layout import Layout
 from copycast.application.events import CHANNEL, JOBS_CHANNEL, serialize
+from copycast.application.services.context import LOOKUP, LookupSentinel, Scope
 from copycast.domain.exceptions import ConcurrentUpdate
 from copycast.logging import get_logger
 
@@ -45,6 +53,14 @@ log = get_logger(__name__)
 #: SQLSTATE codes Postgres raises when it aborts one of two racing transactions:
 #: ``40001`` serialization_failure, ``40P01`` deadlock_detected. Both are safe to retry.
 RETRYABLE_SQLSTATES: frozenset[str] = frozenset({"40001", "40P01"})
+
+
+def _event_feed_id(event: BaseModel) -> str | None:
+    """The Feed an event concerns (``None`` for ``resync`` and feed-less jobs)."""
+    job = getattr(event, "job", None)
+    source = job if job is not None else event
+    feed_id = getattr(source, "feed_id", None)
+    return feed_id if isinstance(feed_id, str) else None
 
 
 def is_retryable(exc: BaseException) -> bool:
@@ -62,23 +78,31 @@ class UnitOfWork:
         *,
         exporter: DescriptorExporter,
         debounced_exporter: DescriptorExporter | None = None,
+        scope: Scope = Scope.SYSTEM,
     ) -> None:
         self.session = session
         self.layout = layout
+        self.scope = scope
         self._exporter = exporter
         self._debounced = debounced_exporter
         self._hooks: list[Hook] = []
         self._exports: dict[str, bool] = {}
         self._committed = False
         self._closed = False
-        self.feeds = FeedRepository(session)
-        self.catalog = CatalogRepository(session)
+        self._feed_owners: dict[str, str | None] = {}
+        self.feeds = FeedRepository(session, scope)
+        self.catalog = CatalogRepository(session, scope)
         self.assets = AssetRepository(session)
-        self.requests = RequestRepository(session)
-        self.jobs = JobRepository(session)
-        self.telemetry = TelemetryRepository(session)
-        self.api_keys = ApiKeyRepository(session)
+        self.requests = RequestRepository(session, scope)
+        self.jobs = JobRepository(session, scope)
+        self.telemetry = TelemetryRepository(session, scope)
+        self.api_keys = ApiKeyRepository(session, scope)
         self.instance_secrets = InstanceSecretRepository(session)
+        self.users = UserRepository(session)
+        self.sessions = SessionRepository(session)
+        self.login_attempts = LoginAttemptRepository(session)
+        self.quota = QuotaRepository(session)
+        self.staged_uploads = StagedUploadRepository(session)
 
     # ------------------------------------------------------------------ hooks
 
@@ -105,12 +129,40 @@ class UnitOfWork:
 
     # ------------------------------------------------------------------ notifications
 
-    async def publish(self, event: BaseModel) -> None:
-        """``NOTIFY copycast_events`` inside this transaction: delivered only on commit."""
+    async def publish(
+        self, event: BaseModel, *, owner: str | LookupSentinel | None = LOOKUP
+    ) -> None:
+        """``NOTIFY copycast_events`` inside this transaction: delivered only on commit.
+
+        The payload carries the event's Owner (``"{owner}\n{json}"``) so the api hands
+        it only to that Owner's (and Admins') subscribers. ``owner`` defaults to a lookup:
+        the Owner of the event's Feed, else the requester of a feed-less job; ``None``
+        marks an owner-less event. A caller that publishes after deleting the Feed passes
+        the Owner it read before.
+        """
+        resolved = await self._event_owner(event) if owner is LOOKUP else owner
         await self.session.execute(
             text("SELECT pg_notify(:channel, :payload)"),
-            {"channel": CHANNEL, "payload": serialize(event)},
+            {"channel": CHANNEL, "payload": serialize(event, owner=resolved or "")},
         )
+
+    async def _event_owner(self, event: BaseModel) -> str | None:
+        """Who ``event`` belongs to: its Feed's Owner, or a feed-less job's requester."""
+        feed_id = _event_feed_id(event)
+        if feed_id is not None:
+            if feed_id not in self._feed_owners:
+                result = await self.session.execute(select(Feed.owner).where(Feed.id == feed_id))
+                self._feed_owners[feed_id] = result.scalar_one_or_none()
+            return self._feed_owners[feed_id]
+        job = getattr(event, "job", None)
+        if job is not None:
+            requested_by = getattr(job, "requested_by", None)
+            return requested_by if isinstance(requested_by, str) else None
+        job_id = getattr(event, "job_id", None)
+        if isinstance(job_id, uuid.UUID):
+            result = await self.session.execute(select(Job.requested_by).where(Job.id == job_id))
+            return result.scalar_one_or_none()
+        return None
 
     async def notify_jobs(self, payload: str = "") -> None:
         """Wake the worker's claim loop (``NOTIFY copycast_jobs``) once this commits."""
@@ -202,12 +254,13 @@ class UnitOfWorkFactory:
             delay=DEBOUNCE_SECONDS if debounce_seconds is None else debounce_seconds,
         )
 
-    def __call__(self) -> UnitOfWork:
+    def __call__(self, scope: Scope = Scope.SYSTEM) -> UnitOfWork:
         return UnitOfWork(
             self.sessionmaker(),
             self.layout,
             exporter=self.exporter,
             debounced_exporter=self.debounced_exporter,
+            scope=scope,
         )
 
     async def flush_exports(self) -> None:

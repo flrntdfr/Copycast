@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from copycast.adapters.db.base import Base, TimestampMixin, TZDateTime, enum_check
-from copycast.domain.enums import ArchiveState, LiveStatus, WantedReason
+from copycast.domain.enums import ArchiveState, BlockedReason, LiveStatus, WantedReason
 
 
 class CatalogItem(TimestampMixin, Base):
@@ -71,6 +71,10 @@ class CatalogItem(TimestampMixin, Base):
         default=ArchiveState.available.value,
     )
     wanted_reason: Mapped[str | None] = mapped_column(Text)
+    blocked_reason: Mapped[str | None] = mapped_column(Text)
+    """Why a wanted item waits instead of archiving (``quota``: its Owner is Over quota)."""
+    blocked_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    """The size estimate that blocked it; null when the Owner was already over."""
     archive_flag: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
@@ -103,6 +107,7 @@ class CatalogItem(TimestampMixin, Base):
         enum_check("archive_state", ArchiveState, "archive_state"),
         enum_check("wanted_reason", WantedReason, "wanted_reason"),
         enum_check("live_status", LiveStatus, "live_status"),
+        enum_check("blocked_reason", BlockedReason, "blocked_reason"),
         Index(
             "ix_catalog_items_feed_published",
             "feed_id",
@@ -121,6 +126,11 @@ class CatalogItem(TimestampMixin, Base):
             "feed_id",
             "first_downloaded_at",
             postgresql_where=text("archive_state = 'archived'"),
+        ),
+        Index(
+            "ix_catalog_items_blocked",
+            "feed_id",
+            postgresql_where=text("blocked_reason IS NOT NULL"),
         ),
     )
 

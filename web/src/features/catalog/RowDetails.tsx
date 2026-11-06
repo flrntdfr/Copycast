@@ -6,20 +6,20 @@ import { Badge } from "@/components/ui/badge";
 import { formatBytes, formatDateTime, formatNumber } from "@/lib/format";
 import { useFetchMetadata } from "./mutations";
 import { assetKindLabel } from "@/lib/labels";
+import { assetUrlOf } from "./media-urls";
 
-/** RSS descriptions are HTML; show them as text. */
+/**
+ * RSS descriptions are HTML; show them as text. The browser's parser decodes every
+ * entity exactly once and drops every tag (an inert document: nothing in it runs or
+ * loads); line breaks and paragraph ends become newlines first.
+ */
 export function plainText(html: string | null | undefined): string {
   if (!html) return "";
-  return html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  const marked = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p\s*>/gi, "\n\n");
+  const doc = new DOMParser().parseFromString(marked, "text/html");
+  for (const node of doc.querySelectorAll("script, style")) node.remove();
+  return (doc.body.textContent ?? "")
+    .replace(/\u00a0/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -100,8 +100,9 @@ export function RowDetails({ item }: { item: ItemRead }) {
                 const text = [assetKindLabel(asset.kind), asset.language, asset.format]
                   .filter(Boolean)
                   .join(" ");
-                return asset.url ? (
-                  <a key={asset.id} href={asset.url} target="_blank" rel="noreferrer">
+                const href = assetUrlOf(asset);
+                return href ? (
+                  <a key={asset.id} href={href} target="_blank" rel="noreferrer">
                     <Badge variant="outline">{text}</Badge>
                   </a>
                 ) : (

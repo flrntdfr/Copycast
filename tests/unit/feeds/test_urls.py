@@ -80,3 +80,16 @@ def test_artwork_url_is_opaque_and_the_same_whatever_the_feed() -> None:
     assert url == f"{BASE}/art/0123456789abcdef-{artwork_mac(secret, '0123456789abcdef')}.jpg"
     assert "/feeds/" not in url and "i1" not in url
     assert artwork_url(BASE, "0123456789abcdef", "x.png", secret=b"\x04" * 32) != url
+
+
+def test_play_urls_are_absolute_api_urls_without_extension() -> None:
+    from copycast.adapters.feeds.urls import play_asset_url, play_media_url
+
+    assert play_media_url(BASE + "/", "abc", "0123") == f"{BASE}/api/feeds/abc/items/0123/media"
+    assert (
+        play_asset_url(BASE, "abc", "0123", "0123.chapters.json")
+        == f"{BASE}/api/feeds/abc/items/0123/assets/0123.chapters.json"
+    )
+    assert play_asset_url(BASE, "a b", "i", "x y.vtt") == (
+        f"{BASE}/api/feeds/a%20b/items/i/assets/x%20y.vtt"
+    )

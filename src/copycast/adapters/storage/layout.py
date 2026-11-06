@@ -3,9 +3,15 @@
 ::
 
     LAYOUT_VERSION                                  "2\\n"
-    engine/cookies.txt                              the Engine's cookie jar (optional)
-    engine/cookies/{name}.txt                       the stored files the jar merges
-    engine/defaults.json                            operator defaults every Mirror may override
+    users/{username}/defaults.json                  a User's Defaults, which their Mirrors inherit
+    users/{username}/cookies.txt                    a User's cookie jar, carried by every Engine
+                                                    call made for them (yt-dlp gets a copy)
+    users/{username}/cookie-files/{name}.txt        that User's Cookie files, merged into the jar
+    users/.legacy-settings-copied                   marker: the engine/ keys below were copied
+                                                    to the owner of existing data (3.0)
+    engine/cookies.txt                              legacy (2.x): the one global jar
+    engine/cookies/{name}.txt                       legacy (2.x): the files that jar merged
+    engine/defaults.json                            legacy (2.x): the operator's Defaults
     feeds/{feed_id}/feed.json                       descriptor
       source/feed.xml | source/listing.json         verbatim Source XML | last flat listing
       media/{item_id}.{ext}                         audio, {item_id}.info.json, {item_id}.item.xml
@@ -14,6 +20,11 @@
              | {item_id}.attachment.{slot}.{ext}
     uploads/{upload_id}/meta.json | file            files PUT to an upload URL, staged until a
                                                     Bucket takes them (ADR 0015, ADR 0018)
+
+The ``engine/`` keys are read only by the one-time copy to ``users/{owner}/``
+(``adapters.storage.user_settings``) and by a 2.3.0 image rolled back onto this Object store;
+3.0 never deletes them (a later release does). Adding ``users/`` did not bump
+``LAYOUT_VERSION``: the change is additive.
 
 Layout 1 was the same tree on a local disk (plus ``tmp/``, which has become the
 worker's Scratch); ``copycast storage push`` copies a layout-1 directory into
@@ -34,6 +45,7 @@ from copycast.adapters.storage.objects import ObjectStore
 from copycast.application.ports import StoredObject
 from copycast.domain.enums import AssetKind, AssetProvenance
 from copycast.domain.ids import FEED_ID_RE
+from copycast.domain.users import is_valid_username
 from copycast.settings import SettingsError
 
 LAYOUT_VERSION: Final = "2"
@@ -44,6 +56,8 @@ UPLOADS_DIR: Final = "uploads"
 ENGINE_DIR: Final = "engine"
 COOKIES_NAME: Final = "cookies.txt"
 COOKIE_FILES_DIR: Final = "cookies"
+USERS_DIR: Final = "users"
+USER_COOKIE_FILES_DIR: Final = "cookie-files"
 DEFAULTS_NAME: Final = "defaults.json"
 DESCRIPTOR_NAME: Final = "feed.json"
 SOURCE_XML_NAME: Final = "feed.xml"
@@ -98,11 +112,11 @@ class Layout:
     version_key: Final = LAYOUT_VERSION_FILE
 
     def cookies_key(self) -> str:
-        """``engine/cookies.txt``: handed to yt-dlp as ``cookiefile`` (a Scratch copy)."""
+        """``engine/cookies.txt``: the legacy global jar (read by the copy to ``users/`` only)."""
         return f"{ENGINE_DIR}/{COOKIES_NAME}"
 
     def cookie_files_prefix(self) -> str:
-        """``engine/cookies/``: one Netscape file per upload, merged into the jar."""
+        """``engine/cookies/``: the legacy global Cookie files (read by the copy only)."""
         return f"{ENGINE_DIR}/{COOKIE_FILES_DIR}/"
 
     def cookie_file_key(self, name: str) -> str:
@@ -113,8 +127,31 @@ class Layout:
         return f"{UPLOADS_DIR}/"
 
     def defaults_key(self) -> str:
-        """``engine/defaults.json``: the operator's defaults (language, minimum length)."""
+        """``engine/defaults.json``: the legacy global Defaults (read by the copy only)."""
         return f"{ENGINE_DIR}/{DEFAULTS_NAME}"
+
+    # ------------------------------------------------------------------ users
+
+    def user_prefix(self, username: str) -> str:
+        """``users/{username}/``: one User's Defaults and Cookie files."""
+        if not is_valid_username(username):
+            raise UnsafePath(f"unsafe username {username!r}")
+        return f"{USERS_DIR}/{username}/"
+
+    def user_defaults_key(self, username: str) -> str:
+        """``users/{username}/defaults.json``: that User's Defaults."""
+        return self.user_prefix(username) + DEFAULTS_NAME
+
+    def user_cookies_key(self, username: str) -> str:
+        """``users/{username}/cookies.txt``: that User's merged jar (yt-dlp gets a copy)."""
+        return self.user_prefix(username) + COOKIES_NAME
+
+    def user_cookie_files_prefix(self, username: str) -> str:
+        """``users/{username}/cookie-files/``: that User's uploaded Cookie files."""
+        return f"{self.user_prefix(username)}{USER_COOKIE_FILES_DIR}/"
+
+    def user_cookie_file_key(self, username: str, name: str) -> str:
+        return self.user_cookie_files_prefix(username) + self.safe_basename(name)
 
     def read_version(self) -> str | None:
         text = self.store.get_text(self.version_key)

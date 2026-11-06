@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "copycast"
-version = "2.3.0"
+version = "3.0.0"
 description = "Self-hosted podcast mirroring and archiving service"
 requires-python = ">=3.13,<3.14"
 license = "MIT"
@@ -27,6 +27,8 @@ dependencies = [
     "mutagen==1.48.1",
     "obstore==0.11.1",
     "redis==8.1.0",
+    "argon2-cffi==25.1.0",
+    "segno==1.6.6",
 ]
 
 [project.scripts]
@@ -90,7 +92,7 @@ exclude_also = [
 line-length = 100
 target-version = "py313"
 src = ["src", "tests"]
-extend-exclude = ["web", "stubs"]
+extend-exclude = ["web", "stubs", "docs/plans"]  # plans hold pseudo-code signatures, not code
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM", "RUF", "T20"]

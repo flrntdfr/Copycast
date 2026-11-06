@@ -134,6 +134,7 @@ async def test_status_without_a_worker(client: httpx.AsyncClient) -> None:
         "scheduler",
         "queue",
         "storage",
+        "quota",
         "engine",
         "ffmpeg",
         "crawlers",
@@ -175,4 +176,5 @@ async def test_status_with_a_healthy_worker(
         "state": "ok",
         "summary": "7.1",
         "facts": [],
+        "meter": None,
     }

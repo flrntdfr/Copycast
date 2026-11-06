@@ -4,6 +4,10 @@ Every test gets the shared ``client`` (httpx over the FastAPI app whose
 lifespan ran: EventHub listening, default Bucket created) and a
 :class:`Source` served from a temp directory. Archiving runs through the
 worker ``Runner`` with the FakeEngine, so media files really exist on disk.
+
+The users-mode fixtures (``users_client``, ``world``, ``alice_client``, ...),
+:func:`running` and :func:`settings_with` live in ``tests/integration/conftest.py``;
+the last two are re-exported here for the modules that import them from this one.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import pytest
 
 from copycast.app import Container
 from copycast.worker.runner import Runner
+from tests.integration.conftest import running, settings_with
 from tests.integration.worker.conftest import Source
 from tests.support.origin import FIXTURES_DIR, Origin
 from tests.support.paths import api
@@ -94,4 +99,11 @@ async def archived_items(
     return await items_of(client, feed_id, state="archived")
 
 
-__all__ = ["Source", "archived_items", "create_mirror", "items_of"]
+__all__ = [
+    "Source",
+    "archived_items",
+    "create_mirror",
+    "items_of",
+    "running",
+    "settings_with",
+]

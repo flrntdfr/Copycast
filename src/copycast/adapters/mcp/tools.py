@@ -11,19 +11,19 @@ first (read-only tools need ``read``, destructive ones ``full``, the rest
 import functools
 import uuid
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import Any
 
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from copycast.adapters.mcp.auth import check_scope
+from copycast.adapters.mcp.auth import check_scope, current_principal
 from copycast.adapters.mcp.container import ServicesProvider
 from copycast.adapters.mcp.errors import guarded, refuse
-from copycast.application.capabilities import DESTRUCTIVE
+from copycast.application.capabilities import ACCESS, DESTRUCTIVE
 from copycast.application.models import (
     AboutRead,
     ArchiveFlagUpdate,
-    BackfillRequest,
     BucketCreate,
     BucketRead,
     BucketUpdate,
@@ -57,10 +57,10 @@ from copycast.application.models import (
     VideoSearchPage,
     YouTubePlaylistList,
 )
+from copycast.application.services import Services
 from copycast.domain.credentials import required_scope
 from copycast.domain.enums import (
     ArchiveState,
-    BackfillMode,
     FeedKind,
     JobKind,
     JobStatus,
@@ -88,39 +88,40 @@ def _annotations(capability: str, *, read_only: bool = False) -> ToolAnnotations
 ToolFn = Callable[..., Awaitable[Any]]
 
 
-def _check_deleting_mode(backfill: BackfillRequest | None, tool: str) -> None:
-    """Rolling windows and expiring Ephemeral Mirrors delete on a schedule: ``full`` only."""
-    if backfill is None:
-        return
-    if backfill.mode is BackfillMode.rolling or (
-        backfill.mode is BackfillMode.automatic and backfill.retention_days is not None
-    ):
-        check_scope(KeyScope.full, f"{tool} (backfill.mode {backfill.mode.value})")
+_SERVICES: ContextVar[Services] = ContextVar("copycast_mcp_services")
+"""The services of the current tool call, acting as its Principal (set by :func:`with_scope`)."""
 
 
-def _check_engine_options(given: bool, tool: str) -> None:
-    """Raw yt-dlp params reach the worker as they are: setting or changing them is ``full`` only.
-
-    The allowlist (``domain.engine_options``) already keeps commands, paths and egress
-    out; the scope is the second fence, so a leaked ``write`` key cannot tune the Engine.
-    """
-    if given:
-        check_scope(KeyScope.full, f"{tool} (engine_options)")
+def services() -> Services:
+    """The current tool call's services: the calling key's owner's, or open mode's Admin's."""
+    try:
+        return _SERVICES.get()
+    except LookupError:
+        raise RuntimeError("an MCP tool body ran outside with_scope") from None
 
 
-def with_scope(fn: ToolFn, name: str, scope: KeyScope) -> ToolFn:
-    """Check the calling key's scope before the tool body runs (signature preserved)."""
+def with_scope(
+    fn: ToolFn, name: str, scope: KeyScope, container: ServicesProvider | None = None
+) -> ToolFn:
+    """Check the calling key's scope, then run the tool body (signature preserved) with
+    :func:`services` bound to the call's Principal when ``container`` is given."""
 
     @functools.wraps(fn)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         check_scope(scope, name)
-        return await fn(*args, **kwargs)
+        if container is None:
+            return await fn(*args, **kwargs)
+        reset = _SERVICES.set(container.services_for(current_principal(container)))
+        try:
+            return await fn(*args, **kwargs)
+        finally:
+            _SERVICES.reset(reset)
 
     return wrapper
 
 
 def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
-    """Define the tool bodies over ``container.services`` and register them all."""
+    """Define the tool bodies over the calling Principal's services and register them all."""
 
     # ------------------------------------------------------------------ sources
 
@@ -130,7 +131,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         ALWAYS call this first when asked to mirror a podcast by name; pass the
         chosen result's ``feed_url`` to ``create_mirror``.
         """
-        return await container.services.search_podcasts(query, limit)
+        return await services().search_podcasts(query, limit)
 
     async def list_youtube_playlists() -> YouTubePlaylistList:
         """The signed-in YouTube account's playlists, Watch Later first (needs the cookie file).
@@ -138,7 +139,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         Each ``url`` can go to ``create_mirror`` with ``sync_deletions`` and
         ``playlist_capture`` true to capture it among the Buckets.
         """
-        return await container.services.list_youtube_playlists()
+        return await services().list_youtube_playlists()
 
     async def search_videos(query: str, limit: int = 10) -> VideoSearchPage:
         """Find videos by name on YouTube (no key needed); each hit's ``url`` can be pushed
@@ -147,7 +148,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         For "add the last X from channel Y" search for the channel and the topic, pick
         the newest matching hit by ``published_at``, then call ``add_to_bucket``.
         """
-        return await container.services.search_videos(query, limit)
+        return await services().search_videos(query, limit)
 
     async def probe_source(url: str) -> ProbeResult:
         """Resolve a feed, page, YouTube, SoundCloud or other Source URL into candidates.
@@ -155,7 +156,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         Never guess a Source: create the Mirror from one of the returned
         candidates (``candidate_token`` + ``source_url``).
         """
-        return await container.services.probe_source(ProbeRequest(url=url))
+        return await services().probe_source(ProbeRequest(url=url))
 
     # ------------------------------------------------------------------ feeds
 
@@ -175,28 +176,27 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         key. Several candidates -> pass ``candidate_token``. ``engine_options`` (allowlisted
         yt-dlp params) also need a ``full`` key.
         """
-        _check_deleting_mode(mirror.backfill, "create_mirror")
-        _check_engine_options(bool(mirror.engine_options), "create_mirror")
-        return await container.services.create_mirror(mirror, trigger=JobTrigger.mcp)
+        return await services().create_mirror(mirror, trigger=JobTrigger.mcp)
 
     async def list_feeds(kind: FeedKind | None = None) -> FeedList:
         """List Feeds (Mirrors and Buckets), optionally one kind."""
-        return await container.services.list_feeds(kind)
+        return await services().list_feeds(kind)
 
     async def get_feed(feed_id: str) -> FeedRead:
         """One Feed by id (ids are opaque; quote ``feed_url`` to the user)."""
-        return await container.services.get_feed(feed_id)
+        return await services().get_feed(feed_id)
 
     async def list_feed_objects(feed_id: str) -> FeedObjectList:
         """Every object a Feed keeps in the Object store (media, assets, descriptor, Source
         copies, sidecars) with its kind, size and download URL; an Episode's files name it
         and carry its Lock (``locked``; null for the feed's own files)."""
-        return await container.services.list_feed_objects(feed_id)
+        return await services().list_feed_objects(feed_id)
 
     async def storage_summary() -> StorageSummary:
-        """How many files every Feed keeps in its bucket and their total size (one listing
-        of the Object store), plus the totals; a Feed that keeps nothing counts zeros."""
-        return await container.services.storage_summary()
+        """How many files each of your own Feeds keeps in its bucket and their total size
+        (one listing of the Object store), plus the totals; a Feed that keeps nothing
+        counts zeros."""
+        return await services().storage_summary()
 
     async def delete_feed(feed_id: str, confirm: bool = False) -> dict[str, Any]:
         """Delete a Feed and its archived media, which may be the only copy.
@@ -205,7 +205,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         """
         if not confirm:
             raise refuse(DELETE_FEED_WARNING, feed_id=feed_id)
-        await container.services.delete_feed(feed_id)
+        await services().delete_feed(feed_id)
         return {"deleted": True, "feed_id": feed_id}
 
     async def clear_feed(feed_id: str, clear: ClearFeedRequest) -> ClearFeedResult:
@@ -214,7 +214,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         Locked Episodes (``archive_flag``) stay, as do the Feed, its Catalog and its own
         files. ``dry_run`` (the default) counts what would go and what stays.
         """
-        return await container.services.clear_feed(feed_id, clear)
+        return await services().clear_feed(feed_id, clear)
 
     # ------------------------------------------------------------------ items
 
@@ -227,13 +227,13 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         offset: int = 0,
     ) -> ItemPage:
         """Page through a feed's Catalog (``source_number`` is what "Episode N" means)."""
-        return await container.services.list_items(
+        return await services().list_items(
             feed_id, state=state, listed=listed, q=query, limit=limit, offset=offset
         )
 
     async def get_item(feed_id: str, item_id: str) -> ItemRead:
         """One Catalog item with its media URL and assets."""
-        return await container.services.get_item(feed_id, item_id)
+        return await services().get_item(feed_id, item_id)
 
     async def archive_episodes(feed_id: str, selection: SelectionRequest) -> SelectionResult:
         """Archive an explicit selection of Episodes exactly once.
@@ -242,7 +242,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         Source's numbering (``numbering="ordinal"`` for Copycast ordinals);
         ``dry_run`` resolves without queuing anything.
         """
-        return await container.services.select_items(feed_id, selection, trigger=JobTrigger.mcp)
+        return await services().select_items(feed_id, selection, trigger=JobTrigger.mcp)
 
     async def fetch_item_metadata(feed_id: str, item_id: str) -> ItemRead:
         """Ask the Source for one item's description, exact date and artwork now.
@@ -250,7 +250,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         One request to the Source; useful for a YouTube video listed without
         a description before it is archived.
         """
-        return await container.services.fetch_item_metadata(feed_id, item_id)
+        return await services().fetch_item_metadata(feed_id, item_id)
 
     async def delete_item(feed_id: str, item_id: str) -> dict[str, Any]:
         """Delete one Episode's media.
@@ -258,7 +258,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         The item becomes Available again and is never re-archived automatically. A locked
         Episode is refused (conflict): unlock it with ``set_archive_flag`` first.
         """
-        await container.services.delete_item(feed_id, item_id)
+        await services().delete_item(feed_id, item_id)
         return {"deleted": True, "feed_id": feed_id, "item_id": item_id}
 
     async def set_archive_flag(feed_id: str, item_id: str, flag: ArchiveFlagUpdate) -> ItemRead:
@@ -268,25 +268,25 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         Episode. A Mirror on the Archive policy (``all``, ``new``, ``latest``, ``selection``)
         without ``sync_deletions`` locks what it archives on its own.
         """
-        return await container.services.set_archive_flag(feed_id, item_id, flag)
+        return await services().set_archive_flag(feed_id, item_id, flag)
 
     # ------------------------------------------------------------------ mirrors
 
     async def refresh_mirror(feed_id: str) -> JobRead | None:
         """Queue a Refresh of a Mirror now (ignores Paused and the fetch cooldown)."""
-        return await container.services.request_refresh(feed_id, JobTrigger.manual)
+        return await services().request_refresh(feed_id, JobTrigger.manual)
 
     async def archive_available(feed_id: str) -> SelectionResult:
         """Queue every Available item of a Feed now, whatever its policy (Shorts included)."""
-        return await container.services.archive_available(feed_id, trigger=JobTrigger.mcp)
+        return await services().archive_available(feed_id, trigger=JobTrigger.mcp)
 
     async def retry_failed(feed_id: str) -> SelectionResult:
         """Queue every failed download of a Feed again."""
-        return await container.services.retry_failed(feed_id, trigger=JobTrigger.mcp)
+        return await services().retry_failed(feed_id, trigger=JobTrigger.mcp)
 
     async def set_mirror_paused(feed_id: str, paused: bool) -> MirrorRead:
         """Pause or resume a Mirror; a Paused Mirror keeps serving its feed."""
-        return await container.services.set_paused(feed_id, paused)
+        return await services().set_paused(feed_id, paused)
 
     async def update_mirror(feed_id: str, patch: MirrorUpdate) -> MirrorRead:
         """Change a Mirror's title, follow flag, backfill, engine options or Source URL.
@@ -300,9 +300,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         ``sync_deletions`` is never locked automatically, and switching away unlocks nothing.
         Setting or clearing ``engine_options`` (allowlisted yt-dlp params) needs a ``full`` key.
         """
-        _check_deleting_mode(patch.backfill, "update_mirror")
-        _check_engine_options(patch.engine_options is not None, "update_mirror")
-        return await container.services.update_mirror(feed_id, patch)
+        return await services().update_mirror(feed_id, patch)
 
     # ------------------------------------------------------------------ buckets
 
@@ -311,18 +309,14 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
 
         Setting ``autoprune_days`` schedules deletions, so it needs a ``full`` key.
         """
-        if bucket.autoprune_days is not None:
-            check_scope(KeyScope.full, "create_bucket (autoprune_days)")
-        return await container.services.create_bucket(bucket)
+        return await services().create_bucket(bucket)
 
     async def update_bucket(bucket_id: str, patch: BucketUpdate) -> BucketRead:
         """Rename a Bucket or change ``autoprune_days`` (null switches autoprune off).
 
         Switching Retention on schedules deletions, so it needs a ``full`` key.
         """
-        if patch.autoprune_days is not None:
-            check_scope(KeyScope.full, "update_bucket (autoprune_days)")
-        return await container.services.update_bucket(bucket_id, patch)
+        return await services().update_bucket(bucket_id, patch)
 
     async def add_to_bucket(request: RequestCreate, bucket: str = DEFAULT_BUCKET) -> RequestRead:
         """Push any URL (video, playlist, page) into a Bucket by id or name (default "Copycast").
@@ -331,7 +325,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         waits, Queued, up to 48 h); one that has not started yet cannot be listed and the
         Request fails with YouTube's reason: push it again once it is live or recorded.
         """
-        return await container.services.add_request(bucket, request, via=RequestedVia.mcp)
+        return await services().add_request(bucket, request, via=RequestedVia.mcp)
 
     async def prune_bucket(bucket: str, prune: PruneRequest) -> PruneResult:
         """Delete Bucket Episodes matching every given criterion.
@@ -339,7 +333,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         Criteria: ``downloaded`` (at least once), ``older_than_days`` (since
         added); ``dry_run`` previews the count and bytes.
         """
-        return await container.services.prune_bucket(bucket, prune)
+        return await services().prune_bucket(bucket, prune)
 
     # ------------------------------------------------------------------ uploads
 
@@ -351,11 +345,16 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         answer of that PUT, or ``get_upload``, carries the tags Copycast read from the file:
         title, album, artist, track and disc numbers, duration, embedded chapters.
         """
-        return await container.services.create_upload(upload)
+        return await services().create_upload(upload)
 
     async def get_upload(upload_id: str) -> UploadRead:
         """A staged upload: ``state`` (pending until its PUT, then received) and its tags."""
-        return await container.services.get_upload(upload_id)
+        return await services().get_upload(upload_id)
+
+    async def delete_upload(upload_id: str) -> None:
+        """Give up a staged upload (pending or received) that will not be added, so it
+        stops counting against the quota; unadded uploads otherwise expire after 24 h."""
+        await services().delete_upload(upload_id)
 
     async def create_serial_bucket(bucket: SerialBucketCreate) -> BucketRead:
         """Create a Bucket from received uploads, Episodes in exactly the order of ``episodes``.
@@ -371,7 +370,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         posting time so every app plays it in order; each description starts with the
         Episode's place in the work. Quote the returned ``feed_url`` to the user.
         """
-        return await container.services.create_serial_bucket(bucket)
+        return await services().create_serial_bucket(bucket)
 
     async def add_uploads(bucket: str, uploads: UploadsAdd) -> BucketRead:
         """Add received uploads to an existing Bucket (id or name) as archived Episodes.
@@ -381,13 +380,13 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         tags, else their names. For a work whose order you decide, use
         ``create_serial_bucket`` instead.
         """
-        return await container.services.add_uploads(bucket, uploads)
+        return await services().add_uploads(bucket, uploads)
 
     # ------------------------------------------------------------------ jobs and about
 
     async def get_job(job_id: uuid.UUID) -> JobRead:
         """One job with its progress and outcome."""
-        return await container.services.get_job(job_id)
+        return await services().get_job(job_id)
 
     async def list_jobs(
         feed_id: str | None = None,
@@ -397,22 +396,22 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         offset: int = 0,
     ) -> JobPage:
         """Jobs newest first, filtered by feed, kind or status."""
-        return await container.services.list_jobs(
+        return await services().list_jobs(
             feed_id=feed_id, kind=kind, status=status, limit=limit, offset=offset
         )
 
     async def cancel_job(job_id: uuid.UUID) -> JobRead:
         """Cancel a queued job or ask a running one to stop."""
-        return await container.services.cancel_job(job_id)
+        return await services().cancel_job(job_id)
 
     async def get_about() -> AboutRead:
         """Application and engine versions, layout version and totals."""
-        return await container.services.about()
+        return await services().about()
 
     async def get_status() -> StatusRead:
         """Status of every component (database, worker, scheduler, job queue, storage,
         yt-dlp, ffmpeg, crawlers by service): check it when Refreshes or archives fail."""
-        return await container.services.get_status()
+        return await services().get_status()
 
     registrations: list[tuple[ToolFn, str, str, bool]] = [
         (search_podcasts, "search_podcasts", "search_podcasts", True),
@@ -443,6 +442,7 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
         (prune_bucket, "prune_bucket", "prune_bucket", False),
         (create_upload, "create_upload", "create_upload", False),
         (get_upload, "get_upload", "get_upload", True),
+        (delete_upload, "delete_upload", "delete_upload", False),
         (create_serial_bucket, "create_serial_bucket", "create_serial_bucket", False),
         (add_uploads, "add_uploads", "add_uploads", False),
         (get_job, "get_job", "get_job", True),
@@ -454,11 +454,22 @@ def register_tools(mcp: FastMCP[Any], container: ServicesProvider) -> None:
     for fn, name, capability, read_only in registrations:
         scope = required_scope(destructive=capability in DESTRUCTIVE, read_only=read_only)
         mcp.tool(
-            guarded(with_scope(fn, name, scope)),
+            guarded(with_scope(fn, name, scope, container)),
             name=name,
-            meta={"capability": capability, "scope": scope.value},
+            meta={
+                "capability": capability,
+                "scope": scope.value,
+                "access": ACCESS[capability].value,
+            },
             annotations=_annotations(capability, read_only=read_only),
         )
 
 
-__all__ = ["DEFAULT_BUCKET", "DELETE_FEED_WARNING", "ToolFn", "register_tools", "with_scope"]
+__all__ = [
+    "DEFAULT_BUCKET",
+    "DELETE_FEED_WARNING",
+    "ToolFn",
+    "register_tools",
+    "services",
+    "with_scope",
+]

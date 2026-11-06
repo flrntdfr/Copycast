@@ -87,16 +87,16 @@ def test_refresh_allowed(trigger: JobTrigger, overrides: dict[str, Any], expecte
 class _SlowGateway:
     def __init__(self) -> None:
         self.token: CancelToken | None = None
-        self.searches: list[tuple[str, int]] = []
+        self.searches: list[tuple[str, int, str]] = []
 
-    def probe(self, url: str, *, options: Any, cancel: CancelToken) -> list[Any]:
+    def probe(self, url: str, *, options: Any, cancel: CancelToken, owner: str) -> list[Any]:
         self.token = cancel
         while not cancel.cancelled:
             time.sleep(0.01)
         return []
 
-    def search_podcasts(self, query: str, limit: int) -> list[PodcastSearchResult]:
-        self.searches.append((query, limit))
+    def search_podcasts(self, query: str, limit: int, *, owner: str) -> list[PodcastSearchResult]:
+        self.searches.append((query, limit, owner))
         return [PodcastSearchResult(title=query, feed_url="https://x.example/feed.xml")]
 
 
@@ -105,20 +105,25 @@ async def test_probe_deadline_sets_the_token_and_raises_unsupported() -> None:
     settings = SimpleNamespace(engine=SimpleNamespace(options={}))
     ctx = SimpleNamespace(sources=gateway, settings=settings)
     with pytest.raises(Unsupported, match="longer than 0 seconds"):
-        await probe_snapshots(ctx, "https://x.example", deadline_seconds=0.05)  # type: ignore[arg-type]
+        await probe_snapshots(  # type: ignore[arg-type]
+            ctx, "https://x.example", owner="copycast", deadline_seconds=0.05
+        )
     assert gateway.token is not None and gateway.token.cancelled
 
 
 async def test_search_normalizes_query_and_limit() -> None:
     gateway = _SlowGateway()
-    ctx = SimpleNamespace(sources=gateway)
+    principal = SimpleNamespace(username="alice")
+    ctx = SimpleNamespace(sources=gateway, principal=principal)
     empty = await search_podcasts(ctx, "   ", 10)  # type: ignore[arg-type]
     assert empty.results == [] and empty.query == ""
     assert gateway.searches == [], "a blank query never reaches iTunes"
     page = await search_podcasts(ctx, "  accidental   tech ", 500)  # type: ignore[arg-type]
     assert page.query == "accidental tech"
     assert page.results[0].title == "accidental tech"
-    assert gateway.searches == [("accidental tech", 50)], "the limit is capped at 50"
+    assert gateway.searches == [("accidental tech", 50, "alice")], (
+        "the limit is capped at 50, and the cache is the caller's"
+    )
 
 
 @pytest.mark.parametrize(
@@ -132,3 +137,11 @@ async def test_search_normalizes_query_and_limit() -> None:
 )
 def test_engine_version_is_normalized_to_pep440(raw: str, expected: str) -> None:
     assert normalize_engine_version(raw) == expected
+
+
+def test_lock_seconds_doubles_from_the_fifth_failure_up_to_15_minutes() -> None:
+    from copycast.application.services.auth import lock_seconds
+
+    assert [lock_seconds(n) for n in range(5)] == [0, 0, 0, 0, 0]
+    assert [lock_seconds(n) for n in range(5, 11)] == [30, 60, 120, 240, 480, 900]
+    assert lock_seconds(1000) == 900

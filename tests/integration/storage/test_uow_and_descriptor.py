@@ -189,7 +189,10 @@ async def test_publish_delivers_notify_on_commit(
             await uow.notify_jobs()
         received = [n async for n in listener.notifies(timeout=5, stop_after=1)]
     assert len(received) == 1
-    event = parse(received[0].payload)
+    # The payload names the event's Owner (the Feed's), then the event.
+    owner, _, body = received[0].payload.partition("\n")
+    assert owner == "copycast"
+    event = parse(body)
     assert isinstance(event, FeedEvent) and event.feed_id == feed.id
 
 

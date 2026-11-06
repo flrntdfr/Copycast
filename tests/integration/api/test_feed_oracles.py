@@ -21,6 +21,7 @@ from copycast.settings import Settings, get_settings
 from copycast.worker.runner import Runner
 from tests.conftest import TEST_ALLOW_PRIVATE_HOSTS, TEST_BASE_URL
 from tests.integration.api.conftest import Source, archived_items, create_mirror
+from tests.support.users import session_headers
 
 pytestmark = pytest.mark.integration
 
@@ -62,11 +63,12 @@ class World:
 
 @pytest.fixture
 async def world(client: httpx.AsyncClient, source: Source, runner: Runner) -> World:
-    client.headers.update(basic(*OPERATOR))
+    # /api takes a session; the operator pair opens only the feeds (legacy mode).
+    client.headers.update(await session_headers(client, *OPERATOR))
     mirror = await create_mirror(client, source.write_rss("oracle", items=[1], assets=True))
     other = await create_mirror(client, source.write_rss("other", items=[1], artwork=False))
     (item,) = await archived_items(client, runner, mirror["id"])
-    client.headers.pop("Authorization")
+    client.headers.pop("Cookie")
     pair, other_pair = mirror["feed_credentials"], other["feed_credentials"]
     return World(
         feed_id=mirror["id"],

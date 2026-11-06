@@ -22,10 +22,26 @@ from copycast.logging import get_logger
 PROBLEM_MEDIA_TYPE = "application/problem+json"
 BASIC_REALM = "Copycast"
 WWW_AUTHENTICATE = f'Basic realm="{BASIC_REALM}", charset="UTF-8"'
-"""The challenge every 401 carries so browsers and podcast clients prompt for the pair."""
+"""The challenge a 401 under ``/feeds/`` carries so podcast clients prompt for the pair.
+
+``/api`` and ``/auth`` never send it: the web app shows its own login page."""
+CHALLENGED_PREFIX = "/feeds/"
+
+
+def challenges(path: str | None) -> bool:
+    """Whether a 401 for ``path`` carries the ``Basic`` challenge (feeds only)."""
+    return path is not None and path.startswith(CHALLENGED_PREFIX)
+
 
 TITLES: dict[str, str] = {
     "unauthorized": "Authentication required",
+    "login-failed": "Sign-in failed",
+    "login-locked": "Too many attempts",
+    "login-busy": "Busy",
+    "https-required": "HTTPS required",
+    "forbidden": "Forbidden",
+    "over-quota": "Over quota",
+    "payload-too-large": "Request body too large",
     "cross-site-request": "Cross-site request refused",
     "unknown-host": "Unknown host name",
     "not-found": "Not found",
@@ -103,7 +119,14 @@ def problem_response(
 
 async def domain_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, DomainError)
-    headers = {"WWW-Authenticate": WWW_AUTHENTICATE} if exc.status == 401 else None
+    headers: dict[str, str] = {}
+    if exc.status == 401:
+        headers["Cache-Control"] = "no-store"
+        if challenges(request.url.path):
+            headers["WWW-Authenticate"] = WWW_AUTHENTICATE
+    retry_after = exc.extras.get("retry_after")
+    if isinstance(retry_after, int):
+        headers["Retry-After"] = str(retry_after)
     return problem_response(
         request, status=exc.status, slug=exc.slug, detail=str(exc), headers=headers, **exc.extras
     )
@@ -164,6 +187,13 @@ def problem_responses(*statuses: int) -> dict[int | str, dict[str, Any]]:
     }
 
 
+def slug_responses(slugs: dict[int, str]) -> dict[int | str, dict[str, Any]]:
+    """OpenAPI ``responses`` entries for statuses whose problem type is not the usual one."""
+    return {
+        status: {"model": Problem, "description": TITLES[slug]} for status, slug in slugs.items()
+    }
+
+
 def _is_problem_schema(schema: object) -> bool:
     if not isinstance(schema, dict):
         return False
@@ -203,9 +233,11 @@ __all__ = [
     "TITLES",
     "WWW_AUTHENTICATE",
     "build_problem",
+    "challenges",
     "install_exception_handlers",
     "problem_response",
     "problem_responses",
     "problem_type",
     "relabel_problem_content",
+    "slug_responses",
 ]

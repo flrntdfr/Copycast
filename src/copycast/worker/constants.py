@@ -33,6 +33,8 @@ STALE_HEARTBEAT: Final = timedelta(minutes=5)
 JOB_RETENTION: Final = timedelta(days=30)
 REFRESH_RUN_RETENTION: Final = timedelta(days=90)
 AUTOPRUNE_INTERVAL: Final = timedelta(hours=24)
+UPLOAD_SWEEP_INTERVAL: Final = timedelta(hours=1)
+"""How often the scheduler removes staged uploads past their 24 h (``uploads.UPLOAD_TTL``)."""
 STORAGE_FULL_RETRY: Final = timedelta(minutes=10)
 QUARANTINE_RETRY: Final = timedelta(minutes=10)
 LIVE_RETRY: Final = timedelta(minutes=30)
@@ -99,6 +101,7 @@ __all__ = [
     "STALE_HEARTBEAT",
     "STORAGE_FULL_RETRY",
     "UNRESPONSIVE_GRACE_SECONDS",
+    "UPLOAD_SWEEP_INTERVAL",
     "default_worker_id",
     "live_wait_exceeded",
     "live_wait_exhausted_message",

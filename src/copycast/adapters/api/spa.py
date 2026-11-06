@@ -16,7 +16,7 @@ from starlette.staticfiles import StaticFiles
 
 from copycast.adapters.api.problems import problem_response
 
-RESERVED_PREFIXES = ("api", "feeds", "art", "uploads", "mcp", "healthz", "assets")
+RESERVED_PREFIXES = ("api", "auth", "feeds", "art", "uploads", "mcp", "healthz", "assets")
 IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
 NO_CACHE = "no-cache"
 

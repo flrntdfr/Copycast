@@ -1,6 +1,6 @@
 # 0003 UI, API and MCP share one capability contract
 
-Status: accepted (v1)
+Status: accepted (v1); amended by ADR 0028 (every capability also declares its `Access`)
 
 ## Context
 

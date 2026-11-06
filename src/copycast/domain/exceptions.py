@@ -73,6 +73,79 @@ class Unauthorized(DomainError):
         super().__init__(message)
 
 
+class Forbidden(DomainError):
+    """The Principal's role does not allow the action (403); never used to hide a Feed."""
+
+    slug = "forbidden"
+    status = 403
+
+
+class OverQuota(DomainError):
+    """The Owner's storage is full: new downloads and uploads are refused (507)."""
+
+    slug = "over-quota"
+    status = 507
+
+    def __init__(self, used_bytes: int, quota_bytes: int, message: str | None = None) -> None:
+        self.used_bytes = used_bytes
+        self.quota_bytes = quota_bytes
+        super().__init__(
+            message or "over quota: free some space or ask for a larger quota",
+            used_bytes=used_bytes,
+            quota_bytes=quota_bytes,
+        )
+
+
+LOGIN_FAILED_DETAIL = "wrong username, password or code"
+
+
+class LoginFailed(Unauthorized):
+    """One answer for an unknown user, a wrong password and a missing or wrong code (401)."""
+
+    slug = "login-failed"
+
+    def __init__(self) -> None:
+        super().__init__(LOGIN_FAILED_DETAIL)
+
+
+class LoginLocked(DomainError):
+    """Too many failed logins for this username; retry after ``retry_after`` seconds (429)."""
+
+    slug = "login-locked"
+    status = 429
+
+    def __init__(self, retry_after: int) -> None:
+        self.retry_after = retry_after
+        super().__init__(
+            f"too many attempts; try again in {retry_after} s", retry_after=retry_after
+        )
+
+
+LOGIN_BUSY_RETRY_AFTER = 5
+
+
+class LoginBusy(DomainError):
+    """Every password-hash slot is taken; retry in a few seconds (503)."""
+
+    slug = "login-busy"
+    status = 503
+
+    def __init__(self, retry_after: int = LOGIN_BUSY_RETRY_AFTER) -> None:
+        self.retry_after = retry_after
+        super().__init__(f"busy; try again in {retry_after} s", retry_after=retry_after)
+
+
+class HttpsRequired(DomainError):
+    """A login over plain http on a site whose ``base_url`` is https (400)."""
+
+    slug = "https-required"
+    status = 400
+
+    def __init__(self, base_url: str) -> None:
+        self.base_url = base_url
+        super().__init__(f"sign in over https: {base_url}")
+
+
 class Unsupported(DomainError):
     """The Source cannot be mirrored (422 source-unsupported)."""
 

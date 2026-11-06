@@ -1,8 +1,12 @@
-"""Operator defaults every Mirror may override: language, minimum item length, default policy.
+"""Each User's Defaults every one of their Mirrors may override: language, minimum item
+length, default policy, Refresh interval.
 
-They live in ``engine/defaults.json`` in the Object store so a rebuild keeps them,
-and both processes read them: the API to show and edit, the worker to fill in
-what a Mirror leaves null (:func:`effective`).
+They live in ``users/{owner}/defaults.json`` in the Object store so a rebuild keeps them,
+and both processes read them: the API to show and edit the caller's own, the worker to
+fill in what a Mirror leaves null from its owner's (:func:`effective`). A User with no
+stored Defaults gets the built-in :class:`MirrorDefaults`. The pre-3.0 global
+``engine/defaults.json`` is copied once to the owner of existing data
+(``adapters.storage.user_settings``) and no longer read.
 """
 
 from __future__ import annotations
@@ -15,14 +19,20 @@ from pydantic import ValidationError
 from copycast.application.capabilities import capability
 from copycast.application.models import MirrorDefaults
 from copycast.application.services.context import LayoutPort, ServiceContext
+from copycast.application.services.owners import acting_owner
 from copycast.logging import get_logger
 
 log = get_logger(__name__)
 
 
-def load_defaults(layout: LayoutPort) -> MirrorDefaults:
-    """The stored defaults, or the built-in ones when the object is absent or unreadable."""
-    key = layout.defaults_key()
+def defaults_key(layout: LayoutPort, owner: str) -> str:
+    """Where ``owner``'s Defaults live: ``users/{owner}/defaults.json``."""
+    return layout.user_defaults_key(owner)
+
+
+def load_defaults(layout: LayoutPort, owner: str) -> MirrorDefaults:
+    """``owner``'s stored Defaults, or the built-in ones when absent or unreadable."""
+    key = defaults_key(layout, owner)
     try:
         data: Any = layout.read_json(key)
     except OSError:
@@ -36,9 +46,9 @@ def load_defaults(layout: LayoutPort) -> MirrorDefaults:
         return MirrorDefaults()
 
 
-def store_defaults(layout: LayoutPort, defaults: MirrorDefaults) -> None:
+def store_defaults(layout: LayoutPort, owner: str, defaults: MirrorDefaults) -> None:
     layout.store.put_bytes(
-        layout.defaults_key(),
+        defaults_key(layout, owner),
         defaults.model_dump_json(indent=2) + "\n",
         content_type="application/json",
     )
@@ -66,16 +76,18 @@ def effective(
 
 @capability("get_mirror_defaults", response=MirrorDefaults)
 async def get_mirror_defaults(ctx: ServiceContext) -> MirrorDefaults:
-    """The operator defaults applied wherever a Mirror leaves a value null."""
-    return await asyncio.to_thread(load_defaults, ctx.layout)
+    """The caller's Defaults, applied wherever one of their Mirrors leaves a value null."""
+    return await asyncio.to_thread(load_defaults, ctx.layout, acting_owner(ctx))
 
 
 @capability("set_mirror_defaults", request=MirrorDefaults, response=MirrorDefaults)
 async def set_mirror_defaults(ctx: ServiceContext, body: MirrorDefaults) -> MirrorDefaults:
-    """Replace the operator defaults; Mirrors with their own value are unaffected."""
-    await asyncio.to_thread(store_defaults, ctx.layout, body)
+    """Replace the caller's Defaults; Mirrors with their own value are unaffected."""
+    owner = acting_owner(ctx)
+    await asyncio.to_thread(store_defaults, ctx.layout, owner, body)
     log.info(
         "defaults.stored",
+        owner=owner,
         language=body.language,
         min_duration_seconds=body.min_duration_seconds,
         backfill_mode=body.backfill.mode.value,
@@ -85,6 +97,7 @@ async def set_mirror_defaults(ctx: ServiceContext, body: MirrorDefaults) -> Mirr
 
 
 __all__ = [
+    "defaults_key",
     "effective",
     "get_mirror_defaults",
     "load_defaults",

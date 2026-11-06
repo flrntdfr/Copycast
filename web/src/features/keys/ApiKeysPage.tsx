@@ -53,7 +53,7 @@ export function ApiKeysPage() {
           <AlertTriangle />
           <AlertTitle>Authentication is off</AlertTitle>
           <AlertDescription>
-            Keys are only checked once an operator password is set (COPYCAST__AUTH__PASSWORD). Until
+            Keys are only checked once users are configured ([[auth.users]] in copycast.toml). Until
             then the MCP endpoint at {mcpUrl} accepts every client on the network.
           </AlertDescription>
         </Alert>

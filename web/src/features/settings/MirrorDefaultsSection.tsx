@@ -42,7 +42,7 @@ export function policyOf(
   }
 }
 
-/** The operator defaults every Mirror inherits, saved as they change. */
+/** The User's Defaults, which every Mirror of theirs inherits; saved as they change. */
 export function MirrorDefaultsSection() {
   const defaults = $api.useQuery("get", "/api/settings/defaults");
   const save = useSetDefaults();
@@ -52,10 +52,11 @@ export function MirrorDefaultsSection() {
         id="mirror-defaults-heading"
         title={
           <span className="inline-flex items-center gap-1.5">
-            Mirrors
-            <HelpTip label="About the Mirror defaults">
-              Every Mirror follows these unless its own Settings dialog sets a value; new Mirrors,
-              from the Add Source dialog or an agent, start from the policy.
+            Your Defaults
+            <HelpTip label="About your Defaults">
+              Every Mirror of yours follows these unless its own Settings dialog sets a value; your
+              new Mirrors, from the Add Source dialog or your agents, start from the policy. Other
+              Users have Defaults of their own.
             </HelpTip>
           </span>
         }

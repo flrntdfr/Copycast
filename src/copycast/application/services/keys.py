@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from copycast.application.capabilities import capability
 from copycast.application.models import ApiKeyCreate, ApiKeyCreated, ApiKeyList, ApiKeyRead
 from copycast.application.services.context import ServiceContext
+from copycast.application.services.owners import acting_owner
 from copycast.application.services.readmodels import api_key_read
 from copycast.domain.credentials import (
     api_key_hash,
@@ -42,6 +43,7 @@ async def create_api_key(ctx: ServiceContext, body: ApiKeyCreate) -> ApiKeyCreat
     secret = new_api_key()
     async with ctx.uow_factory() as uow:
         row = await uow.api_keys.add(
+            owner=acting_owner(ctx),
             name=body.name,
             scope=body.scope,
             key_hash=api_key_hash(secret),

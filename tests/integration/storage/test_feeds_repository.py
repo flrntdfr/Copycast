@@ -10,11 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from copycast.adapters.db.repositories import DEFAULT_BUCKET_TITLE, FeedRepository
 from copycast.adapters.db.uow import UnitOfWorkFactory
+from copycast.application.services.context import Scope
 from copycast.domain.enums import ArchiveState, AssetKind, AssetState, FeedKind
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import FEED_ID_RE
 from tests.integration.storage.conftest import (
     NOW,
+    OWNER,
     SOURCE_URL,
     asset_row,
     bucket_row,
@@ -45,9 +47,9 @@ async def test_try_get_for_update_skips_a_row_another_transaction_holds(
 
 async def test_ensure_default_bucket_is_idempotent(uow_factory: UnitOfWorkFactory) -> None:
     async with uow_factory() as uow:
-        first = await uow.feeds.ensure_default_bucket()
+        first = await uow.feeds.ensure_default_bucket(OWNER)
     async with uow_factory() as uow:
-        second = await uow.feeds.ensure_default_bucket()
+        second = await uow.feeds.ensure_default_bucket(OWNER)
         assert (await uow.feeds.count(FeedKind.bucket)) == 1
     assert first.id == second.id
     assert first.title == DEFAULT_BUCKET_TITLE
@@ -62,7 +64,7 @@ async def test_ensure_default_bucket_under_concurrency(
 ) -> None:
     async def _create() -> str:
         async with sessionmaker() as session, session.begin():
-            return (await FeedRepository(session).ensure_default_bucket()).id
+            return (await FeedRepository(session).ensure_default_bucket(OWNER)).id
 
     ids = await asyncio.gather(*(_create() for _ in range(4)))
     assert len(set(ids)) == 1
@@ -75,8 +77,11 @@ async def test_get_require_and_dedup_lookup(uow_factory: UnitOfWorkFactory) -> N
     async with uow_factory() as uow:
         assert (await uow.feeds.get(feed.id)) is not None
         assert (await uow.feeds.require(feed.id)).source_url == SOURCE_URL
-        found = await uow.feeds.by_dedup_key("podcast.example/feed.xml")
+        found = await uow.feeds.by_dedup_key(OWNER, "podcast.example/feed.xml")
         assert found is not None and found.id == feed.id
+        assert await uow.feeds.by_dedup_key("someone-else", "podcast.example/feed.xml") is None
+        assert await uow.feeds.exists_id(feed.id) is True
+        assert await uow.feeds.exists_id("nope") is False
         assert await uow.feeds.get("nope") is None
         with pytest.raises(NotFound):
             await uow.feeds.require("nope")
@@ -88,7 +93,7 @@ async def test_get_require_and_dedup_lookup(uow_factory: UnitOfWorkFactory) -> N
 
 async def test_find_bucket_by_id_or_case_insensitive_name(uow_factory: UnitOfWorkFactory) -> None:
     async with uow_factory() as uow:
-        default = await uow.feeds.ensure_default_bucket()
+        default = await uow.feeds.ensure_default_bucket(OWNER)
         later = await uow.feeds.add(bucket_row("Later"))
         mirror = await uow.feeds.add(mirror_row())
     async with uow_factory() as uow:
@@ -100,6 +105,41 @@ async def test_find_bucket_by_id_or_case_insensitive_name(uow_factory: UnitOfWor
         assert await uow.feeds.find_bucket(mirror.id) is None
         assert await uow.feeds.find_bucket("Test Podcast") is None
         assert await uow.feeds.find_bucket("unknown") is None
+
+
+async def test_add_stamps_the_actor_as_owner(uow_factory: UnitOfWorkFactory) -> None:
+    async with uow_factory() as uow:
+        await uow.users.ensure(["alice", "bob"])
+    async with uow_factory(Scope("alice", "alice")) as uow:
+        stamped = await uow.feeds.add(bucket_row("Mine", owner=None))
+        assert stamped.owner == "alice"
+        assert (await uow.feeds.add(bucket_row("Also", owner="alice"))).owner == "alice"
+        with pytest.raises(ValueError, match="is not the actor"):
+            await uow.feeds.add(bucket_row("Theirs", owner="bob"))
+    # SYSTEM creates for an explicit Owner only.
+    async with uow_factory() as uow:
+        assert (await uow.feeds.add(bucket_row("For bob", owner="bob"))).owner == "bob"
+        with pytest.raises(ValueError, match="no owner and no actor"):
+            await uow.feeds.add(bucket_row("Nobody's", owner=None))
+
+
+async def test_find_bucket_prefers_the_actors_own(uow_factory: UnitOfWorkFactory) -> None:
+    async with uow_factory() as uow:
+        await uow.users.ensure(["alice", "bob"])
+        bobs = await uow.feeds.add(bucket_row("Later", id="later-bobbbb", owner="bob"))
+        alices = await uow.feeds.add(bucket_row("Later", id="later-alicee", owner="alice"))
+        bob_default = await uow.feeds.ensure_default_bucket("bob")
+        alice_default = await uow.feeds.ensure_default_bucket("alice")
+    async with uow_factory(Scope("alice", "alice")) as uow:
+        found = await uow.feeds.find_bucket("later")
+        assert found is not None and found.id == alices.id
+        found = await uow.feeds.find_bucket(DEFAULT_BUCKET_TITLE)
+        assert found is not None and found.id == alice_default.id
+    async with uow_factory(Scope("bob", None)) as uow:
+        found = await uow.feeds.find_bucket("Later")
+        assert found is not None and found.id == bobs.id
+        found = await uow.feeds.find_bucket(DEFAULT_BUCKET_TITLE)
+        assert found is not None and found.id == bob_default.id
 
 
 async def test_list_sorting_and_kind_filter(uow_factory: UnitOfWorkFactory) -> None:
@@ -183,10 +223,15 @@ async def test_scheduler_queries(uow_factory: UnitOfWorkFactory) -> None:
         await uow.feeds.add(bucket_row("Recent", autoprune_days=3, last_autoprune_at=NOW))
         await uow.feeds.add(bucket_row("Off"))
     async with uow_factory() as uow:
-        due = await uow.feeds.mirrors_due(NOW - timedelta(hours=24))
+        due = await uow.feeds.mirrors_due(NOW - timedelta(hours=24), configured=[OWNER])
         assert [f.id for f in due] == [never.id, stale.id]
-        prunable = await uow.feeds.buckets_due_autoprune(NOW - timedelta(hours=24))
+        prunable = await uow.feeds.buckets_due_autoprune(
+            NOW - timedelta(hours=24), configured=[OWNER]
+        )
         assert [f.id for f in prunable] == [prune_me.id]
+        # A removed User's Feeds are neither refreshed nor pruned.
+        assert await uow.feeds.mirrors_due(NOW - timedelta(hours=24), configured=["x"]) == []
+        assert await uow.feeds.buckets_due_autoprune(NOW - timedelta(hours=24), configured=[]) == []
 
 
 async def test_refresh_bookkeeping_and_metadata(uow_factory: UnitOfWorkFactory) -> None:

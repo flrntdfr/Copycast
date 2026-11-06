@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Link } from "@tanstack/react-router";
 
 import { $api, ApiProblem, describeProblem } from "@/api/client";
+import { ownsFeed, useIsAdmin, useMe } from "@/api/session";
 import type { MirrorChangePreview, MirrorRead, MirrorUpdate } from "@/api/types";
 import {
   AlertDialog,
@@ -40,12 +41,19 @@ import {
 import { formatBytes, secondsToMinutes } from "@/lib/format";
 import { count } from "@/lib/labels";
 
-/** Follow, the policy as tabs (previewed, confirmed when it deletes), Source URL, Engine options, overrides and the danger zone. */
+/**
+ * Follow, the policy as tabs (previewed, confirmed when it deletes), Source URL, Engine options
+ * (Admins only), overrides and the danger zone.
+ */
 export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
   const invalidate = useInvalidateFeed();
   const [rejectedKeys, setRejectedKeys] = useState<string[]>([]);
   const [rejectedScope, setRejectedScope] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const admin = useIsAdmin();
+  // Another User's Mirror inherits its owner's Defaults, which `/api/settings/defaults` (the
+  // caller's own) does not tell: an Admin sees "<owner>'s default", never their own values.
+  const foreignOwner = ownsFeed(useMe(), mirror) ? null : (mirror.owner ?? null);
   const form = useForm<MirrorSettingsInput, unknown, MirrorSettingsValues>({
     resolver: zodResolver(mirrorSettingsSchema),
     defaultValues: settingsDefaults(mirror),
@@ -56,7 +64,9 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
   const title = useWatch({ control: form.control, name: "title" });
   const sourceUrl = useWatch({ control: form.control, name: "source_url" });
   const retargeting = sourceUrl.trim() !== mirror.source_url;
-  const defaults = $api.useQuery("get", "/api/settings/defaults");
+  const defaults = $api.useQuery("get", "/api/settings/defaults", undefined, {
+    enabled: foreignOwner === null,
+  });
   const language = useWatch({ control: form.control, name: "language" });
   const minMinutes = useWatch({ control: form.control, name: "min_duration_minutes" });
   const refreshHours = useWatch({ control: form.control, name: "refresh_interval_hours" });
@@ -295,45 +305,58 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
           </p>
         </div>
 
-        <Controller
-          control={form.control}
-          name="engine_options"
-          render={({ field, fieldState }) => (
-            <EngineOptionsEditor
-              id="settings-engine-options"
-              value={field.value}
-              onChange={(next) => {
-                setRejectedKeys([]);
-                field.onChange(next);
-              }}
-              error={fieldState.error?.message}
-              rejectedKeys={rejectedKeys}
-              scope={rejectedScope}
-            />
-          )}
-        />
+        {/* Per-Mirror Engine options are an Admin's (ADR 0024); a Member's form keeps them as is. */}
+        {admin ? (
+          <Controller
+            control={form.control}
+            name="engine_options"
+            render={({ field, fieldState }) => (
+              <EngineOptionsEditor
+                id="settings-engine-options"
+                value={field.value}
+                onChange={(next) => {
+                  setRejectedKeys([]);
+                  field.onChange(next);
+                }}
+                error={fieldState.error?.message}
+                rejectedKeys={rejectedKeys}
+                scope={rejectedScope}
+              />
+            )}
+          />
+        ) : null}
 
         <fieldset className="space-y-3 rounded-lg border p-3">
           <legend className="px-1 text-sm font-medium">Overrides</legend>
-          <p className="text-xs text-muted-foreground">
-            Empty means the value from{" "}
-            <Link to="/settings" className="underline">
-              Settings
-            </Link>
-            ; a value here applies to this Mirror only.
-          </p>
+          {foreignOwner ? (
+            <p className="text-xs text-muted-foreground" data-testid="overrides-foreign">
+              Empty means {foreignOwner}&apos;s default, from their own Settings; a value here
+              applies to this Mirror only.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Empty means the value from{" "}
+              <Link to="/settings" className="underline">
+                Settings
+              </Link>
+              ; a value here applies to this Mirror only.
+            </p>
+          )}
           <OverrideField
             id="settings-language"
             label="Metadata language"
             own={language.trim()}
             global={globalLanguage}
             loaded={defaults.isSuccess}
+            defaultOf={foreignOwner}
             onReset={() => form.setValue("language", "", { shouldDirty: true })}
             error={errors.language?.message}
           >
             <Input
               id="settings-language"
-              placeholder={globalLanguage ?? "fr, pt-BR…"}
+              placeholder={
+                foreignOwner ? `${foreignOwner}'s default` : (globalLanguage ?? "fr, pt-BR…")
+              }
               maxLength={16}
               {...form.register("language")}
               aria-invalid={!!errors.language}
@@ -347,6 +370,7 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
             }
             global={globalMinutes == null ? null : String(globalMinutes)}
             loaded={defaults.isSuccess}
+            defaultOf={foreignOwner}
             onReset={() => form.setValue("min_duration_minutes", undefined, { shouldDirty: true })}
             error={errors.min_duration_minutes?.message}
           >
@@ -355,7 +379,13 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
               type="number"
               min={1}
               inputMode="numeric"
-              placeholder={globalMinutes == null ? "everything" : String(globalMinutes)}
+              placeholder={
+                foreignOwner
+                  ? `${foreignOwner}'s default`
+                  : globalMinutes == null
+                    ? "everything"
+                    : String(globalMinutes)
+              }
               {...form.register("min_duration_minutes", { valueAsNumber: true })}
               aria-invalid={!!errors.min_duration_minutes}
             />
@@ -370,6 +400,7 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
             }
             global={globalHours == null ? null : String(globalHours)}
             loaded={defaults.isSuccess}
+            defaultOf={foreignOwner}
             onReset={() =>
               form.setValue("refresh_interval_hours", undefined, { shouldDirty: true })
             }
@@ -381,7 +412,13 @@ export function MirrorSettingsForm({ mirror }: { mirror: MirrorRead }) {
               min={1}
               max={720}
               inputMode="numeric"
-              placeholder={globalHours == null ? "24" : String(globalHours)}
+              placeholder={
+                foreignOwner
+                  ? `${foreignOwner}'s default`
+                  : globalHours == null
+                    ? "24"
+                    : String(globalHours)
+              }
               {...form.register("refresh_interval_hours", { valueAsNumber: true })}
               aria-invalid={!!errors.refresh_interval_hours}
             />
@@ -515,6 +552,7 @@ function OverrideField({
   error,
   hint,
   resetLabel = "Use default",
+  defaultOf = null,
   children,
 }: {
   id: string;
@@ -522,6 +560,8 @@ function OverrideField({
   own: string;
   global: string | null;
   loaded: boolean;
+  /** Another User's Mirror: their default is unknown here, so it is named, never shown. */
+  defaultOf?: string | null;
   onReset: () => void;
   error?: string;
   /** Replaces the default wording under the field. */
@@ -530,17 +570,26 @@ function OverrideField({
   children: React.ReactNode;
 }) {
   const overriding = own !== "";
-  const diverges = overriding && own !== (global ?? "");
+  const wording =
+    hint ??
+    (defaultOf
+      ? {
+          overriding: `This Mirror ignores ${defaultOf}'s default.`,
+          following: `Using ${defaultOf}'s default.`,
+        }
+      : undefined);
+  const known = loaded || !!defaultOf;
+  const diverges = !defaultOf && overriding && own !== (global ?? "");
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-2">
         <Label htmlFor={id}>{label}</Label>
-        {loaded && diverges ? (
+        {known && diverges ? (
           <Badge variant="secondary" data-testid={`${id}-diverges`}>
             Overrides the default{global ? ` (${global})` : " (none)"}
           </Badge>
         ) : null}
-        {loaded && overriding && !diverges ? (
+        {known && overriding && !diverges && !defaultOf ? (
           <Badge variant="outline">Same as the default</Badge>
         ) : null}
       </div>
@@ -554,10 +603,10 @@ function OverrideField({
       </div>
       <p className={error ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
         {error ??
-          (loaded
+          (known
             ? overriding
-              ? (hint?.overriding ?? "This Mirror ignores the default.")
-              : (hint?.following ?? `Using the default: ${global ?? "none"}.`)
+              ? (wording?.overriding ?? "This Mirror ignores the default.")
+              : (wording?.following ?? `Using the default: ${global ?? "none"}.`)
             : "\u2026")}
       </p>
     </div>

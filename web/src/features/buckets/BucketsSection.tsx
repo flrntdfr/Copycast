@@ -3,22 +3,24 @@ import { ChevronRight, PaintBucket } from "lucide-react";
 import { useState, type Ref } from "react";
 
 import { $api, asError } from "@/api/client";
+import { ownsFeed, useMe } from "@/api/session";
 import { isBucket } from "@/api/types";
 import { EmptyState } from "@/components/common/EmptyState";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { MirrorsSort } from "@/features/mirrors/MirrorsTable";
 import { formatMegabytes } from "@/lib/format";
+import { storageKey } from "@/lib/storage";
 import { count } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { BucketCard } from "./BucketCard";
 
-/** Where the box remembers whether it was left open ("1") or closed ("0"). */
-export const BUCKETS_OPEN_KEY = "copycast.buckets.open";
+/** Where the box remembers whether it was left open ("1") or closed ("0"), per User. */
+export const BUCKETS_OPEN_NAME = "buckets.open";
 
 function readRemembered(): boolean {
   try {
-    return window.localStorage.getItem(BUCKETS_OPEN_KEY) === "1";
+    return window.localStorage.getItem(storageKey(BUCKETS_OPEN_NAME)) === "1";
   } catch {
     return false;
   }
@@ -26,7 +28,7 @@ function readRemembered(): boolean {
 
 function remember(open: boolean): void {
   try {
-    window.localStorage.setItem(BUCKETS_OPEN_KEY, open ? "1" : "0");
+    window.localStorage.setItem(storageKey(BUCKETS_OPEN_NAME), open ? "1" : "0");
   } catch {
     // Storage unavailable: the state lives for this page only.
   }
@@ -37,7 +39,8 @@ function remember(open: boolean): void {
  * the files and the total size and opens it; inside, a card per Feed in the table's order (every
  * Feed keeps its files under its own prefix of the Object store), counted by the storage summary.
  * Opened by a `#buckets` hash or a URL to send (the command palette's "Send to Local feed…"), and
- * remembered across visits.
+ * remembered across visits. The caller's own Feeds only, Admins included: the storage summary
+ * counts those alone (A27), and every User has a default Local feed of the same name.
  */
 export function BucketsSection({
   sort = "title",
@@ -51,6 +54,7 @@ export function BucketsSection({
   ref?: Ref<HTMLElement>;
 }) {
   const hash = useLocation({ select: (location) => location.hash });
+  const me = useMe();
   const query = $api.useQuery("get", "/api/feeds", { params: { query: { sort, order } } });
   // The page asks for the box open while a URL is to be sent or the hash points at it; that
   // request wins over a remembered state, and over an earlier click once it arrives anew.
@@ -70,7 +74,7 @@ export function BucketsSection({
   const storage = $api.useQuery("get", "/api/storage", undefined, { enabled: open });
   if (query.isError) throw asError(query.error);
   const byFeed = new Map((storage.data?.feeds ?? []).map((entry) => [entry.feed_id, entry]));
-  const all = query.data?.feeds ?? [];
+  const all = (query.data?.feeds ?? []).filter((feed) => ownsFeed(me, feed));
   // Only a Local feed takes a URL: while one is to be sent, the Mirrors' buckets stay out.
   const buckets = url ? all.filter(isBucket) : all;
   const totalBytes =

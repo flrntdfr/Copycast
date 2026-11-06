@@ -34,6 +34,10 @@ class Job(TimestampMixin, Base):
     payload: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
     )
+    requested_by: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("users.username", ondelete="SET NULL")
+    )
+    """The User who asked for the job; null for the scheduler and jobs before 3.0."""
 
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'queued'"), default=JobStatus.queued.value
@@ -81,6 +85,7 @@ class Job(TimestampMixin, Base):
         Index("ix_jobs_feed_created", "feed_id", text("created_at DESC")),
         Index("ix_jobs_item_id", "item_id"),
         Index("ix_jobs_request_id", "request_id"),
+        Index("ix_jobs_requested_by", "requested_by"),
     )
 
     @property

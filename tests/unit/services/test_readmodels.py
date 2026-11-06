@@ -11,7 +11,7 @@ import pytest
 
 from copycast.application.models import BucketRead, CatalogCounts, MirrorRead
 from copycast.application.services import readmodels
-from copycast.domain.enums import ArchiveState, HealthStatus, LiveStatus
+from copycast.domain.enums import ArchiveState, BlockedReason, HealthStatus, LiveStatus
 
 NOW = datetime(2025, 6, 1, tzinfo=UTC)
 
@@ -36,6 +36,12 @@ class Urls:
     def artwork_url(self, asset_id: str, local_path: str) -> str:
         return f"http://t/art/{asset_id}-mac.{local_path.rsplit('.', 1)[-1]}"
 
+    def play_media_url(self, feed_id: str, item_id: str) -> str:
+        return f"http://t/api/feeds/{feed_id}/items/{item_id}/media"
+
+    def play_asset_url(self, feed_id: str, item_id: str, name: str) -> str:
+        return f"http://t/api/feeds/{feed_id}/items/{item_id}/assets/{name}"
+
     async def prepare(self) -> None:
         return None
 
@@ -44,6 +50,7 @@ def mirror_row(**overrides: Any) -> Any:
     fields: dict[str, Any] = {
         "id": "abc",
         "kind": "mirror",
+        "owner": "copycast",
         "is_default": False,
         "title": "Show",
         "title_override": None,
@@ -175,6 +182,8 @@ def item_row(**overrides: Any) -> Any:
         "first_seen_at": NOW,
         "archive_state": "archived",
         "wanted_reason": "backfill",
+        "blocked_reason": None,
+        "blocked_bytes": None,
         "archive_flag": False,
         "attempt_count": 1,
         "last_error": None,
@@ -292,3 +301,75 @@ def test_job_read_from_row() -> None:
     read = readmodels.job_read(row)
     assert read.kind.value == "refresh" and read.progress is not None
     assert read.progress.phase.value == "listing"
+
+
+def test_reads_carry_the_owner_and_the_blocked_reason() -> None:
+    mirror = readmodels.mirror_read(mirror_row(owner="alice"), Urls(), counts=CatalogCounts())
+    assert mirror.owner == "alice" and mirror.owner_removed is False
+    bucket = readmodels.bucket_read(
+        mirror_row(kind="bucket", owner="bob", source_url=None), Urls(), counts=CatalogCounts()
+    )
+    assert bucket.owner == "bob"
+    blocked = readmodels.item_read(
+        item_row(archive_state="wanted", blocked_reason="quota", blocked_bytes=10), Urls()
+    )
+    assert blocked.blocked_reason is BlockedReason.quota
+    assert blocked.model_dump(mode="json")["blocked_reason"] == "quota"
+    assert readmodels.item_read(item_row(), Urls()).blocked_reason is None
+
+
+def test_a_blocked_reason_shows_only_while_the_item_is_wanted() -> None:
+    for state in ("deleted", "available", "archived", "failed"):
+        row = item_row(archive_state=state, blocked_reason="quota", blocked_bytes=10)
+        assert readmodels.item_read(row, Urls()).blocked_reason is None, state
+
+
+def test_asset_read_names_the_archived_file() -> None:
+    read = readmodels.asset_read(asset_row(), Urls())
+    assert read.name == "0123456789abcdef.transcript.en.mirrored.vtt"
+    assert read.play_url == (
+        "http://t/api/feeds/abc/items/0123456789abcdef/assets/"
+        "0123456789abcdef.transcript.en.mirrored.vtt"
+    )
+    wanted = readmodels.asset_read(asset_row(state="wanted"), Urls())
+    assert wanted.name is None and wanted.play_url is None
+    # A Feed's own asset (its artwork) has no item to play it through.
+    feed_asset = readmodels.asset_read(asset_row(item_id=None), Urls())
+    assert feed_asset.play_url is None
+
+
+def test_reads_say_when_the_owner_is_removed() -> None:
+    mirror = readmodels.mirror_read(
+        mirror_row(owner="gone"), Urls(), counts=CatalogCounts(), owner_removed=True
+    )
+    assert mirror.owner_removed is True
+    bucket = readmodels.feed_read(
+        mirror_row(kind="bucket", owner="gone", source_url=None),
+        Urls(),
+        counts=CatalogCounts(),
+        owner_removed=True,
+    )
+    assert bucket.owner_removed is True
+
+
+def test_archived_media_carries_its_play_url() -> None:
+    read = readmodels.item_read(
+        item_row(archive_state="archived", media_ext="m4a", media_mime="audio/mp4", media_bytes=3),
+        Urls(),
+    )
+    assert read.media is not None
+    assert read.media.play_url == "http://t/api/feeds/abc/items/0123456789abcdef/media"
+
+
+def test_api_key_read_carries_the_owner() -> None:
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        owner="alice",
+        name="agent",
+        scope="read",
+        prefix="cck_abcdefgh",
+        created_at=NOW,
+        last_used_at=None,
+    )
+    read = readmodels.api_key_read(row)
+    assert read.owner == "alice" and read.name == "agent"

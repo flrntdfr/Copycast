@@ -242,6 +242,7 @@ async def test_jobs_and_about(mcp_client: Client[Any], source: Source) -> None:
         "state": "ok",
         "summary": "Up",
         "facts": status["components"][0]["facts"],
+        "meter": None,
     }
     with pytest.raises((ToolError, MCPError)) as bad:
         await mcp_client.call_tool("probe_source", {"url": "   "})

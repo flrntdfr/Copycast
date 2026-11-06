@@ -59,7 +59,11 @@ async def main(settings: Settings, *, engine: Engine | None = None) -> int:
         log.info("worker.scratch_swept", entries=swept)
     try:
         try:
-            await prepare_schema(container.db_engine, auto_migrate=settings.auto_migrate)
+            await prepare_schema(
+                container.db_engine,
+                auto_migrate=settings.auto_migrate,
+                owner_of_existing=settings.auth.effective_owner_of_existing,
+            )
         except SchemaNotCurrent as exc:
             _fatal(str(exc))
             return EXIT_CONFIG
@@ -75,7 +79,14 @@ async def main(settings: Settings, *, engine: Engine | None = None) -> int:
 
 async def _serve(container: Container, settings: Settings) -> int:
     worker_id = default_worker_id()
-    await container.services.ensure_default_bucket()
+    await container.services.sync_users()
+    try:
+        await container.migrate_user_settings()
+    except SettingsError as exc:
+        _fatal(str(exc))
+        return EXIT_CONFIG
+    for owner in container.users.usernames():
+        await container.services.ensure_default_bucket(owner)
     await _upgrade_chapters(container.layout)
     version = await asyncio.to_thread(container.engine.version)
     async with uow_of(container.uow_factory()) as uow:

@@ -2,7 +2,10 @@
 
 Status: accepted; amended (artwork is public, see the end) (v1); narrows ADR 0004; enclosure
 URLs carry a media key since ADR 0020; public artwork moved to opaque `/art/` URLs and every
-refusal under `/feeds` became one 401 in ADR 0022
+refusal under `/feeds` became one 401 in ADR 0022; §1 (the operator password as HTTP Basic
+on the web UI and the API) superseded by ADR 0027 (sessions; the operator password remains the
+legacy single Admin's and opens `/feeds` in legacy mode only); feed credentials, media keys
+and API keys stand, a key acting as its owner since ADR 0028
 
 ## Context
 

@@ -4,14 +4,16 @@ import { MirrorDefaultsSection } from "./MirrorDefaultsSection";
 import { OpmlSection } from "./OpmlSection";
 
 /**
- * Operator settings that live in the data directory rather than in the environment: the
- * sites the engine signs in to, the defaults every Mirror inherits, and the OPML export.
- * A feed's own settings and its files live on its own pages.
+ * The signed-in User's own settings, kept in the Object store under `users/{username}/`: the
+ * Cookie files the Engine signs in with for their Mirrors, the Defaults their Mirrors inherit,
+ * and the OPML export of their Feeds. Every User, Admins included, sees only their own; the
+ * instance-wide Engine details are on the About page, for Admins. A Feed's own settings and
+ * its files live on its own pages.
  */
 export function SettingsPage() {
   return (
     <>
-      <PageHeader title="Settings" />
+      <PageHeader title="Your settings" />
       <div className="max-w-3xl space-y-10">
         <AuthenticationsSection />
         <MirrorDefaultsSection />
