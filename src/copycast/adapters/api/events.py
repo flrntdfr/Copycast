@@ -11,9 +11,18 @@ LISTEN connection drops the hub reconnects with backoff and emits ``resync``.
 A payload names its Owner before a newline (``"{owner}\n{json}"``; a bare JSON
 payload has none). A subscription delivers an event to its Principal when the
 event is a ``resync`` (it carries no data and every UI must refetch), when the
-Principal is an Admin or SYSTEM, or when the event's Owner is the Principal; an
-owner-less event other than ``resync`` (a SYSTEM job without a Feed) reaches Admins
-only.
+Principal sees every Owner (an Admin session, the open-mode Admin, SYSTEM; never a
+key), or when the event's Owner is the Principal; an owner-less event other than
+``resync`` (a SYSTEM job without a Feed) reaches Admins only.
+
+**Ids are per view.** One process-wide sequence would let a Member count and time
+everyone else's events (the gaps between their own ids, or probing ``Last-Event-ID``
+for the replay-gap answer). So the hub numbers each event twice: in the instance view
+(the global sequence, which only Principals seeing every Owner get) and in its Owner's
+view, a sequence and replay buffer of that Owner's events alone. A ``resync`` takes the
+next number in every view. A narrow Principal's frames carry their view's ids, their
+``Last-Event-ID`` is read in that view, and the replay-gap decision looks at that view
+only, so nothing they receive depends on anyone else's activity.
 """
 
 from __future__ import annotations
@@ -22,7 +31,7 @@ import asyncio
 import contextlib
 from collections import deque
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -31,6 +40,7 @@ from psycopg import sql
 from pydantic import BaseModel
 
 from copycast.application.events import CHANNEL, InvalidEvent, ResyncEvent, parse
+from copycast.domain.enums import PrincipalVia
 from copycast.domain.users import Principal
 from copycast.logging import get_logger
 
@@ -67,13 +77,25 @@ def split_payload(payload: str) -> tuple[str | None, str]:
     return owner or None, body
 
 
+def sees_every_owner(principal: Principal) -> bool:
+    """SYSTEM, an Admin session or the open-mode Admin; never an API key (A29)."""
+    return principal.is_system or (principal.admin and principal.via is not PrincipalVia.api_key)
+
+
+def view_of(principal: Principal) -> str | None:
+    """The id view ``principal`` reads: None for the instance view, else its username."""
+    return None if sees_every_owner(principal) else principal.username or ""
+
+
 @dataclass(frozen=True, slots=True)
 class Envelope:
-    """One event with its per-process sequence id and its Owner (None: owner-less)."""
+    """One event with its instance-wide sequence id, its Owner (None: owner-less) and its
+    id in each Owner view it belongs to (its Owner's; every view for a ``resync``)."""
 
     id: int
     event: BaseModel
     owner: str | None = None
+    view_ids: dict[str, int] = field(default_factory=dict[str, int])
 
     @property
     def is_resync(self) -> bool:
@@ -81,9 +103,13 @@ class Envelope:
 
     def visible_to(self, principal: Principal) -> bool:
         """Whether ``principal`` may receive this event (see the module docstring)."""
-        if self.is_resync or principal.admin or principal.is_system:
+        if self.is_resync or sees_every_owner(principal):
             return True
         return self.owner is not None and self.owner == principal.username
+
+    def id_in(self, view: str | None) -> int | None:
+        """This event's id in ``view`` (None: the instance view); None when it has none."""
+        return self.id if view is None else self.view_ids.get(view)
 
     @property
     def name(self) -> str:
@@ -104,6 +130,7 @@ class Subscription:
     ) -> None:
         self._hub = hub
         self.principal = principal
+        self.view = view_of(principal)
         self.feed_id = feed_id
         self._queue: asyncio.Queue[Envelope | None] = asyncio.Queue(maxsize=queue_size)
         self.closed = False
@@ -115,6 +142,10 @@ class Subscription:
         if self.feed_id is None or envelope.is_resync:
             return True
         return event_feed_id(envelope.event) == self.feed_id
+
+    def id_of(self, envelope: Envelope) -> int | None:
+        """The ``id:`` this stream sends for ``envelope``: its id in the stream's view."""
+        return envelope.id_in(self.view)
 
     def offer(self, envelope: Envelope) -> None:
         if self.closed or not self.wants(envelope):
@@ -159,6 +190,18 @@ class Subscription:
         self._hub.unsubscribe(self)
 
 
+@dataclass(slots=True)
+class _View:
+    """One Owner's id sequence and replay buffer."""
+
+    buffer: deque[Envelope]
+    next_id: int = 1
+
+    @property
+    def last_id(self) -> int:
+        return self.next_id - 1
+
+
 class EventHub:
     """LISTEN once per process, fan out to subscribers, replay the last events."""
 
@@ -174,6 +217,8 @@ class EventHub:
         self._conninfo = conninfo
         self._channel = channel
         self._buffer: deque[Envelope] = deque(maxlen=buffer_size)
+        self._buffer_size = buffer_size
+        self._views: dict[str, _View] = {}
         self._queue_size = queue_size
         self._reconnect_max = reconnect_max_seconds
         self._subscribers: set[Subscription] = set()
@@ -216,12 +261,32 @@ class EventHub:
     def last_id(self) -> int:
         return self._next_id - 1
 
+    def _view(self, name: str) -> _View:
+        view = self._views.get(name)
+        if view is None:
+            view = self._views[name] = _View(buffer=deque(maxlen=self._buffer_size))
+        return view
+
     def publish(self, event: BaseModel, *, owner: str | None = None) -> Envelope:
         """Stamp, buffer and fan out one event of ``owner`` (also used for locally raised
-        ``resync``, which has none)."""
-        envelope = Envelope(id=self._next_id, event=event, owner=owner)
+        ``resync``, which has none): the next instance id, plus the next id of its Owner's
+        view (of every view for a ``resync``)."""
+        if isinstance(event, ResyncEvent):
+            names = list(self._views)
+        else:
+            names = [owner] if owner is not None else []
+        views = [(name, self._view(name)) for name in names]
+        envelope = Envelope(
+            id=self._next_id,
+            event=event,
+            owner=owner,
+            view_ids={name: view.next_id for name, view in views},
+        )
         self._next_id += 1
         self._buffer.append(envelope)
+        for _, view in views:
+            view.next_id += 1
+            view.buffer.append(envelope)
         for subscriber in list(self._subscribers):
             subscriber.offer(envelope)
         return envelope
@@ -245,23 +310,33 @@ class EventHub:
         last_event_id: int | None = None,
     ) -> Subscription:
         """A subscription for ``principal``, replaying every buffered event after
-        ``last_event_id``.
+        ``last_event_id`` (an id of the Principal's view, see the module docstring).
 
-        A ``last_event_id`` older than the buffer (or unknown after a restart)
+        A ``last_event_id`` older than the view's buffer (or unknown after a restart)
         first yields a ``resync`` so the client refetches everything. Only the
         events ``principal`` may see are delivered, replayed ones included.
         """
         subscription = Subscription(
             self, principal=principal, feed_id=feed_id, queue_size=self._queue_size
         )
+        name = subscription.view
+        # A narrow Principal's view exists from its first subscription, so every resync
+        # published while it listens takes a number in it.
+        view = self._view(name) if name is not None else None
         if last_event_id is not None:
-            oldest = self._buffer[0].id if self._buffer else self._next_id
-            if last_event_id + 1 < oldest or last_event_id >= self._next_id:
+            buffer = self._buffer if view is None else view.buffer
+            next_id = self._next_id if view is None else view.next_id
+            ids = [(envelope.id_in(name) or 0, envelope) for envelope in buffer]
+            oldest = ids[0][0] if ids else next_id
+            if last_event_id + 1 < oldest or last_event_id >= next_id:
+                gap_ids = {} if name is None else {name: next_id - 1}
                 subscription.offer(
-                    Envelope(id=self.last_id, event=ResyncEvent(reason="replay-gap"))
+                    Envelope(
+                        id=self.last_id, event=ResyncEvent(reason="replay-gap"), view_ids=gap_ids
+                    )
                 )
-            for envelope in self._buffer:
-                if envelope.id > last_event_id:
+            for seq, envelope in ids:
+                if seq > last_event_id:
                     subscription.offer(envelope)
         self._subscribers.add(subscription)
         return subscription
@@ -314,5 +389,7 @@ __all__ = [
     "Subscription",
     "event_feed_id",
     "psycopg_conninfo",
+    "sees_every_owner",
     "split_payload",
+    "view_of",
 ]

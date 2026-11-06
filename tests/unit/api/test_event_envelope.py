@@ -87,7 +87,8 @@ def test_an_envelope_reaches_its_owner_admins_and_system_only() -> None:
     bobs = Envelope(id=1, event=feed_event(), owner="bob")
     assert bobs.visible_to(BOB)
     assert not bobs.visible_to(ALICE)
-    assert bobs.visible_to(ROOT) and bobs.visible_to(ROOT_KEY)
+    assert bobs.visible_to(ROOT)
+    assert not bobs.visible_to(ROOT_KEY), "a key sees its owner's own, an Admin's too (A29)"
     assert bobs.visible_to(Principal.SYSTEM)
     ownerless = Envelope(id=2, event=feed_event(), owner=None)
     assert ownerless.visible_to(ROOT) and not ownerless.visible_to(ALICE)
@@ -147,3 +148,48 @@ def test_an_invalid_payload_after_the_prefix_is_dropped() -> None:
     events = hub()
     events._handle_payload("bob\nnot json")
     assert events.last_id == 0
+
+
+# --------------------------------------------------------------------------- ids per view
+
+
+async def frames(subscription: Subscription) -> list[tuple[int | None, str]]:
+    """The ``id:`` the stream would send and the feed id (``""``: resync) of each queued."""
+    seen: list[tuple[int | None, str]] = []
+    while (envelope := await subscription.next(0.01)) is not None:
+        seen.append((subscription.id_of(envelope), getattr(envelope.event, "feed_id", "")))
+    return seen
+
+
+async def test_a_members_ids_count_only_their_own_events() -> None:
+    events = hub()
+    with events.subscribe(ALICE) as alice, events.subscribe(ROOT) as root:
+        for owner in ("bob", "bob", "alice", "bob", "bob", "bob", "alice"):
+            events._handle_payload(serialize(feed_event(f"{owner}s"), owner=owner))
+        events.publish(ResyncEvent(reason="listen-reconnected"))
+        events._handle_payload(serialize(feed_event("alices"), owner="alice"))
+        assert await frames(alice) == [(1, "alices"), (2, "alices"), (3, ""), (4, "alices")]
+        assert [seq for seq, _ in await frames(root)] == list(range(1, 10))
+
+
+def _probe(events: EventHub, principal: Principal, last: int) -> bool:
+    """Whether ``Last-Event-ID: last`` is answered with a replay-gap resync."""
+    with events.subscribe(principal, last_event_id=last) as probe:
+        first = probe._queue.get_nowait() if not probe._queue.empty() else None  # pyright: ignore[reportPrivateUsage]
+    return first is not None and first.is_resync
+
+
+async def test_probing_last_event_id_tells_a_member_nothing_of_others() -> None:
+    events = hub()
+    events._handle_payload(serialize(feed_event("alices"), owner="alice"))
+    before = [_probe(events, ALICE, n) for n in range(30)]
+    for _ in range(25):  # bob works meanwhile; more than the buffer holds
+        events._handle_payload(serialize(feed_event("bobs"), owner="bob"))
+    after = [_probe(events, ALICE, n) for n in range(30)]
+    assert before == after
+    assert before[:2] == [False, False] and all(before[2:])
+    with events.subscribe(ALICE, last_event_id=0) as replay:
+        assert await frames(replay) == [(1, "alices")]
+    # The instance view still answers by the global sequence.
+    assert _probe(events, ROOT, events.last_id) is False
+    assert _probe(events, ROOT, events.last_id + 1) is True

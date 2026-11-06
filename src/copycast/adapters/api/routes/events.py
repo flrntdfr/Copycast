@@ -1,7 +1,8 @@
 """``GET /api/events``: the server-sent event stream.
 
 ``text/event-stream`` with ``retry: 3000``, a keepalive comment every 15 s,
-``id:`` per-process sequence numbers and a 1000-event replay via
+``id:`` per-process sequence numbers of the Principal's view (an Admin's counts every
+event, a Member's only their own, ``adapters.api.events``) and a 1000-event replay via
 ``Last-Event-ID``. Frames: ``job``, ``progress``, ``feed``, ``item``,
 ``request``, ``resync`` (see ``application.events``). A stream carries only the
 events of the Principal's own Feeds (every Feed for an Admin) and ``resync``;
@@ -51,8 +52,11 @@ async def _frames(
         async for envelope in subscription:
             if await request.is_disconnected():
                 return
+            seq = subscription.id_of(envelope)
             yield ServerSentEvent(
-                data=serialize(envelope.event), event=envelope.name, id=str(envelope.id)
+                data=serialize(envelope.event),
+                event=envelope.name,
+                id=str(seq) if seq is not None else None,
             )
 
 
