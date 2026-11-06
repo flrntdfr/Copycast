@@ -15,6 +15,13 @@ when the Engine produced none. Asset failures mark the asset ``failed``; the
 job still succeeds. A stream with no recording yet (``NotReady``) puts the
 item back to ``wanted`` without counting the attempt and records its live
 status; once the job has waited ``LIVE_WAIT_MAX`` the item fails for good.
+
+Quotas (ADR 0029): before anything is fetched, an Owner who is Over quota gets the
+item blocked instead (``blocked_reason = quota``, still ``wanted``), and the job
+succeeds with ``{"blocked": "quota"}``; otherwise the fetch carries the Owner's
+remaining quota as ``FetchSpec.max_bytes``, and an Engine estimate above it
+(``QuotaExceeded``) blocks the item the same way, with the estimate, without counting
+an attempt or retrying. The scheduler releases blocked items when room frees up.
 """
 
 from __future__ import annotations
@@ -48,13 +55,15 @@ from copycast.application.ports import (
     FetchSpec,
     NotReady,
     PermanentError,
+    QuotaExceeded,
     StorageFull,
     TransientError,
 )
-from copycast.application.services.context import FeedRow
+from copycast.application.services.context import FeedRow, UnitOfWorkPort
 from copycast.application.services.defaults import effective, load_defaults
 from copycast.application.services.engine import cookie_jar_key
 from copycast.application.services.policy import locks_on_archive
+from copycast.application.services.quota import quota_status
 from copycast.domain.chapters import podcast_chapters
 from copycast.domain.enums import (
     ArchiveState,
@@ -62,6 +71,7 @@ from copycast.domain.enums import (
     AssetKind,
     AssetProvenance,
     AssetState,
+    BlockedReason,
     FeedKind,
     FetchKind,
     LiveStatus,
@@ -70,6 +80,7 @@ from copycast.domain.enums import (
 )
 from copycast.domain.exceptions import DestinationNotAllowed
 from copycast.domain.listing import SourceListingItem
+from copycast.domain.quota import remaining
 from copycast.logging import get_logger
 from copycast.settings import StorageSettings
 from copycast.worker.constants import live_wait_exceeded, live_wait_exhausted_message
@@ -107,6 +118,8 @@ class _Target:
     owner: str
     """The Feed's Owner: whose Cookie files the fetch carries."""
     description: str | None = None
+    max_bytes: int | None = None
+    """The Owner's remaining quota when the job started; None, unlimited."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +220,16 @@ def prepare(layout: Layout, target: _Target, work: JobDir) -> Prepared:
         )
     if not target.item_source_url:
         raise PermanentError(f"item {target.item_id!r} has no URL to fetch")
-    return Prepared(FetchSpec(FetchKind.ytdlp, target.item_source_url, target.item_id, home, temp))
+    return Prepared(
+        FetchSpec(
+            FetchKind.ytdlp,
+            target.item_source_url,
+            target.item_id,
+            home,
+            temp,
+            max_bytes=target.max_bytes,
+        )
+    )
 
 
 # --------------------------------------------------------------------------- outputs
@@ -419,6 +441,16 @@ async def run(ctx: JobContext) -> JobOutcome:
             return JobOutcome(result={"skipped": f"item is {item.archive_state}"})
         if feed.paused:
             raise Cancelled("the Mirror is Paused")
+        quota = await quota_status(cast("UnitOfWorkPort", uow), ctx.container.users, feed.owner)
+        if quota.state == "over":
+            # No new download for an Over quota Owner (D2): the item waits, blocked, until
+            # the scheduler sees room again; nothing is fetched and no attempt is counted.
+            await uow.quota.mark_blocked(item_id, BlockedReason.quota, estimate_bytes=None)
+            await uow.publish(
+                ItemEvent(feed_id=feed.id, item_id=item_id, state=ArchiveState.wanted)
+            )
+            log.info("archive.blocked", item_id=item_id, owner=feed.owner, reason="over")
+            return JobOutcome(result={"blocked": BlockedReason.quota.value})
         await uow.catalog.mark_state(item_id, ArchiveState.archiving, only_from=ArchiveState.wanted)
         await uow.publish(ItemEvent(feed_id=feed.id, item_id=item_id, state=ArchiveState.archiving))
         target = _target(
@@ -429,6 +461,7 @@ async def run(ctx: JobContext) -> JobOutcome:
             item.source_item_xml,
             item_id,
             description=item.description,
+            max_bytes=remaining(quota.used_bytes, quota.quota_bytes),
         )
 
     layout: Layout = ctx.container.layout
@@ -477,6 +510,13 @@ async def _fetch_and_store(
             ctx.progress.on_progress,
             ctx.log,
             cookie_jar=cookie_jar_key(layout, target.owner),
+        )
+    except QuotaExceeded as exc:
+        # The Engine's estimate does not fit the quota left: blocked with that estimate, so
+        # the scheduler re-queues it only once that much room exists. Not a failure.
+        await _block(ctx, target.feed_id, item_id, exc.estimate_bytes)
+        return JobOutcome(
+            result={"blocked": BlockedReason.quota.value, "estimate_bytes": exc.estimate_bytes}
         )
     except EngineError as exc:
         failure = await _record_failure(ctx, target.feed_id, item_id, exc)
@@ -591,6 +631,7 @@ def _target(
     item_id: str,
     *,
     description: str | None = None,
+    max_bytes: int | None = None,
 ) -> _Target:
     return _Target(
         feed_id=feed.id,
@@ -605,6 +646,7 @@ def _target(
         item_source_url=item_source_url,
         stored_item_xml=stored_item_xml,
         description=description,
+        max_bytes=max_bytes,
         owner=feed.owner,
         options=engine_options_for(
             ctx.container.settings,
@@ -663,6 +705,14 @@ def _check_scratch_room(scratch: Scratch, storage: StorageSettings) -> None:
         raise StorageFull(
             f"Scratch has {free // (1024 * 1024)} MiB free, below {floor // (1024 * 1024)} MiB"
         )
+
+
+async def _block(ctx: JobContext, feed_id: str, item_id: str, estimate_bytes: int) -> None:
+    """Back from archiving to wanted, blocked by the quota with the Engine's estimate."""
+    async with ctx.uow() as uow:
+        await uow.quota.mark_blocked(item_id, BlockedReason.quota, estimate_bytes=estimate_bytes)
+        await uow.publish(ItemEvent(feed_id=feed_id, item_id=item_id, state=ArchiveState.wanted))
+    log.info("archive.blocked", item_id=item_id, reason="estimate", estimate_bytes=estimate_bytes)
 
 
 def _discard_objects(layout: Layout, keys: list[str]) -> None:
