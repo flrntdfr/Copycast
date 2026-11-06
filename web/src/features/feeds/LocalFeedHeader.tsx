@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { AddRequestForm } from "@/features/buckets/AddRequestForm";
 import { UploadFilesButton } from "@/features/buckets/UploadFilesDialog";
 import { LocalFeedSettingsDialog } from "./LocalFeedSettingsDialog";
+import { ownsFeed, useMe } from "@/api/session";
 import { OwnerBadge } from "@/features/session/OwnerBadge";
 import { formatMegabytes } from "@/lib/format";
 import { count } from "@/lib/labels";
@@ -23,8 +24,9 @@ export function describeAutoprune(feed: Pick<BucketRead, "autoprune_days">): str
 
 /**
  * A Local feed's header: icon or artwork, name, counts and size, autoprune, the feed URL;
- * Upload files…, Files (its bucket) and Settings top right; the Add URL form under it
- * (`initialUrl` prefills it: the Send-to-Local-feed flow lands here).
+ * Upload files… (on the caller's own Local feeds only), Files (its bucket) and Settings top
+ * right; the Add URL form under it (`initialUrl` prefills it: the Send-to-Local-feed flow
+ * lands here).
  */
 export function LocalFeedHeader({
   feed,
@@ -35,6 +37,7 @@ export function LocalFeedHeader({
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const autoprune = describeAutoprune(feed);
+  const mine = ownsFeed(useMe(), feed);
 
   return (
     <header className="mb-6 space-y-4">
@@ -63,7 +66,7 @@ export function LocalFeedHeader({
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1">
-          <UploadFilesButton bucket={feed} />
+          {mine ? <UploadFilesButton bucket={feed} /> : null}
           <Button asChild variant="outline" size="sm">
             <Link to="/buckets/$bucketId" params={{ bucketId: feed.id }}>
               <HardDrive /> Files

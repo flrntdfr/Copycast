@@ -38,6 +38,15 @@ export interface Owned {
 }
 
 /**
+ * Whether the signed-in User owns `feed` (true without a User, in open mode, and for a Feed
+ * with no owner). An Admin sees other Users' Feeds but cannot upload into them: an upload
+ * belongs to whoever staged it and goes only into a Feed of that User (spec §3.8).
+ */
+export function ownsFeed(me: MeRead | undefined, feed: Owned | null | undefined): boolean {
+  return !me || !feed?.owner || feed.owner === me.username;
+}
+
+/**
  * The owner to label a Feed with: only an Admin sees labels, and only on another User's Feed
  * (their own, and every Feed in open mode, carry none). Null when nothing is shown.
  */

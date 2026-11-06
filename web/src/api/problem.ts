@@ -220,12 +220,14 @@ export function describeProblem(error: unknown): { title: string; description?: 
     }
     if (error.slug === "over-quota") {
       const { used_bytes: used, quota_bytes: quota } = error.extensions;
+      // Only an Owner at or over their quota needs to free space; otherwise what was asked
+      // for does not fit what is left, which the server's detail says.
+      const full = typeof used === "number" && typeof quota === "number" && used >= quota;
       return {
         title: "Over quota",
-        description:
-          typeof used === "number" && typeof quota === "number"
-            ? `${formatBytes(used)} of ${formatBytes(quota)} used: free some space first`
-            : (error.detail ?? undefined),
+        description: full
+          ? `${formatBytes(used)} of ${formatBytes(quota)} used: free some space first`
+          : (error.detail ?? undefined),
       };
     }
     if (error.slug === "network")

@@ -4,7 +4,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import type { BucketRead, BucketUpdate, RequestCreate } from "@/api/types";
-import { bucket, item, problem } from "@/test/factories";
+import { bucket, item, me, problem } from "@/test/factories";
 import { renderApp } from "@/test/render";
 import { server } from "@/test/server";
 
@@ -265,6 +265,77 @@ describe("Local feed page", () => {
     expect(within(dialog).getAllByTestId("upload-over-quota")).toHaveLength(2);
     expect(within(dialog).getAllByLabelText("Over quota")).toHaveLength(2);
     expect(await within(dialog).findByText("2 files over quota")).toBeInTheDocument();
+  });
+
+  it("marks every uploaded file when the batch does not fit, and says why", async () => {
+    let added = 0;
+    server.use(
+      ...handlers(),
+      http.post("/api/uploads", async ({ request }) => {
+        const { filename } = (await request.json()) as { filename: string };
+        const id = `u-${filename}`;
+        return HttpResponse.json(
+          {
+            id,
+            filename,
+            state: "pending",
+            upload_url: `http://public.example/uploads/${id}/token`,
+            size_bytes: null,
+            tags: null,
+            created_at: "2026-10-27T00:00:00Z",
+          },
+          { status: 201 },
+        );
+      }),
+      http.put("/uploads/:id/:token", ({ params }) =>
+        HttpResponse.json({ id: params.id, state: "received" }),
+      ),
+      http.post("/api/buckets/:bucketId/uploads", () => {
+        added += 1;
+        return HttpResponse.json(
+          problem("over-quota", 507, {
+            used_bytes: 0,
+            quota_bytes: 200_000,
+            detail: "over quota: 238.0 kB do not fit in the 200.0 kB left",
+          }),
+          { status: 507 },
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/feed/bucket-1");
+    await screen.findByRole("heading", { name: "Copycast" });
+    const files = ["Part 1.mp3", "Part 2.mp3", "Part 3.mp3"].map(
+      (name) => new File([`ID3 ${name}`], name, { type: "audio/mpeg" }),
+    );
+    await user.upload(screen.getByLabelText("Audio files to upload"), files);
+
+    const dialog = await screen.findByRole("dialog", { name: "Upload to Copycast" });
+    expect(await within(dialog).findByText("3 files over quota")).toBeInTheDocument();
+    expect(added).toBe(1);
+    expect(within(dialog).queryByLabelText("Uploaded")).not.toBeInTheDocument();
+    expect(within(dialog).getAllByTestId("upload-over-quota")).toHaveLength(3);
+    expect(within(dialog).queryByText("Done")).not.toBeInTheDocument();
+    // Nothing is used: the server's reason, not "free some space first".
+    expect(
+      await screen.findByText("over quota: 238.0 kB do not fit in the 200.0 kB left"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/free some space first/)).not.toBeInTheDocument();
+  });
+
+  it("offers no upload on another User's Local feed, which only they can fill", async () => {
+    const bobs = bucket({ id: "bucket-bob", name: "Bob's", title: "Bob's", owner: "bob" });
+    server.use(
+      ...handlers(undefined, [bobs]),
+      http.get("/api/me", () =>
+        HttpResponse.json(me({ username: "root", auth_mode: "users", via: "session" })),
+      ),
+    );
+    renderApp("/feed/bucket-bob");
+    await screen.findByRole("heading", { name: "Bob's" });
+    expect(screen.getByTestId("owner-badge")).toHaveTextContent("bob");
+    expect(screen.queryByRole("button", { name: "Upload files…" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
 
   it("offers Delete for a Local feed that is not the default", async () => {

@@ -127,6 +127,13 @@ export function UploadFilesButton({ bucket }: { bucket: BucketRead }) {
         });
         toast.success(`Added ${count(ids.length, "Episode")} to ${bucket.name}`);
       } catch (error) {
+        // Nothing of the batch was added: every uploaded file says so, not "Uploaded".
+        const state: FileState = isOverQuota(error)
+          ? { status: "over-quota" }
+          : { status: "failed", error: errorText(error) };
+        setEntries((current) =>
+          current.map((entry) => (entry.state.status === "received" ? { ...entry, state } : entry)),
+        );
         toast.error("The uploads could not be added", { description: errorText(error) });
       }
       invalidateFeed(bucket.id);
