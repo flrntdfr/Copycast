@@ -2,7 +2,9 @@
 
 Status: accepted (v1); carries the v0 stance forward; narrowed by ADR 0011 for direct deployments,
 by ADR 0023 (no Source-driven fetch reaches an internal address) and by ADR 0025 (cross-site
-writes and foreign Host names are refused)
+writes and foreign Host names are refused); amended by ADR 0027: with neither users nor a
+password configured (open mode) every request acts as one implicit Admin, and this ADR
+holds unchanged
 
 ## Context
 
