@@ -5,25 +5,40 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from copycast.adapters.db.base import utcnow
-from copycast.adapters.db.models import Request, RequestItem
+from copycast.adapters.db.models import Feed, Request, RequestItem
 from copycast.application.services.context import Scope
 from copycast.domain.enums import RequestedVia, RequestStatus
 from copycast.domain.exceptions import NotFound
 
 
 class RequestRepository:
+    """Requests; reads show only Requests of Local feeds the scope may see."""
+
     def __init__(self, session: AsyncSession, scope: Scope = Scope.SYSTEM) -> None:
         self._session = session
         self._scope = scope
 
+    def _visible[T: tuple[Any, ...]](self, stmt: Select[T]) -> Select[T]:
+        """``stmt`` (over ``requests``) restricted to the Feeds this scope may see."""
+        owner = self._scope.visible_owner
+        if owner is None:
+            return stmt
+        return stmt.join(Feed, Feed.id == Request.feed_id).where(Feed.owner == owner)
+
     async def get(self, request_id: uuid.UUID) -> Request | None:
-        return await self._session.get(Request, request_id)
+        if self._scope.visible_owner is None:
+            return await self._session.get(Request, request_id)
+        result = await self._session.execute(
+            self._visible(select(Request).where(Request.id == request_id))
+        )
+        return result.scalar_one_or_none()
 
     async def require(self, request_id: uuid.UUID, feed_id: str | None = None) -> Request:
         request = await self.get(request_id)
@@ -52,9 +67,9 @@ class RequestRepository:
 
     async def for_feed(self, feed_id: str) -> list[Request]:
         result = await self._session.execute(
-            select(Request)
-            .where(Request.feed_id == feed_id)
-            .order_by(Request.created_at, Request.id)
+            self._visible(select(Request).where(Request.feed_id == feed_id)).order_by(
+                Request.created_at, Request.id
+            )
         )
         return list(result.scalars())
 
@@ -64,13 +79,14 @@ class RequestRepository:
         total = int(
             (
                 await self._session.execute(
-                    select(func.count()).select_from(Request).where(Request.feed_id == feed_id)
+                    self._visible(
+                        select(func.count()).select_from(Request).where(Request.feed_id == feed_id)
+                    )
                 )
             ).scalar_one()
         )
         rows = await self._session.execute(
-            select(Request)
-            .where(Request.feed_id == feed_id)
+            self._visible(select(Request).where(Request.feed_id == feed_id))
             .order_by(Request.created_at.desc(), Request.id)
             .limit(limit)
             .offset(offset)

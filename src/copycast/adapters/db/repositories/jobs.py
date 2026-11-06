@@ -7,13 +7,25 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Select, and_, delete, exists, func, or_, select, text, update
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    Update,
+    and_,
+    delete,
+    exists,
+    func,
+    or_,
+    select,
+    text,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from copycast.adapters.db.base import refresh_loaded, rows_affected
-from copycast.adapters.db.models import ACTIVE_STATUSES, Job, JobLogLine
+from copycast.adapters.db.models import ACTIVE_STATUSES, Feed, Job, JobLogLine
 from copycast.application.models import QueueStats
 from copycast.application.services.context import Scope
 from copycast.domain.enums import ErrorKind, JobKind, JobStatus, JobTrigger, LogLevel
@@ -52,14 +64,43 @@ def dedup_key(kind: JobKind, ident: str | uuid.UUID) -> str:
 
 
 class JobRepository:
+    """The job queue. With ``scope.visible_owner`` set (a Member, any API key), the
+    observing reads and ``cancel`` see only jobs of that Owner's Feeds, plus the
+    feed-less jobs that Owner requested; a job filtered out behaves like a missing one.
+    The worker's claim and bookkeeping methods run as SYSTEM and are unscoped.
+    ``enqueue`` stamps ``requested_by`` with the scope's actor.
+    """
+
     def __init__(self, session: AsyncSession, scope: Scope = Scope.SYSTEM) -> None:
         self._session = session
         self._scope = scope
 
+    def _visibility(self) -> ColumnElement[bool] | None:
+        """The condition on ``jobs`` this scope may see; ``None`` sees every job."""
+        owner = self._scope.visible_owner
+        if owner is None:
+            return None
+        owned = select(Feed.id).where(Feed.owner == owner)
+        return or_(
+            Job.feed_id.in_(owned),
+            and_(Job.feed_id.is_(None), Job.requested_by == owner),
+        )
+
+    def _visible[T: tuple[Any, ...]](self, stmt: Select[T]) -> Select[T]:
+        condition = self._visibility()
+        return stmt if condition is None else stmt.where(condition)
+
+    def _visible_update(self, stmt: Update) -> Update:
+        condition = self._visibility()
+        return stmt if condition is None else stmt.where(condition)
+
     # ------------------------------------------------------------------ reads
 
     async def get(self, job_id: uuid.UUID) -> Job | None:
-        return await self._session.get(Job, job_id)
+        if self._scope.visible_owner is None:
+            return await self._session.get(Job, job_id)
+        result = await self._session.execute(self._visible(select(Job).where(Job.id == job_id)))
+        return result.scalar_one_or_none()
 
     async def require(self, job_id: uuid.UUID) -> Job:
         job = await self.get(job_id)
@@ -80,7 +121,7 @@ class JobRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[Job], int]:
-        base: Select[tuple[Job]] = select(Job)
+        base: Select[tuple[Job]] = self._visible(select(Job))
         if feed_id is not None:
             base = base.where(Job.feed_id == feed_id)
         if kind is not None:
@@ -99,7 +140,9 @@ class JobRepository:
         return list(rows.scalars()), total
 
     async def active(self, *, feed_id: str | None = None, kind: JobKind | None = None) -> list[Job]:
-        stmt = select(Job).where(Job.status.in_(ACTIVE_STATUSES)).order_by(Job.created_at, Job.id)
+        stmt = self._visible(select(Job).where(Job.status.in_(ACTIVE_STATUSES))).order_by(
+            Job.created_at, Job.id
+        )
         if feed_id is not None:
             stmt = stmt.where(Job.feed_id == feed_id)
         if kind is not None:
@@ -129,8 +172,9 @@ class JobRepository:
 
     async def latest_for_item(self, item_id: str) -> Job | None:
         result = await self._session.execute(
-            select(Job)
-            .where(Job.item_id == item_id, Job.kind == JobKind.archive_item.value)
+            self._visible(
+                select(Job).where(Job.item_id == item_id, Job.kind == JobKind.archive_item.value)
+            )
             .order_by(Job.created_at.desc())
             .limit(1)
         )
@@ -166,6 +210,7 @@ class JobRepository:
             "priority": priority,
             "max_attempts": max_attempts or MAX_ATTEMPTS[kind],
             "dedup_key": dedup,
+            "requested_by": self._scope.actor,
         }
         if run_after is not None:
             values["run_after"] = run_after
@@ -320,23 +365,28 @@ class JobRepository:
         return job
 
     async def cancel(self, job_id: uuid.UUID) -> Job:
-        """Queued -> cancelled now; running -> ``cancel_requested`` for the worker to honour."""
+        """Queued -> cancelled now; running -> ``cancel_requested`` for the worker to honour.
+
+        A job this scope may not see is :class:`NotFound` and left untouched.
+        """
+        if await self.get(job_id) is None:
+            raise NotFound("job", str(job_id))
         await self._session.execute(
-            update(Job)
-            .where(Job.id == job_id, Job.status == JobStatus.queued.value)
-            .values(
+            self._visible_update(
+                update(Job).where(Job.id == job_id, Job.status == JobStatus.queued.value)
+            ).values(
                 status=JobStatus.cancelled.value,
                 finished_at=func.now(),
                 error_kind=ErrorKind.cancelled.value,
             )
         )
         await self._session.execute(
-            update(Job)
-            .where(Job.id == job_id, Job.status == JobStatus.running.value)
-            .values(cancel_requested=True)
+            self._visible_update(
+                update(Job).where(Job.id == job_id, Job.status == JobStatus.running.value)
+            ).values(cancel_requested=True)
         )
         job = await self._session.get(Job, job_id, populate_existing=True)
-        if job is None:
+        if job is None:  # pragma: no cover - checked above, in this transaction
             raise NotFound("job", str(job_id))
         return job
 
@@ -360,21 +410,21 @@ class JobRepository:
         return rows_affected(first) + rows_affected(second)
 
     async def queue_stats(self, *, now: datetime, since: datetime) -> QueueStats:
-        """Queued (runnable now or later), running, and failed since ``since``."""
+        """Queued (runnable now or later), running, and failed since ``since``, of the jobs
+        this scope may see."""
         queued = Job.status == JobStatus.queued.value
         runnable = and_(queued, Job.run_after <= now)
         failed = and_(Job.status == JobStatus.failed.value, Job.finished_at >= since)
-        row = (
-            await self._session.execute(
-                select(
-                    func.count().filter(runnable),
-                    func.count().filter(and_(queued, Job.run_after > now)),
-                    func.count().filter(Job.status == JobStatus.running.value),
-                    func.count().filter(failed),
-                    func.min(Job.run_after).filter(runnable),
-                ).where(or_(Job.status.in_(ACTIVE_STATUSES), failed))
-            )
-        ).one()
+        stmt = self._visible(
+            select(
+                func.count().filter(runnable),
+                func.count().filter(and_(queued, Job.run_after > now)),
+                func.count().filter(Job.status == JobStatus.running.value),
+                func.count().filter(failed),
+                func.min(Job.run_after).filter(runnable),
+            ).where(or_(Job.status.in_(ACTIVE_STATUSES), failed))
+        )
+        row = (await self._session.execute(stmt)).one()
         return QueueStats(
             queued=row[0],
             waiting=row[1],

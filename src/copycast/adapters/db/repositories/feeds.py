@@ -6,7 +6,7 @@ from collections.abc import Collection
 from datetime import datetime
 from typing import Any, Literal
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import Select, delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,14 +28,31 @@ _SORT_COLUMNS = {
 
 
 class FeedRepository:
+    """Feeds as one Scope sees them.
+
+    Every read that can return another Owner's row filters on ``scope.visible_owner``
+    when it is set (a Member, any API key): a Feed filtered out behaves exactly like a
+    missing one (``get`` is None, ``require`` raises :class:`NotFound`). ``by_dedup_key``,
+    ``default_bucket`` and ``ensure_default_bucket`` name their Owner; ``exists_id`` and
+    the scheduler's ``*_due*`` queries are unscoped by design.
+    """
+
     def __init__(self, session: AsyncSession, scope: Scope = Scope.SYSTEM) -> None:
         self._session = session
         self._scope = scope
 
+    def _visible[T: tuple[Any, ...]](self, stmt: Select[T]) -> Select[T]:
+        """``stmt`` restricted to the Feeds this scope may see."""
+        owner = self._scope.visible_owner
+        return stmt if owner is None else stmt.where(Feed.owner == owner)
+
     # ------------------------------------------------------------------ reads
 
     async def get(self, feed_id: str) -> Feed | None:
-        return await self._session.get(Feed, feed_id)
+        if self._scope.visible_owner is None:
+            return await self._session.get(Feed, feed_id)
+        result = await self._session.execute(self._visible(select(Feed).where(Feed.id == feed_id)))
+        return result.scalar_one_or_none()
 
     async def require(self, feed_id: str) -> Feed:
         feed = await self.get(feed_id)
@@ -46,7 +63,7 @@ class FeedRepository:
     async def get_for_update(self, feed_id: str) -> Feed:
         """Lock the feed row for the rest of the transaction (``SELECT ... FOR UPDATE``)."""
         result = await self._session.execute(
-            select(Feed).where(Feed.id == feed_id).with_for_update()
+            self._visible(select(Feed).where(Feed.id == feed_id)).with_for_update()
         )
         feed = result.scalar_one_or_none()
         if feed is None:
@@ -61,7 +78,7 @@ class FeedRepository:
         :class:`NotFound` as with :meth:`get_for_update`.
         """
         result = await self._session.execute(
-            select(Feed).where(Feed.id == feed_id).with_for_update(skip_locked=True)
+            self._visible(select(Feed).where(Feed.id == feed_id)).with_for_update(skip_locked=True)
         )
         feed = result.scalar_one_or_none()
         if feed is None and await self.get(feed_id) is None:
@@ -88,16 +105,19 @@ class FeedRepository:
         order: Literal["asc", "desc"] = "asc",
     ) -> list[Feed]:
         column = _SORT_COLUMNS[sort]
-        stmt = select(Feed).order_by(column.desc() if order == "desc" else column.asc(), Feed.id)
+        stmt = self._visible(
+            select(Feed).order_by(column.desc() if order == "desc" else column.asc(), Feed.id)
+        )
         if kind is not None:
             stmt = stmt.where(Feed.kind == kind.value)
         return list((await self._session.execute(stmt)).scalars())
 
     async def ids(self) -> list[str]:
-        return list((await self._session.execute(select(Feed.id).order_by(Feed.id))).scalars())
+        stmt = self._visible(select(Feed.id).order_by(Feed.id))
+        return list((await self._session.execute(stmt)).scalars())
 
     async def count(self, kind: FeedKind | None = None) -> int:
-        stmt = select(func.count()).select_from(Feed)
+        stmt = self._visible(select(func.count()).select_from(Feed))
         if kind is not None:
             stmt = stmt.where(Feed.kind == kind.value)
         return int((await self._session.execute(stmt)).scalar_one())
@@ -105,7 +125,8 @@ class FeedRepository:
     async def find_bucket(self, ident: str) -> Feed | None:
         """A Bucket by id, else by case-insensitive name; ``None`` when neither matches.
 
-        By name, the actor's own Local feeds come first, then default ones, then the oldest.
+        Only Local feeds this scope may see; by name, the actor's own come first, then
+        default ones, then the oldest.
         """
         feed = await self.get(ident)
         if feed is not None and feed.kind == FeedKind.bucket:
@@ -114,8 +135,11 @@ class FeedRepository:
         if self._scope.actor is not None:
             ordering.insert(0, (Feed.owner == self._scope.actor).desc())
         result = await self._session.execute(
-            select(Feed)
-            .where(Feed.kind == FeedKind.bucket.value, func.lower(Feed.title) == ident.lower())
+            self._visible(
+                select(Feed).where(
+                    Feed.kind == FeedKind.bucket.value, func.lower(Feed.title) == ident.lower()
+                )
+            )
             .order_by(*ordering)
             .limit(1)
         )
@@ -179,21 +203,18 @@ class FeedRepository:
         return list((await self._session.execute(stmt)).scalars())
 
     async def totals(self) -> Totals:
+        """Feeds, archived Episodes and stored bytes of the Feeds this scope may see."""
         feeds = await self.count()
-        episodes = int(
-            (
-                await self._session.execute(
-                    select(func.count())
-                    .select_from(CatalogItem)
-                    .where(CatalogItem.archive_state == ArchiveState.archived.value)
-                )
-            ).scalar_one()
+        archived = (
+            select(func.count())
+            .select_from(CatalogItem)
+            .where(CatalogItem.archive_state == ArchiveState.archived.value)
         )
-        storage = int(
-            (
-                await self._session.execute(select(func.coalesce(func.sum(Feed.storage_bytes), 0)))
-            ).scalar_one()
-        )
+        if self._scope.visible_owner is not None:
+            archived = self._visible(archived.join(Feed, Feed.id == CatalogItem.feed_id))
+        episodes = int((await self._session.execute(archived)).scalar_one())
+        stored = self._visible(select(func.coalesce(func.sum(Feed.storage_bytes), 0)))
+        storage = int((await self._session.execute(stored)).scalar_one())
         return Totals(feeds=feeds, episodes=episodes, storage_bytes=storage)
 
     # ------------------------------------------------------------------ writes
