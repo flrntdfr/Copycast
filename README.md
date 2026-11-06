@@ -44,21 +44,37 @@ By default Copycast has **no authentication**: the network is the boundary
 
 ### Switching authentication on
 
-For a direct deployment that is not on a trusted network, set `COPYCAST_AUTH_PASSWORD` in
-`.env` ([ADR 0011](docs/adr/0011-optional-authentication-for-direct-deployments.md)). Put
-TLS in front first: HTTP Basic without it is not a gate. With a password set:
+For a deployment that is not on a trusted network, list the people who use it in
+`config/copycast.toml` ([ADR 0027](docs/adr/0027-users-from-the-config-file-sessions-and-totp.md)).
+Put TLS in front first: a password without it is not a gate.
 
-- The **web UI and the API** ask for the operator pair (username `copycast` unless
-  `COPYCAST_AUTH_USERNAME` says otherwise); the browser remembers it for the session.
+```toml
+[[auth.users]]
+username      = "florent"
+password_hash = '$argon2id$...'   # docker run --rm -it ghcr.io/flrntdfr/copycast users hash-password
+totp_secret   = "..."             # docker run --rm ghcr.io/flrntdfr/copycast users totp florent
+admin         = true
+```
+
+- The **web UI and the API** show a login page; a session lasts 30 days of use. An Admin
+  needs a TOTP code on an https site.
+- Each **User owns their Feeds**, Defaults and Cookie files; another User's Feed does not
+  exist for them, and Admins see everything
+  ([ADR 0028](docs/adr/0028-feeds-are-private-to-their-owner.md)). A **quota** per User stops
+  new downloads when it is reached and deletes nothing
+  ([ADR 0029](docs/adr/0029-storage-quotas.md)).
+- A single password still works: `COPYCAST_AUTH_PASSWORD` in `.env` makes one Admin
+  (username `copycast` unless `COPYCAST_AUTH_USERNAME` says otherwise) who signs in on the
+  same page.
 - Every **feed gets its own username and password**, minted when it is created and shown
   next to its URL. The feed URL you copy already carries them
   (`https://user:pass@host/feeds/….xml`), which Overcast, Pocket Casts and AntennaPod
   accept for the feed and its episodes. Apple Podcasts fetches such a feed but not its audio.
   A pair opens that one feed; **Rotate** mints a new one and cuts off every client holding
   the old one.
-- **MCP takes API keys** minted on the *MCP* page, each with a scope (`read`, `write`
-  or `full`) that caps what the agent may do. The key is shown once, as two lines ready for a
-  `.env` file (`COPYCAST_MCP_URL` and `COPYCAST_MCP_KEY`). For Claude Code:
+- **MCP takes API keys** minted on the *MCP* page, each acting as the User who minted it,
+  with a scope (`read`, `write` or `full`) that caps what the agent may do. The key is shown
+  once, as two lines ready for a `.env` file (`COPYCAST_MCP_URL` and `COPYCAST_MCP_KEY`). For Claude Code:
 
   ```bash
   claude mcp add --transport http copycast https://copycast.example/mcp --header "Authorization: Bearer $COPYCAST_MCP_KEY"
