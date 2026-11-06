@@ -25,7 +25,7 @@ from typing import Final
 
 from copycast.application.events import ItemEvent
 from copycast.application.models import QuotaStatus
-from copycast.application.services.context import ServiceContext, UnitOfWorkPort
+from copycast.application.services.context import UnitOfWorkPort
 from copycast.application.users import UserDirectory
 from copycast.domain.enums import ArchiveState, JobTrigger, WantedReason
 from copycast.domain.exceptions import OverQuota
@@ -36,8 +36,6 @@ log = get_logger(__name__)
 
 RELEASE_PER_TICK: Final = 20
 """Blocked items one scheduler tick may release per Owner."""
-
-BLOCKED_DETAIL: Final = "the episode does not fit in the storage left; free some space"
 
 
 async def quota_status(uow: UnitOfWorkPort, users: UserDirectory, username: str) -> QuotaStatus:
@@ -181,21 +179,8 @@ async def on_manual_wanted(uow: UnitOfWorkPort, item_ids: Collection[str]) -> No
         )
 
 
-async def feed_owner_over_quota(ctx: ServiceContext, feed_id: str) -> OverQuota:
-    """The 507 problem for the Owner of ``feed_id``, for an item the archive job blocked
-    (``/feeds`` first plays, which run as SYSTEM)."""
-    async with ctx.uow_factory() as uow:
-        feed = await uow.feeds.require(feed_id)
-        status = await quota_status(uow, ctx.users, feed.owner)
-    if status.state == "over":
-        return over_quota(status)
-    return over_quota(status, BLOCKED_DETAIL)
-
-
 __all__ = [
-    "BLOCKED_DETAIL",
     "RELEASE_PER_TICK",
-    "feed_owner_over_quota",
     "gate_manual",
     "on_manual_wanted",
     "over_quota",

@@ -35,11 +35,15 @@ def local(url: str) -> str:
 
 
 def over_quota(response: httpx.Response) -> dict[str, object]:
+    """A bare 507: no Retry-After, and nothing of the Owner's usage or quota, which a
+    Feed's pair or media key must not open (it reaches one Feed, not the account)."""
     assert response.status_code == 507, response.text
     assert "retry-after" not in response.headers
     assert "www-authenticate" not in response.headers
     problem: dict[str, object] = response.json()
     assert problem["type"] == "urn:copycast:problem:over-quota"
+    assert "used_bytes" not in problem and "quota_bytes" not in problem
+    assert problem["detail"] == public.FEED_OVER_QUOTA_DETAIL
     return problem
 
 
@@ -64,8 +68,7 @@ async def test_the_first_play_of_an_over_quota_owner_is_507_at_once(
         response = await client.request(method, local(item["public_media_url"]))
         assert response.status_code == 507
         if method == "GET":
-            problem = over_quota(response)
-            assert (problem["used_bytes"], problem["quota_bytes"]) == (2000, 1000)
+            over_quota(response)
     assert time.monotonic() - started < PATIENCE_SECONDS
     again = (await items_of(client, mirror["id"]))[0]
     assert again["state"] != "wanted", "nothing was queued"
@@ -94,9 +97,7 @@ async def test_a_first_play_the_job_blocks_during_the_wait_is_507_at_once(
         started = time.monotonic()
         response = await client.get(local(item["public_media_url"]))
         assert time.monotonic() - started < PATIENCE_SECONDS, "woken by the item's event"
-        problem = over_quota(response)
-        assert (problem["used_bytes"], problem["quota_bytes"]) == (1_000_000, 10_000_000)
-        assert "does not fit" in str(problem["detail"])
+        over_quota(response)
     finally:
         runner.request_stop()
         await asyncio.wait_for(task, timeout=15)

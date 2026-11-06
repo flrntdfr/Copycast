@@ -57,10 +57,9 @@ from copycast.adapters.api.problems import problem_response, slug_responses
 from copycast.application.models import ItemRead
 from copycast.application.services import Services
 from copycast.application.services.light_refresh import LIGHT_REFRESH_DEADLINE_SECONDS
-from copycast.application.services.quota import feed_owner_over_quota
 from copycast.domain.credentials import ARTWORK_MAC_LEN, artwork_mac_ok
 from copycast.domain.enums import ArchiveState, AssetKind, AssetState, FeedKind, JobTrigger
-from copycast.domain.exceptions import Conflict, Unsupported
+from copycast.domain.exceptions import Conflict, OverQuota, Unsupported
 from copycast.domain.urls import COPYCAST_ARTWORK_PATH, artwork_ext
 from copycast.domain.users import Principal
 from copycast.logging import get_logger
@@ -81,6 +80,8 @@ ON_DEMAND_WAIT_SECONDS = 50.0
 ON_DEMAND_POLL_SECONDS = 5.0
 """The re-check interval when no event arrives (the event hub reconnecting, a missed NOTIFY)."""
 ON_DEMAND_RETRY_AFTER = 30
+FEED_OVER_QUOTA_DETAIL = "this episode cannot be archived now: the feed's storage is full"
+"""The 507 detail on ``/feeds``: no usage, no quota, the same whether over or not fitting."""
 ASSET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 ART_TOKEN_RE = re.compile(
     rf"^(?P<asset_id>[0-9a-f]{{16}})-(?P<mac>[a-z2-7]{{{ARTWORK_MAC_LEN}}})"
@@ -230,7 +231,13 @@ async def media(
         if head is None or not head.automatic or not _on_demand(item):
             return problem_response(request, status=404, slug="not-found", detail="no such media")
         hub: EventHub | None = getattr(request.app.state, "event_hub", None)
-        item = await _archive_on_demand(services, hub, feed_id, item_id)
+        try:
+            item = await _archive_on_demand(services, hub, feed_id, item_id)
+        except OverQuota:
+            # A Feed's pair or media key opens that Feed only: never the Owner's usage.
+            return problem_response(
+                request, status=507, slug="over-quota", detail=FEED_OVER_QUOTA_DETAIL
+            )
         if item.media is None:
             return problem_response(
                 request,
@@ -274,9 +281,10 @@ async def _archive_on_demand(
     ``ON_DEMAND_POLL_SECONDS`` in case one is missed. The job keeps running when the
     wait ends; the client is told to retry.
 
-    ``OverQuota`` (507) leaves at once: from ``archive_item`` when the Owner is over, or
-    as soon as a pass finds the item blocked by the quota (the job's ``ItemEvent`` wakes
-    the wait), rather than polling out the deadline.
+    ``OverQuota`` leaves at once: from ``archive_item`` when the Owner is over, or as
+    soon as a pass finds the item blocked by the quota (the job's ``ItemEvent`` wakes the
+    wait), rather than polling out the deadline. :func:`media` answers it with a bare
+    507 that says nothing of the Owner's usage or quota.
     """
     subscription = hub.subscribe(Principal.SYSTEM, feed_id=feed_id) if hub is not None else None
     try:
@@ -293,7 +301,7 @@ async def _archive_on_demand(
             if item.media is not None or item.state is ArchiveState.failed:
                 return item
             if item.blocked_reason is not None:
-                raise await feed_owner_over_quota(services.ctx, feed_id)
+                raise OverQuota(0, 0, FEED_OVER_QUOTA_DETAIL)
             remaining = deadline - loop.time()
             if remaining <= 0:
                 return item
