@@ -83,7 +83,8 @@ async def test_reassign_moves_everything_and_keeps_news_files(
     report = await reassign(users_settings, "bob", "alice", db_engine=db_engine, layout=layout)
 
     assert report.feeds == bobs
-    assert report.keys == 1 and report.jobs == bobs_jobs
+    assert (report.keys, report.keys_kept) == (0, 1), "keys stay Bob's by default"
+    assert report.jobs == bobs_jobs
     assert await _jobs_requested_by(sessionmaker, "bob") == 0
     assert report.demoted_default == world.defaults["bob"]
     after = await _feeds(sessionmaker)
@@ -97,7 +98,7 @@ async def test_reassign_moves_everything_and_keeps_news_files(
     async with sessionmaker() as session:
         key = await session.scalar(select(ApiKey).where(ApiKey.id == uuid.UUID(world.key_id)))
         job = await session.get(Job, job_id)
-    assert key is not None and key.owner == "alice"
+    assert key is not None and key.owner == "bob", "a moved key would act as Alice"
     assert job is not None and job.requested_by == "alice"
     # feed.json says so too (exported after the commit).
     for fid in bobs:
@@ -121,6 +122,22 @@ async def test_reassign_moves_everything_and_keeps_news_files(
         "users/bob/cookie-files/twitch.txt",
         "users/bob/defaults.json",
     ]
+
+
+async def test_move_keys_gives_olds_keys_to_new(
+    world: World,
+    users_settings: Settings,
+    db_engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    layout: Layout,
+) -> None:
+    report = await reassign(
+        users_settings, "bob", "alice", db_engine=db_engine, layout=layout, move_keys=True
+    )
+    assert (report.keys, report.keys_kept) == (1, 0)
+    async with sessionmaker() as session:
+        key = await session.scalar(select(ApiKey).where(ApiKey.id == uuid.UUID(world.key_id)))
+    assert key is not None and key.owner == "alice"
 
 
 async def test_a_shared_source_refuses_and_lists_every_pair(

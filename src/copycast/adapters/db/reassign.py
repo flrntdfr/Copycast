@@ -8,8 +8,10 @@ runs), and in one transaction:
 1. refused, changing nothing, when NEW is not configured, when OLD is NEW, or when one of
    OLD's Mirrors tracks a Source one of NEW's already does (every clashing pair listed);
 2. OLD's default Local feed, if any, becomes an ordinary Local feed of NEW (NEW keeps hers);
-3. ``feeds.owner``, ``api_keys.owner`` and ``jobs.requested_by`` move from OLD to NEW, and
-   each moved Feed's ``intent_version`` is bumped;
+3. ``feeds.owner`` and ``jobs.requested_by`` move from OLD to NEW, and each moved Feed's
+   ``intent_version`` is bumped. OLD's API keys stay OLD's (dead while OLD is not
+   configured) unless ``move_keys``: a moved key acts as NEW, an Admin's powers included,
+   which fits only the same person renamed, never a departing User's Feeds given away;
 
 then, after the commit, every moved Feed's ``feed.json`` is exported again (a command
 writing SQL has no unit-of-work hooks), and ``users/OLD/`` moves to ``users/NEW/`` in the
@@ -23,7 +25,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
@@ -70,6 +72,9 @@ class ReassignReport:
     new: str
     feeds: list[str] = field(default_factory=list[str])
     keys: int = 0
+    """OLD's API keys moved to NEW (``move_keys`` only)."""
+    keys_kept: int = 0
+    """OLD's API keys left with OLD."""
     jobs: int = 0
     demoted_default: str | None = None
     """OLD's default Local feed, now an ordinary Local feed of NEW."""
@@ -91,7 +96,9 @@ async def dedup_clashes(session: AsyncSession, old: str, new: str) -> list[Dedup
     return [DedupClash(o, n, key) for o, n, key in rows.tuples() if key is not None]
 
 
-async def reassign_rows(session: AsyncSession, old: str, new: str) -> ReassignReport:
+async def reassign_rows(
+    session: AsyncSession, old: str, new: str, *, move_keys: bool = False
+) -> ReassignReport:
     """Steps 1 to 3 in ``session``'s transaction (the caller commits); raises
     :class:`ReassignRefused` before writing anything on a dedup-key clash."""
     clashes = await dedup_clashes(session, old, new)
@@ -118,7 +125,17 @@ async def reassign_rows(session: AsyncSession, old: str, new: str) -> ReassignRe
         .returning(Feed.id)
     )
     feeds = sorted(moved.all())
-    keys = await session.execute(update(ApiKey).where(ApiKey.owner == old).values(owner=new))
+    moved_keys = kept_keys = 0
+    if move_keys:
+        keys = await session.execute(update(ApiKey).where(ApiKey.owner == old).values(owner=new))
+        moved_keys = _rowcount(keys)
+    else:
+        kept_keys = int(
+            await session.scalar(
+                select(func.count()).select_from(ApiKey).where(ApiKey.owner == old)
+            )
+            or 0
+        )
     jobs = await session.execute(
         update(Job).where(Job.requested_by == old).values(requested_by=new)
     )
@@ -126,7 +143,8 @@ async def reassign_rows(session: AsyncSession, old: str, new: str) -> ReassignRe
         old=old,
         new=new,
         feeds=feeds,
-        keys=_rowcount(keys),
+        keys=moved_keys,
+        keys_kept=kept_keys,
         jobs=_rowcount(jobs),
         demoted_default=demoted,
     )
@@ -147,6 +165,11 @@ def check_names(settings: Settings, old: str, new: str) -> None:
         raise ReassignRefused(f"{new} is not a configured User; add it to [[auth.users]] first")
 
 
+def old_is_configured(settings: Settings, old: str) -> bool:
+    """Whether OLD is still a configured User (they keep signing in, with no Feeds left)."""
+    return UserDirectory(settings).is_configured(old)
+
+
 async def reassign(
     settings: Settings,
     old: str,
@@ -154,6 +177,7 @@ async def reassign(
     *,
     db_engine: AsyncEngine | None = None,
     layout: Layout | None = None,
+    move_keys: bool = False,
 ) -> ReassignReport:
     """Give everything OLD owns to NEW (see the module docstring)."""
     check_names(settings, old, new)
@@ -166,17 +190,24 @@ async def reassign(
         async with SessionLock(engine, WORKER_LOCK) as lock:
             if not lock.held:
                 raise ReassignRefused(WORKER_RUNNING)
-            return await _reassign(create_sessionmaker(engine), layout, old, new)
+            return await _reassign(
+                create_sessionmaker(engine), layout, old, new, move_keys=move_keys
+            )
     finally:
         if own_engine:
             await engine.dispose()
 
 
 async def _reassign(
-    sessionmaker: async_sessionmaker[AsyncSession], layout: Layout, old: str, new: str
+    sessionmaker: async_sessionmaker[AsyncSession],
+    layout: Layout,
+    old: str,
+    new: str,
+    *,
+    move_keys: bool,
 ) -> ReassignReport:
     async with sessionmaker() as session, session.begin():
-        report = await reassign_rows(session, old, new)
+        report = await reassign_rows(session, old, new, move_keys=move_keys)
     async with sessionmaker() as session:
         for feed_id in report.feeds:
             await export_descriptor(session, layout, feed_id, force=True)
@@ -187,6 +218,7 @@ async def _reassign(
         new=new,
         feeds=len(report.feeds),
         keys=report.keys,
+        keys_kept=report.keys_kept,
         jobs=report.jobs,
         demoted_default=report.demoted_default,
         files=len(moved.copied),
@@ -197,6 +229,7 @@ async def _reassign(
         new=new,
         feeds=report.feeds,
         keys=report.keys,
+        keys_kept=report.keys_kept,
         jobs=report.jobs,
         demoted_default=report.demoted_default,
         files=moved.copied,
@@ -211,6 +244,7 @@ __all__ = [
     "ReassignReport",
     "check_names",
     "dedup_clashes",
+    "old_is_configured",
     "reassign",
     "reassign_rows",
 ]

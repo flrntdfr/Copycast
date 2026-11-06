@@ -28,14 +28,23 @@ def _users_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "configure_logging", lambda *args, **kwargs: None)
 
 
-def _fake_reassign(
-    monkeypatch: pytest.MonkeyPatch, outcome: ReassignReport | Exception
-) -> list[tuple[str, str]]:
-    calls: list[tuple[str, str]] = []
+class Calls(list[tuple[str, str]]):
+    """The (OLD, NEW) of each call, and its ``move_keys`` in ``move_keys``."""
 
-    async def fake(settings: Settings, old: str, new: str, **_: Any) -> ReassignReport:
+    def __init__(self) -> None:
+        super().__init__()
+        self.move_keys: list[bool] = []
+
+
+def _fake_reassign(monkeypatch: pytest.MonkeyPatch, outcome: ReassignReport | Exception) -> Calls:
+    calls = Calls()
+
+    async def fake(
+        settings: Settings, old: str, new: str, *, move_keys: bool = False, **_: Any
+    ) -> ReassignReport:
         assert settings.auth.mode == "users"
         calls.append((old, new))
+        calls.move_keys.append(move_keys)
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
@@ -48,6 +57,7 @@ def test_reassign_is_a_users_command() -> None:
     result = CliRunner().invoke(main, ["users", "reassign", "--help"])
     assert result.exit_code == 0, result.output
     assert "OLD" in result.output and "NEW" in result.output and "--yes" in result.output
+    assert "--move-keys" in result.output
 
 
 @pytest.mark.parametrize(
@@ -84,6 +94,7 @@ def test_it_prints_what_moved(monkeypatch: pytest.MonkeyPatch) -> None:
         new="alice",
         feeds=["a" * 16, "b" * 16, "copycast-abcdef"],
         keys=2,
+        keys_kept=0,
         jobs=5,
         demoted_default="copycast-abcdef",
         files=["users/copycast/defaults.json"],
@@ -115,3 +126,24 @@ def test_refusals_from_the_database_exit_non_zero(
     result = CliRunner().invoke(main, ["users", "reassign", "copycast", "alice", "--yes"])
     assert result.exit_code == code
     assert result.output == f"copycast: {error}\n"
+
+
+def test_keys_stay_with_old_unless_asked_and_a_configured_old_is_warned_about(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = ReassignReport(old="alice", new="root", feeds=["a" * 16], keys_kept=2)
+    calls = _fake_reassign(monkeypatch, report)
+    moved = calls.move_keys
+    runner = CliRunner()
+    kept = runner.invoke(main, ["users", "reassign", "alice", "root"], input="y\n")
+    assert kept.exit_code == 0, kept.output
+    assert "alice is still a configured User" in kept.output
+    assert "(Feeds, jobs, users/alice/) to root?" in kept.output
+    assert "2 API keys left with alice" in kept.output
+    assert "will act as" not in kept.output
+    assert calls == [("alice", "root")] and moved == [False]
+
+    asked = runner.invoke(main, ["users", "reassign", "alice", "root", "--move-keys", "--yes"])
+    assert asked.exit_code == 0, asked.output
+    assert "whoever holds alice's API keys will act as root" in asked.output
+    assert moved == [False, True]

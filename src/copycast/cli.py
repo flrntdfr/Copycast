@@ -311,17 +311,27 @@ def users_totp(username: str, secret: str | None) -> None:
 @click.argument("old")
 @click.argument("new")
 @click.option("--yes", is_flag=True, help="Do not ask for confirmation.")
-def users_reassign(old: str, new: str, yes: bool) -> None:
-    """Give every Feed, API key and job of OLD, and its Defaults and Cookie files, to NEW.
+@click.option(
+    "--move-keys",
+    is_flag=True,
+    help="Also give OLD's API keys to NEW: whoever holds them then acts as NEW.",
+)
+def users_reassign(old: str, new: str, yes: bool, move_keys: bool) -> None:
+    """Give every Feed and job of OLD, and its Defaults and Cookie files, to NEW.
 
     For Feeds whose owner is no longer configured (a renamed user, a switch to users
     mode). NEW must be configured. Refused while the worker runs (stop it first), and when
     OLD and NEW mirror the same Source. Feed URLs, pairs and media keys do not change.
+
+    OLD's API keys stay OLD's (they stop working while OLD is not configured). Pass
+    --move-keys only when OLD and NEW are the same person: a moved key acts as NEW, with
+    NEW's Admin powers if NEW is an Admin.
     """
     settings = _load_settings()
     configure_logging(settings, process="cli")
     old, new = old.strip(), new.strip()
     check_names = _lazy("copycast.adapters.db.reassign", "check_names")
+    old_is_configured = _lazy("copycast.adapters.db.reassign", "old_is_configured")
     refused = _lazy("copycast.adapters.db.reassign", "ReassignRefused")
     run_reassign = _lazy("copycast.adapters.db.reassign", "reassign")
     try:
@@ -329,13 +339,22 @@ def users_reassign(old: str, new: str, yes: bool) -> None:
     except refused as exc:
         click.echo(f"copycast: {exc}", err=True)
         sys.exit(1)
-    if not yes:
-        click.confirm(
-            f"Give everything {old} owns (Feeds, API keys, jobs, users/{old}/) to {new}?",
-            abort=True,
+    if old_is_configured(settings, old):
+        click.echo(
+            f"warning: {old} is still a configured User; they keep signing in, with no Feeds",
+            err=True,
         )
+    if move_keys:
+        click.echo(
+            f"warning: whoever holds {old}'s API keys will act as {new}, "
+            f"with everything {new} may do",
+            err=True,
+        )
+    if not yes:
+        what = "Feeds, API keys, jobs" if move_keys else "Feeds, jobs"
+        click.confirm(f"Give everything {old} owns ({what}, users/{old}/) to {new}?", abort=True)
     try:
-        report = asyncio.run(run_reassign(settings, old, new))
+        report = asyncio.run(run_reassign(settings, old, new, move_keys=move_keys))
     except SettingsError as exc:
         click.echo(f"copycast: {exc}", err=True)
         sys.exit(EXIT_CONFIG)
@@ -349,6 +368,11 @@ def users_reassign(old: str, new: str, yes: bool) -> None:
         )
     for key in report.conflicts:
         click.echo(f"{key} kept: {new} has its own")
+    if report.keys_kept:
+        click.echo(
+            f"{report.keys_kept} API keys left with {old} (dead while {old} is not "
+            "configured; --move-keys moves them)"
+        )
     click.echo(
         f"moved from {old} to {new}: {len(report.feeds)} Feeds, {report.keys} API keys, "
         f"{report.jobs} jobs, {len(report.files)} files; {len(report.conflicts)} conflicts"
