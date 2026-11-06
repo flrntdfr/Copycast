@@ -56,14 +56,22 @@ def _current_revision(conn: Connection) -> str | None:
     return heads[0] if heads else None
 
 
-def _run_command(conn: Connection, action: Callable[[Config], Any]) -> None:
+def _run_command(
+    conn: Connection, action: Callable[[Config], Any], *, owner_of_existing: str | None = None
+) -> None:
     cfg = alembic_config()
     cfg.attributes["connection"] = conn
+    if owner_of_existing is not None:
+        cfg.attributes["owner_of_existing"] = owner_of_existing
     action(cfg)
 
 
-def _upgrade(conn: Connection, revision: str = "head") -> None:
-    _run_command(conn, lambda cfg: command.upgrade(cfg, revision))
+def _upgrade(
+    conn: Connection, revision: str = "head", owner_of_existing: str | None = None
+) -> None:
+    _run_command(
+        conn, lambda cfg: command.upgrade(cfg, revision), owner_of_existing=owner_of_existing
+    )
 
 
 def _downgrade(conn: Connection, revision: str = "base") -> None:
@@ -79,13 +87,18 @@ async def schema_is_current(db_engine: AsyncEngine) -> bool:
     return await current_revision(db_engine) == head_revision()
 
 
-async def ensure_schema(db_engine: AsyncEngine) -> None:
-    """Migrate to head, serialized across processes by ``MIGRATE_LOCK``. Idempotent."""
+async def ensure_schema(db_engine: AsyncEngine, *, owner_of_existing: str | None = None) -> None:
+    """Migrate to head, serialized across processes by ``MIGRATE_LOCK``. Idempotent.
+
+    ``owner_of_existing`` is the User migration 0017 gives the existing Feeds and keys
+    to; every migrating process passes the same one (``settings.auth``). None leaves
+    the migration to read the settings itself.
+    """
     async with db_engine.connect() as conn:
         await advisory_lock(conn, MIGRATE_LOCK)
         try:
             if await conn.run_sync(_current_revision) != head_revision():
-                await conn.run_sync(_upgrade)
+                await conn.run_sync(_upgrade, "head", owner_of_existing)
             await conn.commit()
         finally:
             await advisory_unlock(conn, MIGRATE_LOCK)
@@ -136,11 +149,15 @@ async def await_schema(
 
 
 async def prepare_schema(
-    db_engine: AsyncEngine, *, auto_migrate: bool, wait_seconds: float = SCHEMA_WAIT_SECONDS
+    db_engine: AsyncEngine,
+    *,
+    auto_migrate: bool,
+    wait_seconds: float = SCHEMA_WAIT_SECONDS,
+    owner_of_existing: str | None = None,
 ) -> None:
     """The ``COPYCAST_AUTO_MIGRATE`` policy at process start."""
     if auto_migrate:
-        await ensure_schema(db_engine)
+        await ensure_schema(db_engine, owner_of_existing=owner_of_existing)
     else:
         await await_schema(db_engine, wait_seconds=wait_seconds)
 

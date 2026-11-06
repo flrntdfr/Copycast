@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 from typing import Any, Literal
 
@@ -12,11 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from copycast.adapters.db.base import rows_affected, utcnow
 from copycast.adapters.db.models import Asset, CatalogItem, Feed
 from copycast.application.models import Totals
+from copycast.application.services.context import DEFAULT_BUCKET_TITLE
 from copycast.domain.enums import ArchiveState, AssetState, BackfillMode, FeedKind
 from copycast.domain.exceptions import NotFound
 from copycast.domain.ids import bucket_id
-
-DEFAULT_BUCKET_TITLE = "Copycast"
 
 FeedSort = Literal["title", "created_at", "updated_at", "storage_bytes"]
 _SORT_COLUMNS = {
@@ -67,9 +67,17 @@ class FeedRepository:
             raise NotFound("feed", feed_id)
         return feed
 
-    async def by_dedup_key(self, dedup_key: str) -> Feed | None:
-        result = await self._session.execute(select(Feed).where(Feed.source_dedup_key == dedup_key))
+    async def by_dedup_key(self, owner: str, key: str) -> Feed | None:
+        """``owner``'s Mirror of the Source ``key`` (unique per owner)."""
+        result = await self._session.execute(
+            select(Feed).where(Feed.owner == owner, Feed.source_dedup_key == key)
+        )
         return result.scalar_one_or_none()
+
+    async def exists_id(self, feed_id: str) -> bool:
+        """Whether any Feed, whoever owns it, has this id."""
+        result = await self._session.execute(select(Feed.id).where(Feed.id == feed_id))
+        return result.scalar_one_or_none() is not None
 
     async def list(
         self,
@@ -106,16 +114,22 @@ class FeedRepository:
         )
         return result.scalar_one_or_none()
 
-    async def default_bucket(self) -> Feed | None:
-        result = await self._session.execute(select(Feed).where(Feed.is_default.is_(True)))
+    async def default_bucket(self, owner: str) -> Feed | None:
+        result = await self._session.execute(
+            select(Feed).where(Feed.owner == owner, Feed.is_default.is_(True))
+        )
         return result.scalar_one_or_none()
 
-    async def mirrors_due(self, before: datetime) -> list[Feed]:
-        """Mirrors not Paused whose last Refresh attempt is absent or older than ``before``."""
+    async def mirrors_due(self, before: datetime, *, configured: Collection[str]) -> list[Feed]:
+        """Mirrors not Paused whose last Refresh attempt is absent or older than ``before``.
+
+        Only Feeds of ``configured`` Users: a removed User's Mirrors are not refreshed.
+        """
         stmt = (
             select(Feed)
             .where(
                 Feed.kind == FeedKind.mirror.value,
+                Feed.owner.in_(list(configured)),
                 Feed.paused.is_(False),
                 (Feed.last_refresh_attempt_at.is_(None)) | (Feed.last_refresh_attempt_at < before),
             )
@@ -123,12 +137,16 @@ class FeedRepository:
         )
         return list((await self._session.execute(stmt)).scalars())
 
-    async def mirrors_due_expiry(self, before: datetime) -> list[Feed]:
-        """Automatic Mirrors with a Retention whose last expiry pass is absent or older."""
+    async def mirrors_due_expiry(
+        self, before: datetime, *, configured: Collection[str]
+    ) -> list[Feed]:
+        """Automatic Mirrors of ``configured`` Users with a Retention whose last expiry pass is
+        absent or older."""
         stmt = (
             select(Feed)
             .where(
                 Feed.kind == FeedKind.mirror.value,
+                Feed.owner.in_(list(configured)),
                 Feed.backfill_mode == BackfillMode.automatic.value,
                 Feed.retention_days.is_not(None),
                 (Feed.last_autoprune_at.is_(None)) | (Feed.last_autoprune_at < before),
@@ -137,11 +155,15 @@ class FeedRepository:
         )
         return list((await self._session.execute(stmt)).scalars())
 
-    async def buckets_due_autoprune(self, before: datetime) -> list[Feed]:
+    async def buckets_due_autoprune(
+        self, before: datetime, *, configured: Collection[str]
+    ) -> list[Feed]:
+        """Local feeds of ``configured`` Users with autoprune whose last pass is absent or older."""
         stmt = (
             select(Feed)
             .where(
                 Feed.kind == FeedKind.bucket.value,
+                Feed.owner.in_(list(configured)),
                 Feed.autoprune_days.is_not(None),
                 (Feed.last_autoprune_at.is_(None)) | (Feed.last_autoprune_at < before),
             )
@@ -178,26 +200,25 @@ class FeedRepository:
         result = await self._session.execute(delete(Feed).where(Feed.id == feed_id))
         return rows_affected(result) > 0
 
-    async def ensure_default_bucket(self, title: str = DEFAULT_BUCKET_TITLE) -> Feed:
-        """The one default Bucket, created on first call; safe under concurrency."""
-        existing = await self.default_bucket()
+    async def ensure_default_bucket(self, owner: str, title: str = DEFAULT_BUCKET_TITLE) -> Feed:
+        """``owner``'s default Local feed, created on first call; safe under concurrency."""
+        existing = await self.default_bucket(owner)
         if existing is not None:
             return existing
         stmt = (
             insert(Feed)
             .values(
                 id=bucket_id(title),
+                owner=owner,
                 kind=FeedKind.bucket.value,
                 is_default=True,
                 title=title,
                 follow=False,
             )
-            .on_conflict_do_nothing(
-                index_elements=[Feed.is_default], index_where=text("is_default")
-            )
+            .on_conflict_do_nothing(index_elements=[Feed.owner], index_where=text("is_default"))
         )
         await self._session.execute(stmt)
-        feed = await self.default_bucket()
+        feed = await self.default_bucket(owner)
         if feed is None:  # pragma: no cover - the partial unique index guarantees one row
             raise RuntimeError("default Bucket could not be created")
         return feed

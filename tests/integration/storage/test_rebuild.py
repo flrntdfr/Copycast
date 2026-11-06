@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from copycast.adapters.db.locks import WORKER_LOCK, SessionLock
@@ -104,7 +104,7 @@ def _write_descriptor(layout: Layout, feed_id: str, data: dict[str, Any]) -> Non
 async def _populate(uow_factory: UnitOfWorkFactory, layout: Layout) -> tuple[str, str]:
     """A Mirror with real objects and a Bucket with a Request; descriptors exported."""
     async with uow_factory() as uow:
-        default = await uow.feeds.ensure_default_bucket()
+        default = await uow.feeds.ensure_default_bucket("copycast")
         mirror = await uow.feeds.add(
             mirror_row(source_channel_xml=_channel_xml(CHANNEL_XML.encode()))
         )
@@ -522,3 +522,32 @@ async def test_rebuild_never_replaces_the_pair_of_a_row_that_still_exists(
             assert (row.auth_username, row.auth_password) == pair, feed_id
     on_disk = _descriptor(layout, bucket_id)["feed"]
     assert (on_disk["auth_username"], on_disk["auth_password"]) == pairs[bucket_id]
+
+
+async def test_rebuild_restores_owners(
+    uow_factory: UnitOfWorkFactory,
+    layout: Layout,
+    settings: Settings,
+    db_engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """``feed.json`` names the Owner; one written before 3.0 falls back to the owner of
+    existing data, and a removed Owner still gets a ``users`` row for the foreign key."""
+    mirror_id, bucket_id = await _populate(uow_factory, layout)
+    assert _descriptor(layout, mirror_id)["feed"]["owner"] == "copycast"
+    data = _descriptor(layout, mirror_id)
+    data["feed"]["owner"] = "emilia"
+    _write_descriptor(layout, mirror_id, data)
+    old = _descriptor(layout, bucket_id)
+    del old["feed"]["owner"]
+    _write_descriptor(layout, bucket_id, old)
+    await _wipe(sessionmaker)
+
+    await rebuild(settings, yes=False, db_engine=db_engine)
+    async with sessionmaker() as session:
+        mirror = await session.get(Feed, mirror_id)
+        bucket = await session.get(Feed, bucket_id)
+        assert mirror is not None and bucket is not None
+        assert (mirror.owner, bucket.owner) == ("emilia", "copycast")
+        users = set((await session.execute(text("SELECT username FROM users"))).scalars())
+        assert {"copycast", "emilia"} <= users

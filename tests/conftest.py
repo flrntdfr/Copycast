@@ -192,7 +192,8 @@ def template_db_url(pg_url: str) -> str:
     async def _migrate() -> None:
         db_engine = create_db_engine(settings)
         try:
-            await ensure_schema(db_engine)
+            # The open-mode Admin, explicitly: the template never depends on the environment.
+            await ensure_schema(db_engine, owner_of_existing="copycast")
         finally:
             await db_engine.dispose()
 

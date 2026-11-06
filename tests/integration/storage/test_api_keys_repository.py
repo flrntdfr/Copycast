@@ -20,6 +20,7 @@ async def test_api_key_repository(uow_factory: UnitOfWorkFactory) -> None:
     # Two transactions: ``created_at`` is the transaction time, and the list is newest first.
     async with uow_factory() as uow:
         a = await uow.api_keys.add(
+            owner="copycast",
             name="laptop",
             scope=KeyScope.read,
             key_hash=api_key_hash(first),
@@ -28,6 +29,7 @@ async def test_api_key_repository(uow_factory: UnitOfWorkFactory) -> None:
         a_id = a.id
     async with uow_factory() as uow:
         b = await uow.api_keys.add(
+            owner="copycast",
             name="server",
             scope=KeyScope.full,
             key_hash=api_key_hash(second),
@@ -57,6 +59,7 @@ async def test_key_hash_is_unique(uow_factory: UnitOfWorkFactory) -> None:
     secret = new_api_key()
     async with uow_factory() as uow:
         await uow.api_keys.add(
+            owner="copycast",
             name="a",
             scope=KeyScope.read,
             key_hash=api_key_hash(secret),
@@ -65,6 +68,7 @@ async def test_key_hash_is_unique(uow_factory: UnitOfWorkFactory) -> None:
     with pytest.raises(Exception, match="uq_api_keys_key_hash"):
         async with uow_factory() as uow:
             await uow.api_keys.add(
+                owner="copycast",
                 name="b",
                 scope=KeyScope.read,
                 key_hash=api_key_hash(secret),

@@ -42,6 +42,9 @@ pytestmark = pytest.mark.integration
 NOW = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
 SOURCE_URL = "https://podcast.example/feed.xml"
 
+OWNER = "copycast"
+"""The open-mode Admin the template database holds: every row of these tests is theirs."""
+
 
 @pytest.fixture
 async def db_engine(settings: Settings, db: str) -> AsyncIterator[AsyncEngine]:
@@ -81,6 +84,7 @@ def mirror_row(
     dedup = normalize_source_url(source_url)
     fields: dict[str, Any] = {
         "id": mirror_id(dedup),
+        "owner": OWNER,
         "kind": FeedKind.mirror.value,
         "title": title,
         "description": "A podcast used in tests",
@@ -104,6 +108,7 @@ def mirror_row(
 def bucket_row(name: str = "Later", *, is_default: bool = False, **overrides: Any) -> Feed:
     fields: dict[str, Any] = {
         "id": f"{name.lower()}-abc234",
+        "owner": OWNER,
         "kind": FeedKind.bucket.value,
         "is_default": is_default,
         "title": name,

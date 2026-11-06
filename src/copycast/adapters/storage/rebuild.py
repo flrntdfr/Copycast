@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from copycast.adapters.db.locks import WORKER_LOCK, SessionLock
 from copycast.adapters.db.migrate import ensure_schema
-from copycast.adapters.db.models import Asset, CatalogItem, Feed, Request, RequestItem
+from copycast.adapters.db.models import Asset, CatalogItem, Feed, Request, RequestItem, User
 from copycast.adapters.db.repositories import CatalogRepository, FeedRepository
 from copycast.adapters.db.session import create_db_engine, create_sessionmaker
 from copycast.adapters.storage.descriptor import (
@@ -207,24 +207,29 @@ async def rebuild(
     own_engine = db_engine is None
     engine = db_engine or create_db_engine(settings, application_name="copycast-rebuild")
     try:
-        await ensure_schema(engine)
+        await ensure_schema(engine, owner_of_existing=settings.auth.effective_owner_of_existing)
         sessionmaker = create_sessionmaker(engine)
+        owner = settings.auth.effective_owner_of_existing
         if lock_held:
-            return await _rebuild(sessionmaker, layout, version, yes)
+            return await _rebuild(sessionmaker, layout, version, yes, owner)
         async with SessionLock(engine, WORKER_LOCK) as lock:
             if not lock.held:
                 raise RebuildRefused(
                     "the worker is running (WORKER_LOCK is held); stop it or start the "
                     "rebuild through POST /api/admin/rebuild"
                 )
-            return await _rebuild(sessionmaker, layout, version, yes)
+            return await _rebuild(sessionmaker, layout, version, yes, owner)
     finally:
         if own_engine:
             await engine.dispose()
 
 
 async def _rebuild(
-    sessionmaker: async_sessionmaker[AsyncSession], layout: Layout, version: str, yes: bool
+    sessionmaker: async_sessionmaker[AsyncSession],
+    layout: Layout,
+    version: str,
+    yes: bool,
+    owner_of_existing: str,
 ) -> RebuildReport:
     counters = _Counters(version, yes)
     on_disk = await asyncio.to_thread(layout.feed_ids)
@@ -252,7 +257,7 @@ async def _rebuild(
             continue
         try:
             async with sessionmaker() as session, session.begin():
-                await _rebuild_feed(session, objects, descriptor, yes, counters)
+                await _rebuild_feed(session, objects, descriptor, yes, counters, owner_of_existing)
             rebuilt.add(feed_id)
             if not _carries_pair(descriptor):
                 stale_pair.add(feed_id)
@@ -271,7 +276,8 @@ async def _rebuild(
                 counters.deleted_feeds.append(feed_id)
             else:
                 counters.would_delete_feeds.append(feed_id)
-        default = await feeds.ensure_default_bucket()
+        await _ensure_users(session, [owner_of_existing])
+        default = await feeds.ensure_default_bucket(owner_of_existing)
         counters.data["default_bucket_id"] = default.id
 
     async with sessionmaker() as session:
@@ -298,10 +304,11 @@ async def _rebuild_feed(
     descriptor: FeedDescriptor,
     yes: bool,
     counters: _Counters,
+    owner_of_existing: str,
 ) -> None:
     feed_id = descriptor.feed.id
     layout = objects.layout
-    await _upsert_feed(session, descriptor)
+    await _upsert_feed(session, descriptor, owner_of_existing)
     counters.add("feeds_upserted")
 
     counters.add("items_upserted", await _upsert_items(session, objects, descriptor))
@@ -387,16 +394,29 @@ async def _rebuild_feed(
     await feeds.bump_revision(feed_id)
 
 
-async def _upsert_feed(session: AsyncSession, descriptor: FeedDescriptor) -> None:
+async def _ensure_users(session: AsyncSession, usernames: list[str]) -> None:
+    """``users`` rows for these names (a removed Owner still needs one for the foreign key)."""
+    await session.execute(
+        insert(User).values([{"username": name} for name in usernames]).on_conflict_do_nothing()
+    )
+
+
+async def _upsert_feed(
+    session: AsyncSession, descriptor: FeedDescriptor, owner_of_existing: str
+) -> None:
     feed, policy = descriptor.feed, descriptor.policy
+    owner = feed.owner or owner_of_existing
+    await _ensure_users(session, [owner])
     if feed.is_default:
+        # One default Local feed per Owner: the descriptor's wins within its Owner only.
         await session.execute(
             update(Feed)
-            .where(Feed.is_default.is_(True), Feed.id != feed.id)
+            .where(Feed.owner == owner, Feed.is_default.is_(True), Feed.id != feed.id)
             .values(is_default=False)
         )
     values: dict[str, Any] = {
         "id": feed.id,
+        "owner": owner,
         "kind": feed.kind.value,
         "is_default": feed.is_default,
         "title": feed.title,
@@ -431,6 +451,9 @@ async def _upsert_feed(session: AsyncSession, descriptor: FeedDescriptor) -> Non
         "created_at": feed.created_at,
     }
     untouched = ("id", "created_at")
+    if feed.owner is None:
+        # A descriptor written before 3.0 names no Owner: an existing row keeps its own.
+        untouched += ("owner",)
     if not _carries_pair(descriptor):
         untouched += ("auth_username", "auth_password")
     stmt = insert(Feed).values(**values)

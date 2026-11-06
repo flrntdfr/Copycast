@@ -34,6 +34,8 @@ from pydantic_settings import (
 
 from copycast.domain.destinations import DestinationPolicy
 from copycast.domain.engine_options import EngineOptionRejected, EngineOptions
+from copycast.domain.enums import AuthMode
+from copycast.domain.users import owner_slug
 
 DEFAULT_CONFIG_PATH = "./config/copycast.toml"
 CONFIG_ENV = "COPYCAST_CONFIG"
@@ -106,6 +108,21 @@ class AuthSettings(BaseModel):
     @property
     def enabled(self) -> bool:
         return self.password is not None
+
+    @property
+    def mode(self) -> AuthMode:
+        """``legacy`` with the operator password, else ``open``."""
+        return AuthMode.legacy if self.password is not None else AuthMode.open
+
+    @property
+    def legacy_owner(self) -> str:
+        """The owner name (and ``users/`` segment) of the open- or legacy-mode Admin."""
+        return owner_slug(self.username)
+
+    @property
+    def effective_owner_of_existing(self) -> str:
+        """Who owns the Feeds that exist before 3.0 (migration 0017, rebuild)."""
+        return self.legacy_owner
 
 
 DEFAULT_STORAGE_URL = "s3://copycast"

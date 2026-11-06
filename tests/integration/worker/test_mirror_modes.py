@@ -127,9 +127,12 @@ async def test_automatic_archives_nothing_and_expires_idle_episodes(
         feed = await unit.feeds.require(mirror.id)
         assert feed.last_autoprune_at == later
         # The scheduler's pass picks Automatic Mirrors up like Buckets.
-        assert [f.id for f in await unit.feeds.mirrors_due_expiry(later + timedelta(days=1))] == [
-            mirror.id
-        ]
+        assert [
+            f.id
+            for f in await unit.feeds.mirrors_due_expiry(
+                later + timedelta(days=1), configured=["copycast"]
+            )
+        ] == [mirror.id]
     # A Refresh never re-archives an expired Episode on its own.
     job = await container.services.request_refresh(mirror.id)
     assert job is not None
@@ -143,7 +146,10 @@ async def test_automatic_archives_nothing_and_expires_idle_episodes(
     )
     assert kept.backfill.retention_days is None
     async with uow(container) as unit:
-        assert await unit.feeds.mirrors_due_expiry(later + timedelta(days=30)) == []
+        assert (
+            await unit.feeds.mirrors_due_expiry(later + timedelta(days=30), configured=["copycast"])
+            == []
+        )
 
 
 async def test_archive_without_backfill_archives_only_what_comes_next(

@@ -58,6 +58,8 @@ class _Strict(BaseModel):
 class DescriptorFeed(_Strict):
     id: str
     kind: FeedKind
+    owner: str | None = None
+    """The Feed's Owner; absent before 3.0, when rebuild gives it to the owner of existing data."""
     is_default: bool = False
     title: str
     title_override: str | None = None

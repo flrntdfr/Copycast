@@ -144,7 +144,10 @@ def migrate() -> None:
 
     async def _run() -> None:
         try:
-            await ensure_schema(container.db_engine)
+            await ensure_schema(
+                container.db_engine,
+                owner_of_existing=settings.auth.effective_owner_of_existing,
+            )
         finally:
             await container.aclose()
 

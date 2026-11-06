@@ -9,10 +9,12 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    ForeignKey,
     Index,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -36,6 +38,10 @@ class Feed(TimestampMixin, Base):
 
     id: Mapped[str] = mapped_column(String(63), primary_key=True)
     kind: Mapped[str] = mapped_column(Text, nullable=False)
+    owner: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.username", ondelete="RESTRICT"), nullable=False
+    )
+    """The User the Feed belongs to; every new Feed names one (ADR 0028)."""
     is_default: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
@@ -54,7 +60,7 @@ class Feed(TimestampMixin, Base):
 
     # Mirror only
     source_url: Mapped[str | None] = mapped_column(Text)
-    source_dedup_key: Mapped[str | None] = mapped_column(Text, unique=True)
+    source_dedup_key: Mapped[str | None] = mapped_column(Text)
     source_kind: Mapped[str | None] = mapped_column(Text)
     service: Mapped[str | None] = mapped_column(Text)
     source_etag: Mapped[str | None] = mapped_column(Text)
@@ -129,9 +135,13 @@ class Feed(TimestampMixin, Base):
             "refresh_interval_hours IS NULL OR refresh_interval_hours > 0",
             name="refresh_interval_hours",
         ),
+        # One Mirror per Source and Owner (Local feeds have no key and stay unconstrained);
+        # it also serves as the owner index.
+        UniqueConstraint("owner", "source_dedup_key"),
+        # One default Local feed per Owner.
         Index(
-            "ix_feeds_is_default",
-            "is_default",
+            "ix_feeds_owner_default",
+            "owner",
             unique=True,
             postgresql_where=text("is_default"),
         ),

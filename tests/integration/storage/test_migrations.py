@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
@@ -36,8 +39,11 @@ EXPECTED_TABLES = {
     "engine_versions",
     "api_keys",
     "instance_secrets",
+    "users",
+    "sessions",
+    "login_attempts",
 }
-HEAD = "0016"
+HEAD = "0017"
 
 
 def _table_names(conn: Connection) -> set[str]:
@@ -87,8 +93,8 @@ async def test_enum_check_constraints_are_named_and_enforced(db_engine: AsyncEng
         with pytest.raises(Exception, match="ck_feeds_kind"):
             await conn.execute(
                 text(
-                    "INSERT INTO feeds (id, kind, title, auth_username, auth_password) "
-                    "VALUES ('x', 'bogus', 'Bogus', 'u', 'p')"
+                    "INSERT INTO feeds (id, owner, kind, title, auth_username, auth_password) "
+                    "VALUES ('x', 'copycast', 'bogus', 'Bogus', 'u', 'p')"
                 )
             )
 
@@ -98,8 +104,8 @@ async def test_kind_shape_constraint(db_engine: AsyncEngine) -> None:
         with pytest.raises(Exception, match="ck_feeds_kind_shape"):
             await conn.execute(
                 text(
-                    "INSERT INTO feeds (id, kind, title, auth_username, auth_password) "
-                    "VALUES ('m1', 'mirror', 'No source', 'u', 'p')"
+                    "INSERT INTO feeds (id, owner, kind, title, auth_username, auth_password) "
+                    "VALUES ('m1', 'copycast', 'mirror', 'No source', 'u', 'p')"
                 )
             )
 
@@ -256,8 +262,8 @@ async def test_0014_turns_inboxes_into_buckets(db_engine: AsyncEngine) -> None:
         with pytest.raises(Exception, match="ck_feeds_kind"):
             await conn.execute(
                 text(
-                    "INSERT INTO feeds (id, kind, title, auth_username, auth_password) "
-                    "VALUES ('legacy', 'inbox', 'Legacy', 'u', 'p')"
+                    "INSERT INTO feeds (id, owner, kind, title, auth_username, auth_password) "
+                    "VALUES ('legacy', 'copycast', 'inbox', 'Legacy', 'u', 'p')"
                 )
             )
     await downgrade_schema(db_engine, "0013")
@@ -365,3 +371,222 @@ async def test_0016_creates_instance_secrets_and_its_downgrade_drops_it(
         assert "instance_secrets" not in await conn.run_sync(_table_names)
     await ensure_schema(db_engine)
     assert await schema_is_current(db_engine)
+
+
+# --------------------------------------------------------------------------- 0017
+
+
+async def _seed_0016(db_engine: AsyncEngine) -> None:
+    """At 0016: a Mirror, the default Bucket, an API key and a job, none with an owner."""
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO feeds (id, kind, title, auth_username, auth_password, source_url, "
+                "source_dedup_key, source_kind, backfill_mode) VALUES ('m1', 'mirror', 'M', "
+                "'u', 'p', 'https://p.example/f.xml', 'p.example/f.xml', 'rss', 'all')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO feeds (id, kind, title, auth_username, auth_password, is_default) "
+                "VALUES ('copycast-abc234', 'bucket', 'Copycast', 'u', 'p', true)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO api_keys (id, name, scope, key_hash, prefix) VALUES "
+                "(gen_random_uuid(), 'agent', 'read', repeat('a', 64), 'cck_aaaaaaaa')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO jobs (id, kind, trigger, feed_id) VALUES (gen_random_uuid(), "
+                "'refresh', 'manual', 'm1')"
+            )
+        )
+
+
+async def _owners(db_engine: AsyncEngine) -> tuple[set[str], set[str], set[str | None], set[str]]:
+    async with db_engine.connect() as conn:
+        feeds = set((await conn.execute(text("SELECT owner FROM feeds"))).scalars())
+        keys = set((await conn.execute(text("SELECT owner FROM api_keys"))).scalars())
+        jobs = set((await conn.execute(text("SELECT requested_by FROM jobs"))).scalars())
+        users = set((await conn.execute(text("SELECT username FROM users"))).scalars())
+    return feeds, keys, jobs, users
+
+
+async def test_template_holds_the_open_mode_admin(db_engine: AsyncEngine) -> None:
+    """0017 inserts the owner of existing data even without anything to own."""
+    _, _, _, users = await _owners(db_engine)
+    assert users == {"copycast"}
+
+
+async def test_0017_backfills_owner(db_engine: AsyncEngine) -> None:
+    """Existing Feeds and keys go to the owner handed over; jobs keep no requester; the
+    Source and the default Local feed become unique per owner."""
+    await downgrade_schema(db_engine, "0016")
+    await _seed_0016(db_engine)
+    await ensure_schema(db_engine, owner_of_existing="florent")
+    assert await _owners(db_engine) == ({"florent"}, {"florent"}, {None}, {"florent"})
+    async with db_engine.connect() as conn:
+        blocked = (
+            await conn.execute(text("SELECT blocked_reason, blocked_bytes FROM catalog_items"))
+        ).all()
+    assert blocked == []
+    async with db_engine.begin() as conn:
+        await conn.execute(text("INSERT INTO users (username) VALUES ('emilia')"))
+        # Another owner may mirror the same Source and have a default Local feed of their own.
+        await conn.execute(
+            text(
+                "INSERT INTO feeds (id, owner, kind, title, auth_username, auth_password, "
+                "source_url, source_dedup_key, source_kind, backfill_mode) VALUES ('m2', "
+                "'emilia', 'mirror', 'M', 'u', 'p', 'https://p.example/f.xml', "
+                "'p.example/f.xml', 'rss', 'all')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO feeds (id, owner, kind, title, auth_username, auth_password, "
+                "is_default) VALUES ('copycast-emi234', 'emilia', 'bucket', 'Copycast', 'u', "
+                "'p', true)"
+            )
+        )
+    async with db_engine.begin() as conn:
+        with pytest.raises(Exception, match="uq_feeds_owner_source_dedup_key"):
+            await conn.execute(
+                text(
+                    "INSERT INTO feeds (id, owner, kind, title, auth_username, auth_password, "
+                    "source_url, source_dedup_key, source_kind, backfill_mode) VALUES ('m3', "
+                    "'florent', 'mirror', 'M', 'u', 'p', 'https://p.example/f.xml', "
+                    "'p.example/f.xml', 'rss', 'all')"
+                )
+            )
+    async with db_engine.begin() as conn:
+        with pytest.raises(Exception, match="ix_feeds_owner_default"):
+            await conn.execute(
+                text(
+                    "INSERT INTO feeds (id, owner, kind, title, auth_username, auth_password, "
+                    "is_default) VALUES ('copycast-flo234', 'florent', 'bucket', 'C', 'u', "
+                    "'p', true)"
+                )
+            )
+    async with db_engine.begin() as conn:
+        with pytest.raises(Exception, match="fk_feeds_owner_users"):
+            await conn.execute(
+                text(
+                    "INSERT INTO feeds (id, owner, kind, title, auth_username, auth_password) "
+                    "VALUES ('b9', 'nobody', 'bucket', 'B', 'u', 'p')"
+                )
+            )
+    async with db_engine.begin() as conn:
+        with pytest.raises(Exception, match="ck_catalog_items_blocked_reason"):
+            await conn.execute(
+                text(
+                    "INSERT INTO catalog_items (id, feed_id, source_key, ordinal, title, "
+                    "last_listed_at, blocked_reason) VALUES ('1111111111111111', 'm1', 'k', 1, "
+                    "'T', now(), 'disk')"
+                )
+            )
+
+
+async def test_0017_falls_back_to_the_settings(
+    db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller that hands over no owner (a plain ``alembic upgrade``) gets the settings' one:
+    the legacy login name, slugged."""
+    await downgrade_schema(db_engine, "0016")
+    await _seed_0016(db_engine)
+    monkeypatch.setenv("COPYCAST__AUTH__USERNAME", "Me@Example.org")
+    await ensure_schema(db_engine)
+    feeds, keys, _, users = await _owners(db_engine)
+    assert feeds == keys == users == {"me-example.org"}
+
+
+async def test_0017_downgrade_refuses_shared_source(db_engine: AsyncEngine) -> None:
+    async with db_engine.begin() as conn:
+        await conn.execute(text("INSERT INTO users (username) VALUES ('bob')"))
+        for feed_id, owner in (("m1", "copycast"), ("m2", "bob")):
+            await conn.execute(
+                text(
+                    "INSERT INTO feeds (id, owner, kind, title, auth_username, auth_password, "
+                    "source_url, source_dedup_key, source_kind, backfill_mode) VALUES (:id, "
+                    ":owner, 'mirror', 'M', 'u', 'p', 'https://p.example/f.xml', "
+                    "'p.example/f.xml', 'rss', 'all')"
+                ),
+                {"id": feed_id, "owner": owner},
+            )
+    with pytest.raises(
+        RuntimeError, match=r"several owners mirror the same Source .*m1 \(copycast\), m2 \(bob\)"
+    ):
+        await downgrade_schema(db_engine, "0016")
+    assert await current_revision(db_engine) == HEAD
+    async with db_engine.begin() as conn:
+        await conn.execute(text("DELETE FROM feeds WHERE id = 'm2'"))
+    await downgrade_schema(db_engine, "0016")
+    async with db_engine.connect() as conn:
+        columns = {c["name"] for c in await conn.run_sync(_columns, "feeds")}
+        assert "owner" not in columns
+        assert {"users", "sessions", "login_attempts"}.isdisjoint(await conn.run_sync(_table_names))
+    await ensure_schema(db_engine, owner_of_existing="copycast")
+    assert await schema_is_current(db_engine)
+
+
+async def test_0017_downgrade_refuses_two_default_local_feeds(db_engine: AsyncEngine) -> None:
+    async with db_engine.begin() as conn:
+        await conn.execute(text("INSERT INTO users (username) VALUES ('bob')"))
+        for feed_id, owner in (("copycast-aaa234", "copycast"), ("copycast-bbb234", "bob")):
+            await conn.execute(
+                text(
+                    "INSERT INTO feeds (id, owner, kind, title, auth_username, auth_password, "
+                    "is_default) VALUES (:id, :owner, 'bucket', 'Copycast', 'u', 'p', true)"
+                ),
+                {"id": feed_id, "owner": owner},
+            )
+    with pytest.raises(RuntimeError, match="several default Local feeds"):
+        await downgrade_schema(db_engine, "0016")
+    assert await current_revision(db_engine) == HEAD
+
+
+def _columns(conn: Connection, table: str) -> list[dict[str, Any]]:
+    return [dict(column) for column in inspect(conn).get_columns(table)]
+
+
+def test_copycast_migrate_hands_over_the_settings_owner(
+    db: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``copycast migrate`` passes ``settings.auth``'s owner explicitly (the legacy Admin)."""
+    import asyncio
+
+    from click.testing import CliRunner
+
+    from copycast.adapters.db.session import create_db_engine
+    from copycast.cli import main
+    from copycast.settings import get_settings
+
+    engine_settings = get_settings(database_url=db)
+
+    async def _prepare() -> None:
+        engine = create_db_engine(engine_settings)
+        try:
+            await downgrade_schema(engine, "0016")
+            await _seed_0016(engine)
+        finally:
+            await engine.dispose()
+
+    async def _read() -> tuple[set[str], set[str], set[str | None], set[str]]:
+        engine = create_db_engine(engine_settings)
+        try:
+            return await _owners(engine)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_prepare())
+    monkeypatch.setenv("COPYCAST__DATABASE_URL", db)
+    monkeypatch.setenv("COPYCAST__STORAGE__URL", "memory://migrate-cli")
+    monkeypatch.setenv("COPYCAST__STORAGE__SCRATCH_DIR", str(tmp_path / "scratch"))
+    monkeypatch.setenv("COPYCAST__AUTH__USERNAME", "Florent")
+    monkeypatch.setenv("COPYCAST__AUTH__PASSWORD", "correct horse battery")
+    result = CliRunner().invoke(main, ["migrate"])
+    assert result.exit_code == 0, result.output
+    feeds, keys, jobs, users = asyncio.run(_read())
+    assert (feeds, keys, jobs, users) == ({"florent"}, {"florent"}, {None}, {"florent"})

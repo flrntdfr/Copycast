@@ -524,6 +524,7 @@ async def test_count_by_state_derives_catalog_states(uow_factory: UnitOfWorkFact
             "wanted": 1,
             "archived": 2,
             "failed": 1,
+            "blocked": 0,
         }
         many = await uow.catalog.count_by_state_many([feed.id, "unknown"])
         assert set(many) == {feed.id}

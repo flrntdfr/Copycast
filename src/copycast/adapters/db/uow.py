@@ -25,8 +25,12 @@ from copycast.adapters.db.repositories import (
     FeedRepository,
     InstanceSecretRepository,
     JobRepository,
+    LoginAttemptRepository,
+    QuotaRepository,
     RequestRepository,
+    SessionRepository,
     TelemetryRepository,
+    UserRepository,
 )
 from copycast.adapters.storage.descriptor import (
     DEBOUNCE_SECONDS,
@@ -35,6 +39,7 @@ from copycast.adapters.storage.descriptor import (
 )
 from copycast.adapters.storage.layout import Layout
 from copycast.application.events import CHANNEL, JOBS_CHANNEL, serialize
+from copycast.application.services.context import LOOKUP, LookupSentinel, Scope
 from copycast.domain.exceptions import ConcurrentUpdate
 from copycast.logging import get_logger
 
@@ -62,9 +67,11 @@ class UnitOfWork:
         *,
         exporter: DescriptorExporter,
         debounced_exporter: DescriptorExporter | None = None,
+        scope: Scope = Scope.SYSTEM,
     ) -> None:
         self.session = session
         self.layout = layout
+        self.scope = scope
         self._exporter = exporter
         self._debounced = debounced_exporter
         self._hooks: list[Hook] = []
@@ -79,6 +86,10 @@ class UnitOfWork:
         self.telemetry = TelemetryRepository(session)
         self.api_keys = ApiKeyRepository(session)
         self.instance_secrets = InstanceSecretRepository(session)
+        self.users = UserRepository(session)
+        self.sessions = SessionRepository(session)
+        self.login_attempts = LoginAttemptRepository(session)
+        self.quota = QuotaRepository(session)
 
     # ------------------------------------------------------------------ hooks
 
@@ -105,8 +116,15 @@ class UnitOfWork:
 
     # ------------------------------------------------------------------ notifications
 
-    async def publish(self, event: BaseModel) -> None:
-        """``NOTIFY copycast_events`` inside this transaction: delivered only on commit."""
+    async def publish(
+        self, event: BaseModel, *, owner: str | LookupSentinel | None = LOOKUP
+    ) -> None:
+        """``NOTIFY copycast_events`` inside this transaction: delivered only on commit.
+
+        ``owner`` will route the event to its Owner's subscribers; every subscriber
+        gets every event until then.
+        """
+        del owner
         await self.session.execute(
             text("SELECT pg_notify(:channel, :payload)"),
             {"channel": CHANNEL, "payload": serialize(event)},
@@ -202,12 +220,13 @@ class UnitOfWorkFactory:
             delay=DEBOUNCE_SECONDS if debounce_seconds is None else debounce_seconds,
         )
 
-    def __call__(self) -> UnitOfWork:
+    def __call__(self, scope: Scope = Scope.SYSTEM) -> UnitOfWork:
         return UnitOfWork(
             self.sessionmaker(),
             self.layout,
             exporter=self.exporter,
             debounced_exporter=self.debounced_exporter,
+            scope=scope,
         )
 
     async def flush_exports(self) -> None:

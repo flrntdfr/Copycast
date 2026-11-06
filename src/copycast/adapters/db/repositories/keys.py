@@ -35,8 +35,10 @@ class ApiKeyRepository:
         stmt = select(ApiKey).order_by(ApiKey.created_at.desc(), ApiKey.id)
         return list((await self._session.execute(stmt)).scalars())
 
-    async def add(self, *, name: str, scope: KeyScope, key_hash: str, prefix: str) -> ApiKey:
-        key = ApiKey(name=name, scope=scope.value, key_hash=key_hash, prefix=prefix)
+    async def add(
+        self, *, owner: str, name: str, scope: KeyScope, key_hash: str, prefix: str
+    ) -> ApiKey:
+        key = ApiKey(owner=owner, name=name, scope=scope.value, key_hash=key_hash, prefix=prefix)
         self._session.add(key)
         await self._session.flush()
         return key
