@@ -26,9 +26,28 @@ scratch_dir       = "./scratch"              # local: downloads and transcodes, 
 [cache]                      # the shared Feed cache; unset, each api process caches alone
 url = "redis://localhost:6379/0"
 
-# [auth]                     # prefer COPYCAST__AUTH__PASSWORD in the environment (docs/adr/0011)
-# username = "copycast"
-# password = ""              # set (8+ characters) to switch authentication on
+# [auth]                     # who signs in; neither users nor a password: open (docs/adr/0004)
+# default_quota     = "unlimited"  # a User's storage without a quota of their own: "10 GB", "500 MB"
+# session_days      = 30           # a session slides: it ends after this many days unused
+# owner_of_existing = "florent"    # who gets the Feeds that exist before 3.0 (default: the first
+#                                  # admin below); applied once, by the database migration
+#
+# [[auth.users]]             # users mode: one table per User (usernames: a-z, 0-9, '.', '_', '-')
+# username      = "florent"
+# password_hash = '$argon2id$v=19$m=65536,t=3,p=4$...'   # copycast users hash-password; never the
+#                                                        # password itself, never in .env ($ signs)
+# totp_secret   = "..."      # copycast users totp florent; required for an admin on https
+# admin         = true
+# quota         = "unlimited"
+#
+# [[auth.users]]
+# username      = "emilia"
+# password_hash = '$argon2id$v=19$m=65536,t=3,p=4$...'
+# quota         = "10 GB"
+#
+# Legacy single Admin instead of [[auth.users]] (the two are exclusive): set
+# COPYCAST__AUTH__PASSWORD (8+ characters) and optionally COPYCAST__AUTH__USERNAME. The file
+# holds secrets once it lists users: chmod 0640, owned by root and the container's group.
 
 # [security]                 # the fetch guard (docs/adr/0023): server-side fetches refuse loopback,
 #                            # private, link-local, CGNAT and other non-public addresses (and

@@ -13,9 +13,11 @@ from functools import cached_property
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from copycast.application.passwords import PasswordHasher
+from copycast.application.passwords import PasswordHasher, hash_parameters
 from copycast.domain.credentials import credential_digest
 from copycast.domain.enums import AuthMode, KeyScope, PrincipalVia
+from copycast.domain.quota import quota_bytes
+from copycast.domain.totp import decode_secret
 from copycast.domain.users import Principal
 from copycast.settings import Settings
 
@@ -41,12 +43,23 @@ class UserDirectory:
         self.https: bool = urlsplit(settings.base_url).scheme == "https"
         self.owner_of_existing: str = auth.effective_owner_of_existing
         self._login_name = auth.username.strip().lower()
+        self._configured_users: tuple[DirectoryUser, ...] = tuple(
+            DirectoryUser(
+                username=user.username,
+                admin=user.admin,
+                password_hash=user.password_hash,
+                totp_key=decode_secret(user.totp_secret) if user.totp_secret else None,
+                quota_bytes=quota_bytes(auth.quota_for(user.username)),
+            )
+            for user in auth.users
+        )
+        self._by_name = {user.username: user for user in self._configured_users}
 
     @cached_property
     def hasher(self) -> PasswordHasher:
         """The dummy verifier: the slowest parameters among the configured hashes."""
         return PasswordHasher.slowest(
-            user.password_hash for user in self._configured() if user.password_hash
+            user.password_hash for user in self._configured_users if user.password_hash
         )
 
     @cached_property
@@ -54,19 +67,23 @@ class UserDirectory:
         password = self._settings.auth.password
         return None if password is None else PasswordHasher().hash(password)
 
-    def _configured(self) -> tuple[DirectoryUser, ...]:
-        """The users without forcing the legacy hash (``hasher`` needs only real PHCs)."""
-        return ()
+    @property
+    def _implicit_quota(self) -> int | None:
+        return quota_bytes(self._settings.auth.default_quota)
 
     def users(self) -> tuple[DirectoryUser, ...]:
-        """Open mode: the implicit Admin; legacy: the single Admin (``auth.legacy_owner``)."""
+        """Users mode: ``[[auth.users]]``; open mode: the implicit Admin; legacy: the single
+        Admin (``auth.legacy_owner``), whose hash is computed on first use."""
+        if self.mode is AuthMode.users:
+            return self._configured_users
         owner = self._settings.auth.legacy_owner
-        if self.mode is AuthMode.legacy:
-            return (DirectoryUser(owner, True, self._legacy_hash, None, None),)
-        return (DirectoryUser(owner, True, None, None, None),)
+        password_hash = self._legacy_hash if self.mode is AuthMode.legacy else None
+        return (DirectoryUser(owner, True, password_hash, None, self._implicit_quota),)
 
     def usernames(self) -> list[str]:
         """The configured usernames, without hashing the legacy password."""
+        if self.mode is AuthMode.users:
+            return [user.username for user in self._configured_users]
         return [self._settings.auth.legacy_owner]
 
     def login_name_matches(self, user: DirectoryUser, typed: str) -> bool:
@@ -75,23 +92,43 @@ class UserDirectory:
             return typed in {self._login_name, user.username}
         return typed == user.username
 
+    def login_username(self, typed: str) -> str | None:
+        """The username a typed login name (stripped, lower-cased) names, if any.
+
+        Never hashes the legacy password (that happens on the first verify, in a thread).
+        """
+        if self.mode is AuthMode.open:
+            return None
+        if self.mode is AuthMode.users:
+            return typed if typed in self._by_name else None
+        owner = self._settings.auth.legacy_owner
+        return owner if typed in {self._login_name, owner} else None
+
     def credential_digest(self, username: str) -> bytes | None:
         """The fingerprint of ``username``'s configured credentials; None without any."""
-        if self.get(username) is None or self.mode is AuthMode.open:
+        if self.mode is AuthMode.open or not self.is_configured(username):
             return None
-        return credential_digest(self._settings.auth.password, None)
+        if self.mode is AuthMode.legacy:
+            return credential_digest(self._settings.auth.password, None)
+        config = self._settings.auth.user(username)
+        assert config is not None
+        return credential_digest(config.password_hash, config.totp_secret)
 
     def get(self, username: str) -> DirectoryUser | None:
+        if self.mode is AuthMode.users:
+            return self._by_name.get(username)
         if username != self._settings.auth.legacy_owner:
             return None
         return self.users()[0]
 
     def is_configured(self, username: str) -> bool:
+        if self.mode is AuthMode.users:
+            return username in self._by_name
         return username == self._settings.auth.legacy_owner
 
     def quota_bytes(self, username: str) -> int | None:
-        """The User's quota; a removed User gets the default (unlimited until users mode)."""
-        return None
+        """The User's quota in bytes (None: unlimited); a removed User gets the default."""
+        return quota_bytes(self._settings.auth.quota_for(username))
 
     def open_principal(self) -> Principal | None:
         """The implicit Admin of open mode; None in every other mode."""
@@ -108,12 +145,12 @@ class UserDirectory:
         key_scope: KeyScope | None = None,
     ) -> Principal | None:
         """The Principal of a configured User; None for a removed one."""
-        user = self.get(username)
-        if user is None:
+        if not self.is_configured(username):
             return None
+        admin = True if self.mode is not AuthMode.users else self._by_name[username].admin
         return Principal(
-            username=user.username,
-            admin=user.admin,
+            username=username,
+            admin=admin,
             via=via,
             api_key_id=api_key_id,
             key_scope=key_scope,
@@ -124,6 +161,7 @@ class UserDirectory:
         return self.mode is AuthMode.users and user.admin and self.https and user.totp_key is None
 
     def startup_warnings(self) -> list[str]:
+        """One line per thing an operator should fix; logged once at startup."""
         warnings: list[str] = []
         owner = self._settings.auth.legacy_owner
         if self.mode is not AuthMode.users and owner != self._login_name:
@@ -135,6 +173,24 @@ class UserDirectory:
             warnings.append(
                 "auth.legacy_without_totp: the operator password is the only factor on an "
                 "https site; configure [[auth.users]] with a totp_secret"
+            )
+        for user in self._configured_users:
+            if self.admin_login_refused(user):
+                warnings.append(
+                    f"auth.admin_without_totp username={user.username}: an Admin needs a "
+                    "totp_secret on an https site, so their sign-in is refused (their API keys "
+                    "keep working); run: copycast users totp " + user.username
+                )
+        parameters = {
+            hash_parameters(user.password_hash)
+            for user in self._configured_users
+            if user.password_hash is not None
+        }
+        if len(parameters) > 1:
+            warnings.append(
+                "auth.hash_parameters_differ: the configured password hashes use different "
+                "argon2 parameters, so a sign-in answers faster for some users than for an "
+                "unknown name; hash every password with copycast users hash-password"
             )
         return warnings
 

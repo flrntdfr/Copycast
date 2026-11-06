@@ -23,6 +23,15 @@ DEFAULT_PARALLELISM: Final = 4
 _DUMMY_PASSWORD: Final = "copycast dummy password"
 
 
+def hash_parameters(phc: str) -> tuple[int, int, int] | None:
+    """``(time_cost, memory_cost, parallelism)`` of a PHC string; None when unreadable."""
+    try:
+        parameters = extract_parameters(phc)
+    except InvalidHashError:
+        return None
+    return (parameters.time_cost, parameters.memory_cost, parameters.parallelism)
+
+
 class PasswordHasher:
     """argon2id with fixed parameters; :meth:`verify` never raises."""
 
@@ -70,14 +79,17 @@ class PasswordHasher:
 
     def verify(self, phc: str, password: str) -> bool:
         """Whether ``password`` matches ``phc``; False on a mismatch or an invalid hash."""
+        return self._check(phc, password)
+
+    def dummy_verify(self, password: str) -> None:
+        """A verify against a hash with these parameters, its result thrown away."""
+        self._check(self._dummy_hash(), password)
+
+    def _check(self, phc: str, password: str) -> bool:
         try:
             return self._hasher.verify(phc, password)
         except (VerificationError, InvalidHashError):
             return False
-
-    def dummy_verify(self, password: str) -> None:
-        """A verify against a hash with these parameters, its result thrown away."""
-        self.verify(self._dummy_hash(), password)
 
     def _dummy_hash(self) -> str:
         with self._dummy_lock:
@@ -91,4 +103,5 @@ __all__ = [
     "DEFAULT_PARALLELISM",
     "DEFAULT_TIME_COST",
     "PasswordHasher",
+    "hash_parameters",
 ]

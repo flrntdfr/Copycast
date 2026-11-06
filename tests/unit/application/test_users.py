@@ -1,14 +1,24 @@
-"""The UserDirectory in open and legacy mode (users mode arrives with the settings)."""
+"""The UserDirectory in open, legacy and users mode, and the password hasher."""
 
 from __future__ import annotations
 
 from typing import Any
 
+from copycast.application.passwords import PasswordHasher, hash_parameters
 from copycast.application.users import DirectoryUser, UserDirectory
 from copycast.domain.credentials import credential_digest
 from copycast.domain.enums import AuthMode, KeyScope, PrincipalVia
+from copycast.domain.totp import decode_secret
 from copycast.domain.users import Principal
 from copycast.settings import Settings, get_settings
+from tests.support.users import (
+    TEST_HASHER,
+    TOTP_SECRET,
+    USERS,
+    password_hash,
+    user_entry,
+    users_auth,
+)
 
 
 def _settings(**auth: Any) -> Settings:
@@ -74,3 +84,104 @@ def test_principal_of_a_configured_user_only() -> None:
     assert key is not None and key.admin and key.key_scope is KeyScope.read
     assert key.via is PrincipalVia.api_key
     assert directory.principal("removed", via=PrincipalVia.session) is None
+
+
+# --------------------------------------------------------------------------- users mode
+
+
+def _users_settings(base_url: str = "http://testserver", **auth: Any) -> Settings:
+    return get_settings(base_url=base_url, auth={**users_auth(), **auth})
+
+
+def test_users_mode_reads_roles_quotas_and_totp_from_the_config() -> None:
+    settings = get_settings(
+        base_url="http://testserver",
+        auth={
+            "users": [
+                user_entry(USERS["root"], totp_secret=TOTP_SECRET, quota="unlimited"),
+                user_entry(USERS["alice"], quota="1 GB"),
+                user_entry(USERS["bob"]),
+            ],
+            "default_quota": "10 GB",
+        },
+    )
+    directory = UserDirectory(settings)
+    assert directory.mode is AuthMode.users
+    assert directory.owner_of_existing == "root"
+    assert directory.usernames() == ["root", "alice", "bob"]
+    root, alice, bob = directory.users()
+    assert root.admin and not alice.admin and not bob.admin
+    assert root.totp_key == decode_secret(TOTP_SECRET) and alice.totp_key is None
+    assert (root.quota_bytes, alice.quota_bytes, bob.quota_bytes) == (
+        None,
+        1_000_000_000,
+        10_000_000_000,
+    )
+    assert directory.quota_bytes("removed") == 10_000_000_000
+    assert directory.get("alice") == alice and directory.get("removed") is None
+    assert directory.is_configured("bob") and not directory.is_configured("copycast")
+    assert directory.open_principal() is None
+    # Login names are exact usernames in users mode.
+    assert directory.login_username("alice") == "alice"
+    assert directory.login_username("copycast") is None
+    assert directory.login_name_matches(alice, "alice")
+    assert not directory.login_name_matches(alice, "bob")
+    principal = directory.principal("alice", via=PrincipalVia.session)
+    assert principal == Principal("alice", False, PrincipalVia.session)
+    assert directory.principal("removed", via=PrincipalVia.session) is None
+    # The credential digest covers the hash and the TOTP secret.
+    assert directory.credential_digest("root") == credential_digest(
+        password_hash(USERS["root"].password), TOTP_SECRET
+    )
+    assert directory.credential_digest("removed") is None
+    # Every hash uses the same parameters: no warning, and the dummy uses them.
+    assert directory.startup_warnings() == []
+    assert (directory.hasher.time_cost, directory.hasher.memory_cost) == (1, 1024)
+
+
+def test_admins_without_totp_are_refused_on_https_only() -> None:
+    http = UserDirectory(_users_settings())
+    root = http.get("root")
+    assert root is not None and not http.admin_login_refused(root)
+    https = UserDirectory(_users_settings(base_url="https://copycast.example"))
+    root = https.get("root")
+    alice = https.get("alice")
+    assert root is not None and alice is not None
+    assert https.admin_login_refused(root) and not https.admin_login_refused(alice)
+    assert any("auth.admin_without_totp username=root" in w for w in https.startup_warnings())
+    with_totp = UserDirectory(
+        get_settings(
+            base_url="https://copycast.example", auth=users_auth(totp={"root": TOTP_SECRET})
+        )
+    )
+    root = with_totp.get("root")
+    assert root is not None and not with_totp.admin_login_refused(root)
+
+
+def test_the_dummy_verify_uses_the_slowest_parameters() -> None:
+    slow = PasswordHasher(time_cost=2, memory_cost=2048, parallelism=2)
+    settings = get_settings(
+        base_url="http://testserver",
+        auth={
+            "users": [
+                user_entry(USERS["root"]),
+                user_entry(USERS["alice"], password_hash=slow.hash(USERS["alice"].password)),
+            ]
+        },
+    )
+    directory = UserDirectory(settings)
+    hasher = directory.hasher
+    assert (hasher.time_cost, hasher.memory_cost, hasher.parallelism) == (2, 2048, 2)
+    assert any("auth.hash_parameters_differ" in w for w in directory.startup_warnings())
+
+
+def test_password_hasher_verifies_and_never_raises() -> None:
+    phc = TEST_HASHER.hash("secret")
+    assert TEST_HASHER.verify(phc, "secret")
+    assert not TEST_HASHER.verify(phc, "wrong")
+    assert not TEST_HASHER.verify("not a hash", "secret")
+    TEST_HASHER.dummy_verify("anything")  # returns nothing, raises nothing
+    assert hash_parameters(phc) == (1, 1024, 1)
+    assert hash_parameters("garbage") is None
+    defaults = PasswordHasher.slowest(["garbage"])
+    assert defaults.memory_cost == 65536

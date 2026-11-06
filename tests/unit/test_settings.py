@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from copycast.domain.enums import AuthMode
 from copycast.settings import Settings, SettingsError, get_settings, redact_url
+from tests.support.users import TEST_HASHER
 
 
 def test_defaults_match_the_plan(tmp_path: Path) -> None:
@@ -170,14 +173,23 @@ def test_auth_is_off_by_default_and_on_with_a_password(
 ) -> None:
     off = get_settings(storage={"scratch_dir": tmp_path})
     assert off.auth.enabled is False and off.auth.username == "copycast"
-    assert off.redacted()["auth"] == {"username": "copycast", "password": None}
+    assert off.auth.mode is AuthMode.open
+    assert off.redacted()["auth"] == {
+        "username": "copycast",
+        "password": None,
+        "users": [],
+        "default_quota": "unlimited",
+        "session_days": 30,
+        "owner_of_existing": None,
+    }
 
     monkeypatch.setenv("COPYCAST__AUTH__PASSWORD", "correct-horse")
     monkeypatch.setenv("COPYCAST__AUTH__USERNAME", " florent ")
     on = get_settings(storage={"scratch_dir": tmp_path})
     assert on.auth.enabled is True
     assert (on.auth.username, on.auth.password) == ("florent", "correct-horse")
-    assert on.redacted()["auth"] == {"username": "florent", "password": "***"}
+    assert on.auth.mode is AuthMode.legacy
+    assert on.redacted()["auth"]["password"] == "***"
 
     # An empty or blank password is "unset", not a weak password.
     assert (
@@ -323,3 +335,135 @@ def test_a_bad_allowed_hosts_is_one_settings_error(
     monkeypatch.setenv("COPYCAST_ALLOWED_HOSTS", raw)
     with pytest.raises(SettingsError, match="COPYCAST_ALLOWED_HOSTS"):
         get_settings(storage={"scratch_dir": tmp_path})
+
+
+# --------------------------------------------------------------------------- users mode
+
+HASH = TEST_HASHER.hash("alice-password")
+OTHER_HASH = TEST_HASHER.hash("bob-password")
+
+
+def _user(username: str, **extra: object) -> dict[str, object]:
+    return {"username": username, "password_hash": HASH, **extra}
+
+
+def test_users_from_the_toml_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = tmp_path / "copycast.toml"
+    config.write_text(
+        "[auth]\n"
+        'default_quota = "10 GB"\n'
+        "session_days = 7\n"
+        'owner_of_existing = "bob"\n'
+        "[[auth.users]]\n"
+        'username = "alice"\n'
+        f"password_hash = '{HASH}'\n"
+        'totp_secret = "jbsw y3dp ehpk 3pxp"\n'
+        "admin = true\n"
+        'quota = "unlimited"\n'
+        "[[auth.users]]\n"
+        'username = "bob"\n'
+        f"password_hash = '{OTHER_HASH}'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("COPYCAST_CONFIG", str(config))
+    settings = get_settings(storage={"scratch_dir": tmp_path})
+    auth = settings.auth
+    assert auth.mode is AuthMode.users and auth.enabled
+    assert [u.username for u in auth.users] == ["alice", "bob"]
+    assert auth.users[0].totp_secret == "JBSWY3DPEHPK3PXP"  # spaces dropped, upper-cased
+    assert auth.default_quota == 10_000_000_000 and auth.session_days == 7
+    assert auth.quota_for("alice") == "unlimited"
+    assert auth.quota_for("bob") == 10_000_000_000
+    assert auth.quota_for("removed") == 10_000_000_000
+    assert auth.effective_owner_of_existing == "bob"
+    redacted = settings.redacted()["auth"]
+    assert [u["password_hash"] for u in redacted["users"]] == ["***", "***"]
+    assert [u["totp_secret"] for u in redacted["users"]] == ["***", None]
+    assert HASH not in str(settings.redacted())
+
+
+def test_an_env_list_replaces_the_toml_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "copycast.toml"
+    config.write_text(
+        "[auth]\nsession_days = 9\n[[auth.users]]\n"
+        f"username = 'toml'\npassword_hash = '{HASH}'\nadmin = true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("COPYCAST_CONFIG", str(config))
+    entries = [_user("env", admin=True), {"username": "env2", "password_hash": OTHER_HASH}]
+    monkeypatch.setenv("COPYCAST__AUTH__USERS", json.dumps(entries))
+    auth = get_settings(storage={"scratch_dir": tmp_path}).auth
+    assert [u.username for u in auth.users] == ["env", "env2"]
+    assert auth.session_days == 9  # the rest of [auth] still comes from the file
+    assert auth.effective_owner_of_existing == "env"  # the first Admin in file order
+
+
+@pytest.mark.parametrize(
+    ("auth", "message"),
+    [
+        ({"users": [_user("Alice", admin=True)]}, r"auth\.users\[0\]\.username: must be 1-32"),
+        ({"users": [_user("-x", admin=True)]}, "starting with a letter or digit"),
+        ({"users": [_user("a" * 33, admin=True)]}, "must be 1-32"),
+        (
+            {"users": [{"username": "a", "password_hash": "hunter2hunter2", "admin": True}]},
+            r"password_hash: must be an argon2id PHC string \(run: copycast users hash-password\)",
+        ),
+        (
+            {"users": [{"username": "a", "password": "hunter2hunter2", "admin": True}]},
+            "a plaintext password is refused",
+        ),
+        (
+            {"users": [_user("a", admin=True, password_hash=HASH.replace("argon2id", "argon2i"))]},
+            "argon2id PHC",
+        ),
+        ({"users": [_user("a", admin=True, totp_secret="not base32!")]}, "totp_secret: must be"),
+        ({"users": [_user("a", admin=True, totp_secret="JBSWY3DP")]}, "at least 16"),
+        ({"users": [_user("a", admin=True, quota="10 GiB")]}, 'quota: must be like "10 GB"'),
+        ({"default_quota": "lots"}, "default_quota: must be like"),
+        ({"users": [_user("a", admin=True), _user("a")]}, 'duplicate username "a"'),
+        ({"users": [_user("a"), _user("b")]}, "at least one user needs admin = true"),
+        (
+            {"users": [_user("a", admin=True)], "password": "correct-horse"},
+            "auth.password and auth.users are exclusive",
+        ),
+        (
+            {"users": [_user("a", admin=True)], "owner_of_existing": "zed"},
+            'owner_of_existing names no configured user: "zed"',
+        ),
+        ({"owner_of_existing": "zed"}, "must be auth.username without auth.users"),
+        ({"session_days": 0}, "session_days"),
+        ({"users": [_user("a", admin=True, role="admin")]}, "role"),
+    ],
+)
+def test_users_are_validated(tmp_path: Path, auth: dict[str, object], message: str) -> None:
+    with pytest.raises(SettingsError, match=message):
+        get_settings(storage={"scratch_dir": tmp_path}, auth=auth)
+
+
+def test_owner_of_existing_in_open_and_legacy_mode(tmp_path: Path) -> None:
+    open_mode = get_settings(storage={"scratch_dir": tmp_path}, auth={"username": "Me@Example.org"})
+    assert open_mode.auth.legacy_owner == "me-example.org"
+    assert open_mode.auth.effective_owner_of_existing == "me-example.org"
+    legacy = get_settings(
+        storage={"scratch_dir": tmp_path},
+        auth={"username": "Florent", "password": "correct-horse", "owner_of_existing": "florent"},
+    )
+    assert legacy.auth.mode is AuthMode.legacy
+    assert legacy.auth.effective_owner_of_existing == "florent"
+    assert legacy.auth.quota_for("florent") == "unlimited"
+
+
+def test_a_global_cookiefile_is_refused_with_users(tmp_path: Path) -> None:
+    with pytest.raises(SettingsError, match=r"engine\.options\.cookiefile cannot be set"):
+        get_settings(
+            storage={"scratch_dir": tmp_path},
+            auth={"users": [_user("a", admin=True)]},
+            engine={"options": {"cookiefile": "/cookies.txt"}},
+        )
+    # Outside users mode it stays possible.
+    settings = get_settings(
+        storage={"scratch_dir": tmp_path}, engine={"options": {"cookiefile": "/cookies.txt"}}
+    )
+    assert settings.engine.options["cookiefile"] == "/cookies.txt"
