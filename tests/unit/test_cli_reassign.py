@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
+from copycast import cli
 from copycast.adapters.db import reassign as reassign_module
 from copycast.adapters.db.reassign import WORKER_RUNNING, ReassignRefused, ReassignReport
 from copycast.cli import main
@@ -23,6 +24,8 @@ from tests.support.users import users_auth
 @pytest.fixture(autouse=True)
 def _users_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("COPYCAST__AUTH__USERS", json.dumps(users_auth()["users"]))
+    # The real one caches structlog loggers for the process: later log captures would fail.
+    monkeypatch.setattr(cli, "configure_logging", lambda *args, **kwargs: None)
 
 
 def _fake_reassign(

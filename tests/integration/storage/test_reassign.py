@@ -184,6 +184,8 @@ async def test_a_removed_owner_moves_to_a_configured_user_through_the_cli(
         await seed(uow, feed)
     layout.store.put_bytes("users/copycast/defaults.json", '{"language": "it"}\n')
     monkeypatch.setattr("copycast.cli._load_settings", lambda: users_settings)
+    # The real one caches structlog loggers for the process: later log captures would fail.
+    monkeypatch.setattr("copycast.cli.configure_logging", lambda *args, **kwargs: None)
 
     # In a thread: the command runs its own event loop.
     result = await asyncio.to_thread(
