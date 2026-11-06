@@ -3,7 +3,9 @@
 ``text/event-stream`` with ``retry: 3000``, a keepalive comment every 15 s,
 ``id:`` per-process sequence numbers and a 1000-event replay via
 ``Last-Event-ID``. Frames: ``job``, ``progress``, ``feed``, ``item``,
-``request``, ``resync`` (see ``application.events``).
+``request``, ``resync`` (see ``application.events``). A stream carries only the
+events of the Principal's own Feeds (every Feed for an Admin) and ``resync``;
+``?feed_id=`` of a Feed the Principal cannot see is 404.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from fastapi import APIRouter, Header, Query, Request
 from sse_starlette.event import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
-from copycast.adapters.api.deps import PrincipalDep
+from copycast.adapters.api.deps import PrincipalDep, ServicesDep
 from copycast.adapters.api.events import EventHub
 from copycast.application.events import serialize
 from copycast.domain.users import Principal
@@ -65,9 +67,12 @@ async def _frames(
 async def subscribe_events(
     request: Request,
     principal: PrincipalDep,
+    services: ServicesDep,
     feed_id: Annotated[str | None, Query()] = None,
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
 ) -> Any:
+    if feed_id is not None:
+        await services.get_feed(feed_id)  # NotFound (404) unless the Principal sees it
     hub: EventHub = request.app.state.event_hub
     return EventSourceResponse(
         _frames(
