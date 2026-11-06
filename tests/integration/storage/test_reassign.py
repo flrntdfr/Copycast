@@ -32,6 +32,11 @@ ALICES_YOUTUBE = ".youtube.com\tTRUE\t/\tTRUE\t1790000000\tSID\talices-secret\n"
 TWITCH = ".twitch.tv\tTRUE\t/\tTRUE\t1790000000\tauth-token\tbobs-twitch\n"
 
 
+async def _jobs_requested_by(sessionmaker: async_sessionmaker[AsyncSession], owner: str) -> int:
+    async with sessionmaker() as session:
+        return len((await session.scalars(select(Job).where(Job.requested_by == owner))).all())
+
+
 async def _feeds(sessionmaker: async_sessionmaker[AsyncSession]) -> dict[str, Feed]:
     async with sessionmaker() as session:
         rows = (await session.scalars(select(Feed))).all()
@@ -39,7 +44,7 @@ async def _feeds(sessionmaker: async_sessionmaker[AsyncSession]) -> dict[str, Fe
 
 
 async def _bobs_job(sessionmaker: async_sessionmaker[AsyncSession], world: World) -> uuid.UUID:
-    """A job Bob requested (stamping ``requested_by`` on enqueue is not this group's)."""
+    """A job Bob requested, inserted by hand (the world's own jobs are stamped on enqueue)."""
     async with sessionmaker() as session, session.begin():
         feed = await session.get(Feed, world.mirror_id)
         assert feed is not None
@@ -72,11 +77,14 @@ async def test_reassign_moves_everything_and_keeps_news_files(
     before = await _feeds(sessionmaker)
     bobs = sorted(fid for fid, row in before.items() if row.owner == "bob")
     assert world.mirror_id in bobs and world.defaults["bob"] in bobs
+    bobs_jobs = await _jobs_requested_by(sessionmaker, "bob")
+    assert bobs_jobs > 1, "the world's jobs are stamped with Bob, plus the one added here"
 
     report = await reassign(users_settings, "bob", "alice", db_engine=db_engine, layout=layout)
 
     assert report.feeds == bobs
-    assert report.keys == 1 and report.jobs == 1
+    assert report.keys == 1 and report.jobs == bobs_jobs
+    assert await _jobs_requested_by(sessionmaker, "bob") == 0
     assert report.demoted_default == world.defaults["bob"]
     after = await _feeds(sessionmaker)
     assert {after[fid].owner for fid in bobs} == {"alice"}
