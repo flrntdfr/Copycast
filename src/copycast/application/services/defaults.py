@@ -1,8 +1,12 @@
-"""Operator defaults every Mirror may override: language, minimum item length, default policy.
+"""Each User's Defaults every one of their Mirrors may override: language, minimum item
+length, default policy, Refresh interval.
 
-They live in ``engine/defaults.json`` in the Object store so a rebuild keeps them,
-and both processes read them: the API to show and edit, the worker to fill in
-what a Mirror leaves null (:func:`effective`).
+They live in ``users/{owner}/defaults.json`` in the Object store so a rebuild keeps them,
+and both processes read them: the API to show and edit the caller's own, the worker to
+fill in what a Mirror leaves null from its owner's (:func:`effective`). A User with no
+stored Defaults gets the built-in :class:`MirrorDefaults`. The pre-3.0 global
+``engine/defaults.json`` is copied once to the owner of existing data
+(``adapters.storage.user_settings``) and no longer read.
 """
 
 from __future__ import annotations
@@ -22,9 +26,8 @@ log = get_logger(__name__)
 
 
 def defaults_key(layout: LayoutPort, owner: str) -> str:
-    """Where ``owner``'s Defaults live; every User shares ``engine/defaults.json`` for now."""
-    del owner
-    return layout.defaults_key()
+    """Where ``owner``'s Defaults live: ``users/{owner}/defaults.json``."""
+    return layout.user_defaults_key(owner)
 
 
 def load_defaults(layout: LayoutPort, owner: str) -> MirrorDefaults:
@@ -73,16 +76,18 @@ def effective(
 
 @capability("get_mirror_defaults", response=MirrorDefaults)
 async def get_mirror_defaults(ctx: ServiceContext) -> MirrorDefaults:
-    """The operator defaults applied wherever a Mirror leaves a value null."""
+    """The caller's Defaults, applied wherever one of their Mirrors leaves a value null."""
     return await asyncio.to_thread(load_defaults, ctx.layout, acting_owner(ctx))
 
 
 @capability("set_mirror_defaults", request=MirrorDefaults, response=MirrorDefaults)
 async def set_mirror_defaults(ctx: ServiceContext, body: MirrorDefaults) -> MirrorDefaults:
-    """Replace the operator defaults; Mirrors with their own value are unaffected."""
-    await asyncio.to_thread(store_defaults, ctx.layout, acting_owner(ctx), body)
+    """Replace the caller's Defaults; Mirrors with their own value are unaffected."""
+    owner = acting_owner(ctx)
+    await asyncio.to_thread(store_defaults, ctx.layout, owner, body)
     log.info(
         "defaults.stored",
+        owner=owner,
         language=body.language,
         min_duration_seconds=body.min_duration_seconds,
         backfill_mode=body.backfill.mode.value,

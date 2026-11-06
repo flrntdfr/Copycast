@@ -1,4 +1,4 @@
-"""Operator defaults (``/api/settings/defaults``) and video search (``/api/search/videos``)."""
+"""Each User's Defaults (``/api/settings/defaults``) and video search (``/api/search/videos``)."""
 
 from __future__ import annotations
 
@@ -6,9 +6,12 @@ import httpx
 import pytest
 
 from copycast.app import Container
+from copycast.application.models import MirrorDefaults
+from copycast.application.services.defaults import load_defaults
 from tests.support.factories import EPOCH, listing, listing_item
 from tests.support.fake_engine import FakeEngine
 from tests.support.paths import api
+from tests.support.world import ClientFactory, signed_in
 
 pytestmark = pytest.mark.integration
 
@@ -37,7 +40,8 @@ async def test_defaults_round_trip_and_validation(
         "backfill": {"mode": "all", "latest_n": None, "retention_days": None, "selection": None},
         "refresh_interval_hours": 24,
     }
-    assert container.layout.store.exists(container.layout.defaults_key())
+    assert container.layout.store.exists(container.layout.user_defaults_key("copycast"))
+    assert not container.layout.store.exists(container.layout.defaults_key())
     assert (await client.get(api("/settings/defaults"))).json()["language"] == "fr-CA"
 
     for body in (
@@ -151,3 +155,35 @@ async def test_youtube_playlists_list_the_account_and_mark_captures(
     again = (await client.get(api("/youtube/playlists"))).json()["playlists"]
     assert next(p for p in again if p["id"] == "PLabc")["captured_feed_id"] == mirror["id"]
     assert next(p for p in again if p["id"] == "PLdef")["captured_feed_id"] is None
+
+
+async def test_each_user_has_their_own_defaults(
+    users_container: Container, users_client_factory: ClientFactory
+) -> None:
+    layout = users_container.layout
+    built_in = MirrorDefaults().model_dump(mode="json")
+    async with (
+        signed_in(users_client_factory, "alice") as alice,
+        signed_in(users_client_factory, "bob") as bob,
+        signed_in(users_client_factory, "root") as root,
+    ):
+        stored = await alice.put(
+            api("/settings/defaults"),
+            json={"language": "fr", "min_duration_seconds": 120, "refresh_interval_hours": 6},
+        )
+        assert stored.status_code == 200, stored.text
+        assert layout.store.exists(layout.user_defaults_key("alice"))
+        assert not layout.store.exists(layout.defaults_key())
+
+        # Bob and the Admin start from the built-in Defaults; Alice's are hers alone.
+        for other in (bob, root):
+            assert (await other.get(api("/settings/defaults"))).json() == built_in
+        await bob.put(api("/settings/defaults"), json={"language": "de"})
+        assert (await alice.get(api("/settings/defaults"))).json()["language"] == "fr"
+        assert (await bob.get(api("/settings/defaults"))).json()["language"] == "de"
+        assert (await root.get(api("/settings/defaults"))).json() == built_in
+
+    # The worker reads each owner's own Defaults (policy.defaults_for, the scheduler).
+    assert load_defaults(layout, "alice").refresh_interval_hours == 6
+    assert load_defaults(layout, "bob").refresh_interval_hours == 24
+    assert load_defaults(layout, "carol") == MirrorDefaults()  # a new User: the built-ins

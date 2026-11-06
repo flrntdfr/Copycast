@@ -1,13 +1,16 @@
-"""The Engine's cookie files: stored for every fetch, never shown back.
+"""Each User's Cookie files: stored for every fetch of theirs, never shown back.
 
 Sites such as YouTube refuse downloads from a server's address unless a
-logged-in session's cookies come along; the operator exports them from a
-browser and adds them here, one file per site or session. Each file lives in the
-Object store at ``engine/cookies/{name}.txt``; the Engine reads one jar,
-``engine/cookies.txt``, merged from them on every change (yt-dlp gets a private 0600
-Scratch copy of it). yt-dlp writes rotated cookies into that jar, so every change first
-carries the jar back into the files. A jar stored before files existed shows as the file
-``cookies``.
+logged-in session's cookies come along; a User exports them from a browser and
+adds them here, one file per site or session. Each file lives in the Object store
+at ``users/{owner}/cookie-files/{name}.txt``; the Engine calls made for that User
+(their Feeds' Refreshes and archives, their probes, searches and Captures) carry one
+jar, ``users/{owner}/cookies.txt``, merged from them on every change (yt-dlp gets a
+private 0600 Scratch copy of it). yt-dlp writes rotated cookies into that jar, so
+every change first carries the jar back into the files. A jar stored before files
+existed shows as the file ``cookies``. The capabilities act on the caller's own files
+only, Admins included; the pre-3.0 ``engine/`` keys are copied once to the owner of
+existing data (``adapters.storage.user_settings``) and no longer read.
 """
 
 from __future__ import annotations
@@ -158,33 +161,38 @@ def _services(files: list[EngineCookieFileRead]) -> list[CookieServiceRead]:
 
 
 def cookie_jar_key(layout: LayoutPort, owner: str) -> str:
-    """The Object store key of the jar ``owner``'s Engine calls carry (``cookie_jar``).
+    """The Object store key of the jar ``owner``'s Engine calls carry (``cookie_jar``):
+    ``users/{owner}/cookies.txt``."""
+    return layout.user_cookies_key(owner)
 
-    Every User shares the one global jar for now.
-    """
-    del owner
-    return layout.cookies_key()
+
+def cookie_store(layout: LayoutPort, owner: str) -> _Store:
+    """``owner``'s jar and the Cookie files it is merged from (also ``copycast users
+    reassign``, which moves one User's files to another)."""
+    return _Store(
+        layout.store, cookie_jar_key(layout, owner), layout.user_cookie_files_prefix(owner)
+    )
 
 
 def _store(ctx: ServiceContext, owner: str) -> _Store:
-    """``owner``'s jar and the Cookie files it is merged from (the global ones for now)."""
-    layout = ctx.layout
-    return _Store(layout.store, cookie_jar_key(layout, owner), layout.cookie_files_prefix())
+    """``owner``'s jar and the Cookie files it is merged from."""
+    return cookie_store(ctx.layout, owner)
 
 
 @capability("get_engine_cookies", response=EngineCookiesRead)
 async def get_engine_cookies(ctx: ServiceContext) -> EngineCookiesRead:
-    """The stored cookie files, which domains they cover and which services they unlock."""
+    """The caller's Cookie files, which domains they cover and which services they unlock."""
     return await asyncio.to_thread(_store(ctx, acting_owner(ctx)).read)
 
 
 @capability("set_engine_cookies", request=EngineCookiesWrite, response=EngineCookiesRead)
 async def set_engine_cookies(ctx: ServiceContext, body: EngineCookiesWrite) -> EngineCookiesRead:
-    """Store a Netscape cookie file under its name, replacing a file of the same name
-    (422 when it is not one); every future fetch carries it."""
+    """Store a Netscape cookie file under its name among the caller's, replacing a file of
+    the same name (422 when it is not one); every future fetch of theirs carries it."""
     summary = parse_cookies(body.content)
     name = cookie_file_name(body.name)
-    store = _store(ctx, acting_owner(ctx))
+    owner = acting_owner(ctx)
+    store = _store(ctx, owner)
 
     def _add() -> EngineCookiesRead:
         files = store.synced()
@@ -194,15 +202,20 @@ async def set_engine_cookies(ctx: ServiceContext, body: EngineCookiesWrite) -> E
 
     read = await asyncio.to_thread(_add)
     log.info(
-        "engine.cookies_stored", file=name, cookies=summary.cookie_count, domains=summary.domains
+        "engine.cookies_stored",
+        owner=owner,
+        file=name,
+        cookies=summary.cookie_count,
+        domains=summary.domains,
     )
     return read
 
 
 @capability("delete_engine_cookies")
 async def delete_engine_cookies(ctx: ServiceContext, name: str | None = None) -> None:
-    """Remove one stored cookie file, or every one without ``name``."""
-    store = _store(ctx, acting_owner(ctx))
+    """Remove one of the caller's Cookie files, or every one of theirs without ``name``."""
+    owner = acting_owner(ctx)
+    store = _store(ctx, owner)
 
     def _remove() -> None:
         files = store.synced()
@@ -211,12 +224,13 @@ async def delete_engine_cookies(ctx: ServiceContext, name: str | None = None) ->
         store.save({} if name is None else {k: v for k, v in files.items() if k != name})
 
     await asyncio.to_thread(_remove)
-    log.info("engine.cookies_removed", file=name)
+    log.info("engine.cookies_removed", owner=owner, file=name)
 
 
 __all__ = [
     "COOKIES_MODE",
     "cookie_jar_key",
+    "cookie_store",
     "delete_engine_cookies",
     "get_engine_cookies",
     "set_engine_cookies",
