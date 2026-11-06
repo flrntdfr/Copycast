@@ -158,3 +158,9 @@ async def test_destructive_tools_carry_the_hint(app: FastAPI) -> None:
         annotations = tool.annotations
         assert annotations is not None, tool.name
         assert bool(annotations.destructive_hint) == (name in DESTRUCTIVE), tool.name
+
+
+async def test_tools_declare_their_access(app: FastAPI) -> None:
+    for tool in await tools_of(app):
+        meta = tool.meta or {}
+        assert meta.get("access") == ACCESS[meta["capability"]].value, tool.name

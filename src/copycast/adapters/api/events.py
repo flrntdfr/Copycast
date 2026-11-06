@@ -24,6 +24,7 @@ from psycopg import sql
 from pydantic import BaseModel
 
 from copycast.application.events import CHANNEL, InvalidEvent, ResyncEvent, parse
+from copycast.domain.users import Principal
 from copycast.logging import get_logger
 
 log = get_logger(__name__)
@@ -199,13 +200,20 @@ class EventHub:
     # ------------------------------------------------------------------ subscribing
 
     def subscribe(
-        self, *, feed_id: str | None = None, last_event_id: int | None = None
+        self,
+        principal: Principal = Principal.SYSTEM,
+        *,
+        feed_id: str | None = None,
+        last_event_id: int | None = None,
     ) -> Subscription:
-        """A subscription replaying every buffered event after ``last_event_id``.
+        """A subscription for ``principal``, replaying every buffered event after
+        ``last_event_id``.
 
         A ``last_event_id`` older than the buffer (or unknown after a restart)
-        first yields a ``resync`` so the client refetches everything.
+        first yields a ``resync`` so the client refetches everything. Every
+        subscriber gets every event for now, whoever its Principal is.
         """
+        del principal
         subscription = Subscription(self, feed_id=feed_id, queue_size=self._queue_size)
         if last_event_id is not None:
             oldest = self._buffer[0].id if self._buffer else self._next_id

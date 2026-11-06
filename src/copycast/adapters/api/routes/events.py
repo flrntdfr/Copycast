@@ -15,8 +15,10 @@ from fastapi import APIRouter, Header, Query, Request
 from sse_starlette.event import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
+from copycast.adapters.api.deps import PrincipalDep
 from copycast.adapters.api.events import EventHub
 from copycast.application.events import serialize
+from copycast.domain.users import Principal
 
 router = APIRouter(tags=["events"])
 
@@ -35,9 +37,14 @@ def _last_event_id(header: str | None) -> int | None:
 
 
 async def _frames(
-    hub: EventHub, request: Request, *, feed_id: str | None, last_event_id: int | None
+    hub: EventHub,
+    request: Request,
+    principal: Principal,
+    *,
+    feed_id: str | None,
+    last_event_id: int | None,
 ) -> AsyncIterator[ServerSentEvent]:
-    with hub.subscribe(feed_id=feed_id, last_event_id=last_event_id) as subscription:
+    with hub.subscribe(principal, feed_id=feed_id, last_event_id=last_event_id) as subscription:
         yield ServerSentEvent(comment="connected", retry=RETRY_MS)
         async for envelope in subscription:
             if await request.is_disconnected():
@@ -57,12 +64,19 @@ async def _frames(
 )
 async def subscribe_events(
     request: Request,
+    principal: PrincipalDep,
     feed_id: Annotated[str | None, Query()] = None,
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
 ) -> Any:
     hub: EventHub = request.app.state.event_hub
     return EventSourceResponse(
-        _frames(hub, request, feed_id=feed_id, last_event_id=_last_event_id(last_event_id)),
+        _frames(
+            hub,
+            request,
+            principal,
+            feed_id=feed_id,
+            last_event_id=_last_event_id(last_event_id),
+        ),
         ping=PING_SECONDS,
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

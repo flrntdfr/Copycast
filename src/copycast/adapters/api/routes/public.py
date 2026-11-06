@@ -57,6 +57,7 @@ from copycast.domain.credentials import ARTWORK_MAC_LEN, artwork_mac_ok
 from copycast.domain.enums import ArchiveState, AssetKind, AssetState, FeedKind, JobTrigger
 from copycast.domain.exceptions import Conflict, Unsupported
 from copycast.domain.urls import COPYCAST_ARTWORK_PATH, artwork_ext
+from copycast.domain.users import Principal
 from copycast.logging import get_logger
 
 if TYPE_CHECKING:
@@ -283,7 +284,7 @@ async def _archive_on_demand(
     ``ON_DEMAND_POLL_SECONDS`` in case one is missed. The job keeps running when the
     wait ends; the client is told to retry.
     """
-    subscription = hub.subscribe(feed_id=feed_id) if hub is not None else None
+    subscription = hub.subscribe(Principal.SYSTEM, feed_id=feed_id) if hub is not None else None
     try:
         try:
             await services.archive_item(feed_id, item_id, trigger=JobTrigger.feed_fetch)

@@ -1,7 +1,9 @@
 """``create_mcp(settings, container)``: the FastMCP server mounted at ``/mcp``.
 
-While ``settings.auth`` is on the server takes an :class:`ApiKeyVerifier`, so
-every HTTP request to the mount needs ``Authorization: Bearer cck_...``.
+While ``settings.auth`` is on (legacy or users mode) the server takes an
+:class:`ApiKeyVerifier`, so every HTTP request to the mount needs
+``Authorization: Bearer cck_...``. Every tool and resource acts as the key's owner
+(``auth.current_principal``), or as open mode's Admin without authentication.
 """
 
 from __future__ import annotations
@@ -30,7 +32,8 @@ INSTRUCTIONS = (
 
 
 def create_mcp(settings: Settings, container: ServicesProvider) -> FastMCP[Any]:
-    """Tools, resources and the prompt bound to ``container.services``; no IO at build time."""
+    """Tools, resources and the prompt over the calling Principal's services; no IO at
+    build time."""
     auth = ApiKeyVerifier(container) if settings.auth.enabled else None
     mcp: FastMCP[Any] = FastMCP(
         SERVER_NAME, instructions=INSTRUCTIONS, version=APP_VERSION, auth=auth
