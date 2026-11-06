@@ -45,8 +45,12 @@ SYSTEM_DEP_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         ("api/routes/auth.py", MODULE),
         ("api/routes/auth.py", "login"),
         ("api/routes/auth.py", "logout"),
-        # The play routes count a download through SYSTEM's record_download only.
+        # The /media play route counts a download through SYSTEM's record_download only
+        # (spec §1.13): as a parameter of the handler, named like its operation id, or
+        # through a dependency function called record_download. play_item_asset and any
+        # other handler act as the Principal alone.
         ("api/routes/play.py", MODULE),
+        ("api/routes/play.py", "play_item_media"),
         ("api/routes/play.py", "record_download"),
     }
 )
@@ -202,3 +206,18 @@ def test_the_finder_ignores_principal_services() -> None:
         )
     )
     assert finder.uses == []
+
+
+@pytest.mark.parametrize(
+    ("function", "allowed"),
+    [("play_item_media", True), ("record_download", True), ("play_item_asset", False)],
+)
+def test_the_media_play_route_may_take_system_services(function: str, allowed: bool) -> None:
+    """D's /media handler declares SYSTEM services as a route parameter (to count a
+    download); the asset handler may not."""
+    finder = _Finder("api/routes/play.py")
+    finder.visit(
+        ast.parse(f"async def {function}(services: ServicesDep, system: SystemServicesDep): ...")
+    )
+    assert [use.what for use in finder.uses] == ["SystemServicesDep"]
+    assert all(_allowed(use) is allowed for use in finder.uses)
