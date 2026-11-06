@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
-from copycast.application.models import CrawlerStats, QueueStats
+from copycast.application.models import CrawlerStats, QueueStats, QuotaStatus, Totals
 from copycast.application.ports import EngineVersion
 from copycast.application.services import status
 from copycast.version import APP_VERSION
@@ -110,3 +110,78 @@ def test_crawlers_by_service() -> None:
     observed.crawlers = [CrawlerStats(service="YouTube", runs=3, failed=3, last_error="bot")]
     down = crawlers(observed, set())
     assert down.state == "error" and down.summary == "YouTube failing on every Refresh"
+
+
+def quota(name: str, used: int, limit: int | None, *, removed: bool = False) -> QuotaStatus:
+    from copycast.domain.quota import quota_state
+
+    return QuotaStatus(
+        username=name,
+        used_bytes=used,
+        quota_bytes=limit,
+        state=quota_state(used, limit),
+        removed=removed,
+    )
+
+
+def test_quota_summary_and_meter() -> None:
+    assert status.quota_summary(quota("a", 3_200_000_000, 10_000_000_000)) == (
+        "3.2 GB of 10.0 GB (32 %)"
+    )
+    assert status.quota_summary(quota("a", 3_200_000_000, None)) == "3.2 GB used (unlimited)"
+    meter = status.quota_meter(quota("a", 250, 1000))
+    assert (meter.used_bytes, meter.quota_bytes, meter.ratio) == (250, 1000, 0.25)
+    assert status.quota_meter(quota("a", 5, None)).ratio is None
+    assert status.quota_meter(quota("a", 0, 0)).ratio == 1.0  # 0 of 0 is full (over)
+
+
+def test_the_quota_component_for_a_member_and_an_admin() -> None:
+    component = status._quota  # pyright: ignore[reportPrivateUsage]
+    observed = snapshot()
+    assert component(observed, False).state == "unknown"
+    observed.quota = quota("alice", 950, 1000)
+    observed.quotas = [
+        quota("root", 10, None),
+        quota("alice", 950, 1000),
+        quota("bob", 1000, 1000),
+        quota("gone", 7, 1000, removed=True),
+    ]
+    member = component(observed, False)
+    assert (member.id, member.name, member.state) == ("quota", "Storage", "warn")
+    assert member.summary == "950 B of 1.0 kB (95 %)"
+    assert member.meter is not None and member.meter.ratio == 0.95
+    assert member.facts == [], "a Member sees only their own"
+
+    admin = component(observed, True)
+    assert [(f.label, f.state) for f in admin.facts] == [
+        ("root", "ok"),
+        ("alice", "warn"),
+        ("bob", "error"),
+        ("gone (removed)", "ok"),
+    ]
+    assert admin.facts[2].value == "1.0 kB of 1.0 kB (100 %)"
+    assert admin.facts[0].meter is not None and admin.facts[0].meter.ratio is None
+    observed.quota = quota("bob", 1000, 1000)
+    assert component(observed, False).state == "error"
+    observed.quota = quota("root", 10, None)
+    assert component(observed, True).state == "ok"
+
+
+def test_the_object_store_keeps_its_instance_facts_for_admins() -> None:
+    storage = status._storage  # pyright: ignore[reportPrivateUsage]
+    ctx: Any = SimpleNamespace(
+        settings=SimpleNamespace(
+            storage=SimpleNamespace(url="s3://copycast", endpoint="http://seaweedfs:8333")
+        ),
+        layout=SimpleNamespace(read_version=lambda: "2"),
+        expected_layout_version="2",
+    )
+    observed = snapshot(free_bytes=50 * 1024**3)
+    observed.totals = Totals(storage_bytes=123)
+    admin = storage(ctx, observed, True)
+    assert (admin.id, admin.name, admin.state) == ("storage", "Object store", "ok")
+    labels = [fact.label for fact in admin.facts]
+    assert labels == ["Backend", "Bucket", "Endpoint", "Used by Feeds", "Worker Scratch free"]
+    member = storage(ctx, observed, False)
+    assert [fact.label for fact in member.facts] == ["Backend", "Worker Scratch free"]
+    assert member.name == "Object store" and member.state == "ok"
