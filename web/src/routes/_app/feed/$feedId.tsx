@@ -12,7 +12,7 @@ import { useRunningRefreshFeedIds } from "@/features/jobs/useRunningJobs";
 import { MirrorHeader } from "@/features/mirrors/MirrorHeader";
 
 /** The page of any Feed, a Mirror (captured playlists too) or a Local feed: header and Catalog. */
-export const Route = createFileRoute("/feed/$feedId")({
+export const Route = createFileRoute("/_app/feed/$feedId")({
   validateSearch: feedSearchSchema,
   search: { middlewares: [stripSearchParams(feedSearchDefaults)] },
   component: FeedPage,

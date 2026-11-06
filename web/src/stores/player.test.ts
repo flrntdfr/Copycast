@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { storageKey } from "@/lib/storage";
+
 import { readListening, writeListening } from "./listening";
 import {
-  PLAYER_STORAGE_KEY,
-  PLAYER_TRACK_STORAGE_KEY,
   chapterTarget,
   clampRate,
   formatRate,
@@ -27,7 +27,7 @@ const track: PlayerTrack = {
   feedId: "mirror-1",
   title: "Episode one",
   feedTitle: "Example Podcast",
-  url: "/feeds/mirror-1/media/item-1.m4a",
+  url: "/api/feeds/mirror-1/items/item-1/media",
   mime: "audio/mp4",
   artworkUrl: null,
   durationSeconds: 3600,
@@ -74,21 +74,21 @@ describe("speed", () => {
   it("keeps every speed stored by earlier versions and resets one out of range", () => {
     for (const rate of [0.75, 1, 1.25, 1.5, 1.75, 2]) {
       window.localStorage.setItem(
-        PLAYER_STORAGE_KEY,
+        storageKey("player"),
         JSON.stringify({ rate, volume: 0.5, muted: true }),
       );
       reloadPlayerForTests();
       expect(getPlayerState()).toMatchObject({ rate, volume: 0.5, muted: true, shortcuts: true });
     }
-    window.localStorage.setItem(PLAYER_STORAGE_KEY, JSON.stringify({ rate: 1.35 }));
+    window.localStorage.setItem(storageKey("player"), JSON.stringify({ rate: 1.35 }));
     reloadPlayerForTests();
     expect(getPlayerState().rate).toBe(1.35);
     for (const rate of [5, 0.25, "2", null]) {
-      window.localStorage.setItem(PLAYER_STORAGE_KEY, JSON.stringify({ rate, shortcuts: false }));
+      window.localStorage.setItem(storageKey("player"), JSON.stringify({ rate, shortcuts: false }));
       reloadPlayerForTests();
       expect(getPlayerState()).toMatchObject({ rate: 1, shortcuts: false });
     }
-    window.localStorage.setItem(PLAYER_STORAGE_KEY, "{not json");
+    window.localStorage.setItem(storageKey("player"), "{not json");
     reloadPlayerForTests();
     expect(getPlayerState()).toMatchObject({ rate: 1, volume: 1, muted: false, shortcuts: true });
   });
@@ -111,7 +111,7 @@ describe("listening", () => {
     writeListening("item-1", { t: 600, d: 3600, at: Date.now(), finished: false });
     play(track);
     expect(getPlayerState()).toMatchObject({ playing: true, currentTime: 600 });
-    expect(JSON.parse(window.localStorage.getItem(PLAYER_TRACK_STORAGE_KEY) ?? "null")).toEqual(
+    expect(JSON.parse(window.localStorage.getItem(storageKey("player.track")) ?? "null")).toEqual(
       track,
     );
 
@@ -123,7 +123,7 @@ describe("listening", () => {
     seek(3580);
     stop();
     expect(readListening("item-2")).toMatchObject({ t: 3580, finished: true });
-    expect(window.localStorage.getItem(PLAYER_TRACK_STORAGE_KEY)).toBeNull();
+    expect(window.localStorage.getItem(storageKey("player.track"))).toBeNull();
   });
 
   it("never marks Finished when the duration is unknown", () => {
@@ -169,5 +169,23 @@ describe("sleep timer", () => {
     reportPlayback({ currentTime: 1800.2 });
     tickSleepTimer(Date.now());
     expect(getPlayerState()).toMatchObject({ playing: false, sleep: null });
+  });
+});
+
+describe("restoring a track", () => {
+  it("drops a track saved before 3.0, whose URL is not a web play URL", () => {
+    window.localStorage.setItem(
+      storageKey("player.track"),
+      JSON.stringify({
+        ...track,
+        url: "http://localhost:8080/feeds/mirror-1/k/key/media/item-1.m4a",
+      }),
+    );
+    reloadPlayerForTests();
+    expect(getPlayerState().track).toBeNull();
+
+    window.localStorage.setItem(storageKey("player.track"), JSON.stringify(track));
+    reloadPlayerForTests();
+    expect(getPlayerState().track?.url).toBe(track.url);
   });
 });

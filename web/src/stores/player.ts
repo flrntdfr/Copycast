@@ -6,6 +6,7 @@
  */
 import { useSyncExternalStore } from "react";
 
+import { storageKey } from "@/lib/storage";
 import {
   FINISHED_TAIL_SECONDS,
   RESUME_MIN_SECONDS,
@@ -67,8 +68,6 @@ export const SLEEP_MINUTES = [5, 15, 30, 45, 60] as const;
 export const SLEEP_FADE_MS = 10_000;
 /** Positions are saved at most this often from playback, and at once on pause, seek and hide. */
 export const LISTENING_SAVE_INTERVAL_MS = 5_000;
-export const PLAYER_STORAGE_KEY = "copycast.player";
-export const PLAYER_TRACK_STORAGE_KEY = "copycast.player.track";
 
 /** A sleep timer choice: minutes, the end of the current chapter or Episode, or off. */
 export type SleepChoice = (typeof SLEEP_MINUTES)[number] | "chapter" | "episode" | null;
@@ -95,7 +94,7 @@ interface StoredPrefs {
 function readPrefs(): Required<StoredPrefs> {
   const fallback = { rate: 1, volume: 1, muted: false, shortcuts: true };
   try {
-    const raw = window.localStorage.getItem(PLAYER_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey("player"));
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as StoredPrefs;
     const rate =
@@ -114,16 +113,28 @@ function readPrefs(): Required<StoredPrefs> {
 
 function writePrefs(prefs: StoredPrefs): void {
   try {
-    window.localStorage.setItem(PLAYER_STORAGE_KEY, JSON.stringify(prefs));
+    window.localStorage.setItem(storageKey("player"), JSON.stringify(prefs));
   } catch {
     // Storage may be unavailable; the session still works.
   }
 }
 
-/** The track to bring back after a reload (media URLs carry no credentials). */
+/**
+ * Whether a stored track URL is a web play URL (`/api/feeds/…/media`, the session's own route).
+ * Tracks saved before 3.0 point at `/feeds/…` (a feed secret or a public path) and are dropped.
+ */
+export function isPlayUrl(url: string): boolean {
+  try {
+    return new URL(url, window.location.origin).pathname.startsWith("/api/");
+  } catch {
+    return false;
+  }
+}
+
+/** The track to bring back after a reload (play URLs carry no credentials). */
 function readTrackSnapshot(): PlayerTrack | null {
   try {
-    const raw = window.localStorage.getItem(PLAYER_TRACK_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey("player.track"));
     if (!raw) return null;
     const value = JSON.parse(raw) as Partial<PlayerTrack> | null;
     if (!value || typeof value !== "object") return null;
@@ -136,7 +147,7 @@ function readTrackSnapshot(): PlayerTrack | null {
       typeof url !== "string" ||
       typeof mime !== "string" ||
       !itemId ||
-      !url
+      !isPlayUrl(url)
     )
       return null;
     return {
@@ -160,8 +171,8 @@ function readTrackSnapshot(): PlayerTrack | null {
 
 function writeTrackSnapshot(track: PlayerTrack | null): void {
   try {
-    if (track) window.localStorage.setItem(PLAYER_TRACK_STORAGE_KEY, JSON.stringify(track));
-    else window.localStorage.removeItem(PLAYER_TRACK_STORAGE_KEY);
+    if (track) window.localStorage.setItem(storageKey("player.track"), JSON.stringify(track));
+    else window.localStorage.removeItem(storageKey("player.track"));
   } catch {
     // Storage may be unavailable; the bar just does not come back after a reload.
   }
@@ -479,8 +490,8 @@ export function useIsPlaying(itemId: string | null | undefined): boolean {
   );
 }
 
-/** Test seam: forget the track and restore the built-in preferences. */
-export function resetPlayerForTests(): void {
+/** Forget the track and restore the built-in preferences (sign-out; a test seam too). */
+export function resetPlayer(): void {
   state = {
     track: null,
     playing: false,
@@ -499,9 +510,16 @@ export function resetPlayerForTests(): void {
   for (const listener of listeners) listener();
 }
 
-/** Test seam: read the preferences and the last track back from storage, as a reload does. */
-export function reloadPlayerForTests(): void {
+export const resetPlayerForTests = resetPlayer;
+
+/**
+ * Read the preferences and the last track back from storage, as a reload does: called once
+ * the signed-in User is known (their keys differ from the anonymous ones), and by tests.
+ */
+export function reloadPlayer(): void {
   state = initialState();
   lastSavedAt = 0;
   for (const listener of listeners) listener();
 }
+
+export const reloadPlayerForTests = reloadPlayer;

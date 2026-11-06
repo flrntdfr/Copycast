@@ -4,6 +4,9 @@ import { cleanup, configure } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
 
 import { server } from "./server";
+import { setUnauthorizedHandler } from "@/api/client";
+import { stopSessionEvents } from "@/features/session/lifecycle";
+import { resetStorageUserForTests } from "@/lib/storage";
 import { closeAddSource } from "@/stores/addSource";
 
 // `findBy*` / `waitFor` default to 1 s, which a whole-app render (router, query client, MSW)
@@ -56,6 +59,9 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
   closeAddSource();
   cleanup();
+  stopSessionEvents();
+  setUnauthorizedHandler(null);
+  resetStorageUserForTests();
   server.resetHandlers();
   vi.useRealTimers();
   try {

@@ -43,9 +43,8 @@ import { useBulkActions } from "./mutations";
 import { type CatalogSearch, toCatalogFilters } from "./search";
 import { useCatalogPages } from "./useCatalogPages";
 import { count } from "@/lib/labels";
+import { storageKey } from "@/lib/storage";
 import { cn } from "@/lib/utils";
-
-const COLUMNS_STORAGE_KEY = "copycast.catalog.columns";
 
 /** Which header sorts by which `list_items` sort key. */
 const SORTABLE: Partial<Record<string, ItemSort>> = {
@@ -84,7 +83,7 @@ const OVERSCAN = 10;
 
 function readColumnVisibility(): ColumnVisibilityState {
   try {
-    const raw = window.localStorage.getItem(COLUMNS_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey("catalog.columns"));
     if (raw) return JSON.parse(raw) as ColumnVisibilityState;
   } catch {
     // ignore
@@ -173,7 +172,7 @@ export function CatalogTable({ feed, search, onSearchChange }: CatalogTableProps
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(columnVisibility));
+      window.localStorage.setItem(storageKey("catalog.columns"), JSON.stringify(columnVisibility));
     } catch {
       // ignore
     }

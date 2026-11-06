@@ -30,14 +30,25 @@ describe("parseEventPayload", () => {
 });
 
 describe("keysForEvent", () => {
-  it("maps feed events to list_feeds, get_feed, its files and the storage summary", () => {
+  it("maps feed events to list_feeds, get_feed, its files, the storage summary and usage", () => {
     const keys = keysForEvent({ event: "feed", data: { feed_id: "m1", revision: 1, reason: "x" } });
     expect(keys).toEqual([
       [OPS.list_feeds[0], OPS.list_feeds[1]],
       [OPS.get_feed[0], OPS.get_feed[1], { params: { path: { feed_id: "m1" } } }],
       [OPS.list_feed_objects[0], OPS.list_feed_objects[1], { params: { path: { feed_id: "m1" } } }],
       [OPS.storage_summary[0], OPS.storage_summary[1]],
+      [OPS.get_me[0], OPS.get_me[1]],
+      [OPS.get_status[0], OPS.get_status[1]],
     ]);
+  });
+
+  it("refreshes the User's quota (get_me, get_status) on item events", () => {
+    const keys = keysForEvent({
+      event: "item",
+      data: { feed_id: "m1", item_id: "i1", state: "archived" },
+    });
+    expect(keys).toContainEqual([OPS.get_me[0], OPS.get_me[1]]);
+    expect(keys).toContainEqual([OPS.get_status[0], OPS.get_status[1]]);
   });
 
   it("maps item events to that feed's list_items", () => {

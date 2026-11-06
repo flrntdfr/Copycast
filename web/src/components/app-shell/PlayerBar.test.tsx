@@ -3,13 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
+import { storageKey } from "@/lib/storage";
+
 import { PLAYER_HEIGHT_VAR, PlayerBar, parseChapters } from "./PlayerBar";
 import { renderWithProviders } from "@/test/render";
 import { server } from "@/test/server";
 import { readListening, writeListening } from "@/stores/listening";
 import {
-  PLAYER_STORAGE_KEY,
-  PLAYER_TRACK_STORAGE_KEY,
   getPlayerState,
   play,
   reloadPlayerForTests,
@@ -28,11 +28,11 @@ const track: PlayerTrack = {
   feedId: "mirror-1",
   title: "Episode one",
   feedTitle: "Example Podcast",
-  url: "http://localhost:8080/feeds/mirror-1/media/item-1.m4a",
+  url: "http://localhost:8080/api/feeds/mirror-1/items/item-1/media",
   mime: "audio/mp4",
   artworkUrl: null,
   durationSeconds: 3600,
-  chaptersUrl: "http://localhost:8080/feeds/mirror-1/assets/item-1.chapters.json",
+  chaptersUrl: "http://localhost:8080/api/feeds/mirror-1/items/item-1/assets/item-1.chapters.json",
 };
 /** The same Episode without chapters, so nothing arrives after the test. */
 const plain: PlayerTrack = { ...track, chaptersUrl: null };
@@ -85,18 +85,20 @@ describe("PlayerBar", () => {
   let playSpy: MockInstance<HTMLMediaElement["play"]>;
   beforeEach(() => {
     resetPlayerForTests();
-    window.localStorage.removeItem(PLAYER_STORAGE_KEY);
+    window.localStorage.removeItem(storageKey("player"));
     playSpy = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
     vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
     server.use(
-      http.get("http://localhost:8080/feeds/mirror-1/assets/item-1.chapters.json", () =>
-        HttpResponse.json({
-          chapters: [
-            { startTime: 0, title: "Intro" },
-            { startTime: 1800, title: "Halfway" },
-          ],
-        }),
+      http.get(
+        "http://localhost:8080/api/feeds/mirror-1/items/item-1/assets/item-1.chapters.json",
+        () =>
+          HttpResponse.json({
+            chapters: [
+              { startTime: 0, title: "Intro" },
+              { startTime: 1800, title: "Halfway" },
+            ],
+          }),
       ),
     );
   });
@@ -155,7 +157,7 @@ describe("PlayerBar", () => {
 
     await user.click(within(player).getByRole("button", { name: "Mute" }));
     expect(getPlayerState().muted).toBe(true);
-    expect(JSON.parse(window.localStorage.getItem(PLAYER_STORAGE_KEY) ?? "{}")).toEqual({
+    expect(JSON.parse(window.localStorage.getItem(storageKey("player")) ?? "{}")).toEqual({
       rate: 2.3,
       volume: 1,
       muted: true,
@@ -295,7 +297,7 @@ describe("PlayerBar", () => {
 
     audio.defaultPlaybackRate = 1;
     audio.playbackRate = 1;
-    const next = { ...plain, itemId: "item-2", url: "/feeds/mirror-1/media/item-2.m4a" };
+    const next = { ...plain, itemId: "item-2", url: "/api/feeds/mirror-1/items/item-2/media" };
     act(() => play(next));
     expect(audio.src).toBe(new URL(next.url, window.location.href).href);
     expect(audio.defaultPlaybackRate).toBe(1.5);
@@ -340,7 +342,7 @@ describe("PlayerBar", () => {
   });
 
   it("brings the last track back paused after a reload, and forgets it when it fails", () => {
-    window.localStorage.setItem(PLAYER_TRACK_STORAGE_KEY, JSON.stringify(plain));
+    window.localStorage.setItem(storageKey("player.track"), JSON.stringify(plain));
     writeListening("item-1", { t: 1200, d: 3600, at: Date.now() - 30_000, finished: false });
     reloadPlayerForTests();
     renderWithProviders(<PlayerBar />);
@@ -350,12 +352,12 @@ describe("PlayerBar", () => {
     expect(playSpy).not.toHaveBeenCalled();
 
     fireEvent.error(audioElement());
-    expect(window.localStorage.getItem(PLAYER_TRACK_STORAGE_KEY)).toBeNull();
+    expect(window.localStorage.getItem(storageKey("player.track"))).toBeNull();
     expect(player).toHaveTextContent("The media could not be played");
   });
 
   it("does not rewind the stored position again on reloads where nothing plays", () => {
-    window.localStorage.setItem(PLAYER_TRACK_STORAGE_KEY, JSON.stringify(plain));
+    window.localStorage.setItem(storageKey("player.track"), JSON.stringify(plain));
     writeListening("item-1", {
       t: 3600 - 600,
       d: 3600,

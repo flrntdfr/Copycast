@@ -10,7 +10,7 @@ import { FeedObjectsTable } from "@/features/buckets/FeedObjectsTable";
  * The bucket of any Feed (Mirror or Local feed): the files it keeps under `feeds/{id}/` in the
  * Object store, each downloadable and lockable, and the Purge of everything not locked.
  */
-export const Route = createFileRoute("/buckets/$bucketId")({
+export const Route = createFileRoute("/_app/buckets/$bucketId")({
   component: BucketPage,
 });
 

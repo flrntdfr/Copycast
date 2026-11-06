@@ -17,7 +17,7 @@ const searchSchema = z.object({
   url: z.string().default(defaults.url),
 });
 
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute("/_app/")({
   validateSearch: searchSchema,
   search: { middlewares: [stripSearchParams(defaults)] },
   component: FeedsPage,
