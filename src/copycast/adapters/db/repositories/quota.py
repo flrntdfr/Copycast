@@ -14,6 +14,7 @@ from sqlalchemy import Case, case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from copycast.adapters.db.base import refresh_loaded
+from copycast.adapters.db.locks import QUOTA_LOCK_SPACE
 from copycast.adapters.db.models import CatalogItem, Feed
 from copycast.domain.enums import ArchiveState, BlockedReason, WantedReason
 
@@ -35,6 +36,16 @@ def _priority() -> Case[int]:
 class QuotaRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def lock_owner(self, owner: str) -> None:
+        """Serialise quota admission for ``owner`` until this transaction ends.
+
+        Every statement after it sees what an earlier holder committed (READ COMMITTED
+        takes a fresh snapshot per statement), so check-then-add cannot overshoot.
+        """
+        await self._session.execute(
+            select(func.pg_advisory_xact_lock(QUOTA_LOCK_SPACE, func.hashtext(owner)))
+        )
 
     async def owned_storage_bytes(self, owner: str) -> int:
         """``SUM(feeds.storage_bytes)`` over ``owner``'s Feeds (0 without any)."""

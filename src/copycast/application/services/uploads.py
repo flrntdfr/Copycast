@@ -8,24 +8,31 @@ reads its tags there (they need a seekable file) and uploads it to
 (server-side) into a new Bucket as an archived Episode, in the order the agent
 gave, and removes the staged objects; ``add_uploads`` does the same into an existing Bucket, in
 natural file-name order, dated by arrival (ADR 0018). Staged uploads older
-than :data:`UPLOAD_TTL` are swept on the next ``create_upload``.
+than :data:`UPLOAD_TTL` are swept on the next ``create_upload`` or ``put_upload`` and by
+the scheduler (:func:`sweep_expired_uploads`).
 
 An upload belongs to the User who staged it (``owner`` in ``upload.json``; files staged
 before 3.0 belong to the owner of existing data): another User's upload is NotFound,
 and an Admin may use anyone's, but only into a Feed of that upload's Owner. Quotas
-(ADR 0029): ``create_upload`` checks the declared ``size_bytes``, ``put_upload`` stops
-at the room left, and ``add_uploads`` and ``create_serial_bucket`` check the sum of the
-batch before copying anything, so staged files added together cannot overshoot.
+(ADR 0029): staged uploads not yet added count against the room left (a received one
+by its size, a pending one by its declared size), and an Owner may hold at most
+:data:`MAX_STAGED_UPLOADS` of them, so staging alone cannot fill the Object store.
+``create_upload`` checks the declared ``size_bytes``, ``put_upload`` stops at the room
+left, and ``add_uploads`` and ``create_serial_bucket`` check the sum of the batch before
+copying anything. The PUT's final check and the batch checks run under the Owner's
+quota lock (``uow.quota.lock_owner``), so parallel calls cannot overshoot either.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
 import secrets
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final, cast
 
@@ -34,6 +41,7 @@ from copycast.application.events import FeedEvent
 from copycast.application.models import (
     AudioTags,
     BucketRead,
+    QuotaStatus,
     SerialBucketCreate,
     SerialEpisode,
     UploadCreate,
@@ -49,7 +57,7 @@ from copycast.application.services.context import (
 )
 from copycast.application.services.feeds import require_bucket
 from copycast.application.services.owners import acting_owner
-from copycast.application.services.quota import over_quota, require_room
+from copycast.application.services.quota import over_quota, quota_status, require_room
 from copycast.domain.enums import ArchiveState, FeedKind, ListingOrder
 from copycast.domain.exceptions import Conflict, NotFound, Unsupported
 from copycast.domain.ids import bucket_id
@@ -64,6 +72,8 @@ log = get_logger(__name__)
 
 UPLOAD_TTL: Final = timedelta(hours=24)
 MAX_UPLOAD_BYTES: Final = 4 * 1024**3
+MAX_STAGED_UPLOADS: Final = 1000
+"""Uploads one Owner may have staged and not yet added (pending or received)."""
 UPLOAD_SERVICE: Final = "Upload"
 UPLOAD_PATH: Final = "/uploads"
 _META: Final = "upload.json"
@@ -154,21 +164,93 @@ def _read(ctx: ServiceContext, meta: dict[str, Any], token: str | None = None) -
     )
 
 
-def _sweep(store: ObjectStorePort, root: str, now: datetime) -> None:
-    """Remove staged uploads older than :data:`UPLOAD_TTL` (abandoned batches)."""
+@dataclass(slots=True)
+class _StagedUsage:
+    """What one Owner holds under ``uploads/``: how many uploads, and their bytes."""
+
+    count: int = 0
+    bytes: int = 0
+
+
+def _staged_bytes(meta: dict[str, Any]) -> int:
+    """A received upload's size, else the size its ``create_upload`` declared (or 0)."""
+    size = meta.get("size_bytes") if meta.get("state") == "received" else None
+    if size is None:
+        size = meta.get("declared_bytes")
+    return size if isinstance(size, int) and not isinstance(size, bool) and size > 0 else 0
+
+
+def _scan(
+    store: ObjectStorePort,
+    root: str,
+    now: datetime,
+    *,
+    owner: str | None = None,
+    default_owner: str = "",
+    exclude: str | None = None,
+) -> _StagedUsage:
+    """Remove staged uploads older than :data:`UPLOAD_TTL` (abandoned batches) and count
+    what ``owner`` still has staged, ``exclude`` aside (uploads with no owner are
+    ``default_owner``'s, as :func:`_owner` reads them)."""
+    usage = _StagedUsage()
     for name in store.list_dirs(root):
         prefix = f"{root}{name}/"
         objects = store.list(prefix)
         if not objects:
             continue
+        meta: Any = {}
         try:
             body = store.get_bytes(prefix + _META)
-            meta: Any = json.loads(body) if body is not None else {}
+            meta = json.loads(body) if body is not None else {}
             stale = now - datetime.fromisoformat(str(meta["created_at"])) > UPLOAD_TTL
         except (OSError, ValueError, KeyError, TypeError):
             stale = now - max(o.last_modified for o in objects) > UPLOAD_TTL
         if stale:
             store.delete_prefix(prefix)
+            continue
+        if owner is None or name == exclude or not isinstance(meta, dict):
+            continue
+        found = cast("dict[str, Any]", meta)
+        staged_by = found.get("owner")
+        if (staged_by if isinstance(staged_by, str) and staged_by else default_owner) == owner:
+            usage.count += 1
+            usage.bytes += _staged_bytes(found)
+    return usage
+
+
+async def _staged_usage(
+    ctx: ServiceContext, owner: str, now: datetime, *, exclude: str | None = None
+) -> _StagedUsage:
+    return await asyncio.to_thread(
+        _scan,
+        ctx.layout.store,
+        ctx.layout.uploads_prefix(),
+        now,
+        owner=owner,
+        default_owner=ctx.users.owner_of_existing,
+        exclude=exclude,
+    )
+
+
+def sweep_expired_uploads(store: ObjectStorePort, root: str, now: datetime | None = None) -> None:
+    """Remove every staged upload older than :data:`UPLOAD_TTL` (the scheduler's sweep)."""
+    _scan(store, root, now or _now())
+
+
+def _room(status: QuotaStatus, staged: int) -> int | None:
+    """What the Owner may still stage: the quota less usage and what is already staged."""
+    if status.quota_bytes is None:
+        return None
+    return max(0, status.quota_bytes - status.used_bytes - staged)
+
+
+def _does_not_fit(status: QuotaStatus, adding: int, room: int) -> Exception:
+    return over_quota(
+        status,
+        f"over quota: {format_size(adding)} do not fit in the {format_size(room)} left "
+        "(uploads staged and not yet added count); free some space, add or let staged "
+        "uploads expire, or ask for a larger quota",
+    )
 
 
 @capability("create_upload", request=UploadCreate, response=UploadRead)
@@ -178,9 +260,18 @@ async def create_upload(ctx: ServiceContext, body: UploadCreate) -> UploadRead:
         raise Unsupported(f"{body.filename!r} is not mp3, m4a or m4b; convert it before uploading")
     owner = acting_owner(ctx)
     async with ctx.uow_factory() as uow:
-        await require_room(uow, ctx.users, owner, adding_bytes=body.size_bytes or 0)
+        status = await require_room(uow, ctx.users, owner, adding_bytes=body.size_bytes or 0)
     now = _now()
-    await asyncio.to_thread(_sweep, ctx.layout.store, ctx.layout.uploads_prefix(), now)
+    staged_now = await _staged_usage(ctx, owner, now)
+    if staged_now.count >= MAX_STAGED_UPLOADS:
+        raise Conflict(
+            f"{staged_now.count} uploads are staged and not yet added, the most one User may "
+            "hold; add them to a Bucket or let them expire (24 h)"
+        )
+    room = _room(status, staged_now.bytes)
+    declared = body.size_bytes or 0
+    if room is not None and (declared > room or room == 0):
+        raise _does_not_fit(status, declared, room)
     upload_id = secrets.token_hex(8)
     token = secrets.token_urlsafe(24)
     staged = _staged(ctx, upload_id)
@@ -214,7 +305,8 @@ async def put_upload(
     owner = _owner(ctx, meta)
     async with ctx.uow_factory() as uow:
         status = await require_room(uow, ctx.users, owner)
-    room = None if status.quota_bytes is None else max(0, status.quota_bytes - status.used_bytes)
+    others = await _staged_usage(ctx, owner, _now(), exclude=upload_id)
+    room = _room(status, others.bytes)
     partial = ctx.scratch.temp_file(f".{str(meta['file']).rpartition('.')[2]}")
     size = 0
     try:
@@ -222,11 +314,7 @@ async def put_upload(
             async for chunk in chunks:
                 size += len(chunk)
                 if room is not None and size > room and room < MAX_UPLOAD_BYTES:
-                    raise over_quota(
-                        status,
-                        f"over quota: the upload does not fit in the {format_size(room)} left; "
-                        "free some space or ask for a larger quota",
-                    )
+                    raise _does_not_fit(status, size, room)
                 if size > MAX_UPLOAD_BYTES:
                     raise Unsupported(f"an upload is limited to {MAX_UPLOAD_BYTES} bytes")
                 out.write(chunk)
@@ -243,8 +331,25 @@ async def put_upload(
         await asyncio.to_thread(staged.store.put_file, key, partial, content_type=mime)
     finally:
         partial.unlink(missing_ok=True)
-    meta.update(state="received", size_bytes=size, tags=tags.model_dump(mode="json"))
-    await asyncio.to_thread(staged.save, meta)
+    saved = False
+    try:
+        # Parallel PUTs each saw the same room: decide under the Owner's quota lock, with
+        # what the others received meanwhile, before this one counts as received.
+        async with ctx.uow_factory() as uow:
+            await uow.quota.lock_owner(owner)
+            status = await quota_status(uow, ctx.users, owner)
+            others = await _staged_usage(ctx, owner, _now(), exclude=upload_id)
+            room = _room(status, others.bytes)
+            if room is not None and size > room:
+                raise _does_not_fit(status, size, room)
+            meta.update(state="received", size_bytes=size, tags=tags.model_dump(mode="json"))
+            await asyncio.to_thread(staged.save, meta)
+            saved = True
+    except BaseException:
+        if not saved:  # refused: the upload stays pending, with no file
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(staged.store.delete, [key])
+        raise
     log.info("upload.received", upload_id=upload_id, bytes=size)
     return _read(ctx, meta)
 
@@ -296,6 +401,9 @@ async def _check_batch(
         if _owner(ctx, meta) != owner:
             raise NotFound("upload", upload.id)
     total = sum(int(meta.get("size_bytes") or 0) for _, meta, _ in staged)
+    # Held until this unit of work commits the added bytes: parallel batches queue here
+    # and each sees the usage the previous one committed.
+    await uow.quota.lock_owner(owner)
     await require_room(uow, ctx.users, owner, adding_bytes=total)
 
 
@@ -448,6 +556,7 @@ async def _remove_all(store: ObjectStorePort, prefixes: list[str]) -> None:
 
 
 __all__ = [
+    "MAX_STAGED_UPLOADS",
     "MAX_UPLOAD_BYTES",
     "UPLOAD_PATH",
     "UPLOAD_TTL",
@@ -457,4 +566,5 @@ __all__ = [
     "get_upload",
     "put_upload",
     "served_ext",
+    "sweep_expired_uploads",
 ]

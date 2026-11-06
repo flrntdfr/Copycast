@@ -15,6 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 MIGRATE_LOCK: Final = 0x434F5059
 WORKER_LOCK: Final = 0x434F5043
+QUOTA_LOCK_SPACE: Final = 0x434F51
+"""The first key of the two-key ``(QUOTA_LOCK_SPACE, hashtext(owner))`` transaction locks
+that serialise quota admission per Owner (a key space apart from the single-key locks)."""
 
 
 async def try_advisory_lock(conn: AsyncConnection, key: int) -> bool:

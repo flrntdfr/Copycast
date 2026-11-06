@@ -2,13 +2,18 @@
 
 ``create_upload`` refuses a declared size that does not fit (507 ``over-quota``);
 the ``PUT`` stops at the room left and keeps nothing; ``add_uploads`` and
-``create_serial_bucket`` check the whole batch before copying anything. An upload
-belongs to the User who staged it: another User's is 404, and an Admin may use it only
-in a Feed of its Owner.
+``create_serial_bucket`` check the whole batch before copying anything. Staged uploads
+not yet added count against the room, an Owner holds at most ``MAX_STAGED_UPLOADS``,
+and parallel PUTs or batches are decided one at a time under the Owner's quota lock. An
+upload belongs to the User who staged it: another User's is 404, and an Admin may use
+it only in a Feed of its Owner.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -17,6 +22,8 @@ import httpx
 import pytest
 
 from copycast.app import Container
+from copycast.application.services import uploads as uploads_service
+from copycast.worker.scheduler import Scheduler
 from tests.integration.worker.test_quota_blocking import set_quota, use_bytes
 from tests.support.audio import tagged_mp3
 from tests.support.paths import api
@@ -153,3 +160,72 @@ async def test_another_users_upload_is_not_found(
     assert into_own.status_code == 404, into_own.text
     into_bobs = await root_client.post(api(f"/buckets/{world.bucket_id}/uploads"), json=body)
     assert into_bobs.status_code == 200, into_bobs.text
+
+
+async def test_parallel_batches_never_overshoot_the_quota(
+    client: httpx.AsyncClient, container: Container, tmp_path: Path
+) -> None:
+    names = [f"{n:02d}.mp3" for n in range(1, 5)]
+    uploads = [await received(client, n, tagged_mp3(tmp_path, n, title=n)) for n in names]
+    largest = max(u["size_bytes"] for u in uploads)
+    set_quota(container, largest)  # room for one of them
+    bucket_id = (await container.services.ensure_default_bucket()).id
+
+    async def add(upload_id: str) -> httpx.Response:
+        return await client.post(
+            api(f"/buckets/{bucket_id}/uploads"), json={"upload_ids": [upload_id]}
+        )
+
+    responses = await asyncio.gather(*(add(u["id"]) for u in uploads))
+    statuses = sorted(r.status_code for r in responses)
+    assert statuses == [200, 507, 507, 507], [r.text for r in responses]
+    feed = (await client.get(api(f"/feeds/{bucket_id}"))).json()
+    assert feed["storage_bytes"] <= largest
+
+
+async def test_staged_uploads_count_against_the_room_left(
+    client: httpx.AsyncClient, container: Container, tmp_path: Path
+) -> None:
+    body = tagged_mp3(tmp_path, "a.mp3", title="A")
+    set_quota(container, len(body))
+    await received(client, "a.mp3", body)  # staged, not added: the room is now taken
+    over_quota(await client.post(api("/uploads"), json={"filename": "b.mp3"}))
+    over_quota(await client.post(api("/uploads"), json={"filename": "b.mp3", "size_bytes": 1}))
+
+
+async def test_parallel_puts_are_decided_one_at_a_time(
+    client: httpx.AsyncClient, container: Container, tmp_path: Path
+) -> None:
+    body = tagged_mp3(tmp_path, "a.mp3", title="A")
+    set_quota(container, len(body))
+    staged = [await stage(client, f"{n}.mp3") for n in range(4)]  # undeclared sizes
+    responses = await asyncio.gather(*(put(client, s, body) for s in staged))
+    assert sorted(r.status_code for r in responses) == [200, 507, 507, 507]
+    root = container.layout.uploads_prefix()
+    files = [o.key for o in container.layout.store.list(root) if "/file." in o.key]
+    assert len(files) == 1, "a refused PUT keeps no file"
+
+
+async def test_one_owner_holds_at_most_so_many_staged_uploads(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(uploads_service, "MAX_STAGED_UPLOADS", 2)
+    await stage(client, "1.mp3")
+    await stage(client, "2.mp3")
+    refused = await client.post(api("/uploads"), json={"filename": "3.mp3"})
+    assert refused.status_code == 409, refused.text
+    assert "staged" in refused.json()["detail"]
+
+
+async def test_the_scheduler_sweeps_expired_uploads(
+    client: httpx.AsyncClient, container: Container
+) -> None:
+    staged = await stage(client, "old.mp3")
+    layout = container.layout
+    key = f"{layout.uploads_prefix()}{staged['id']}/upload.json"
+    meta = layout.read_json(key)
+    meta["created_at"] = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
+    layout.store.put_bytes(key, json.dumps(meta), content_type="application/json")
+    tick = await Scheduler(container).tick()
+    assert tick.swept_uploads
+    assert layout.store.list(f"{layout.uploads_prefix()}{staged['id']}/") == []

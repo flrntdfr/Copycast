@@ -16,6 +16,7 @@ from copycast.application.services.context import UnitOfWorkPort
 from copycast.application.services.defaults import load_defaults
 from copycast.application.services.items import PRIORITY_FOLLOW, prune_dedup_key
 from copycast.application.services.quota import release_if_room
+from copycast.application.services.uploads import sweep_expired_uploads
 from copycast.domain.enums import JobKind, JobTrigger, PruneMode
 from copycast.logging import get_logger
 from copycast.worker.constants import (
@@ -24,6 +25,7 @@ from copycast.worker.constants import (
     REFRESH_RUN_RETENTION,
     SCHEDULER_TICK_SECONDS,
     STALE_HEARTBEAT,
+    UPLOAD_SWEEP_INTERVAL,
 )
 
 log = get_logger(__name__)
@@ -41,6 +43,7 @@ class SchedulerTick:
     purged_jobs: int = 0
     purged_runs: int = 0
     unblocked: int = 0
+    swept_uploads: bool = False
 
 
 class Scheduler:
@@ -55,6 +58,7 @@ class Scheduler:
         self._interval = interval
         self._clock = clock
         self.last_tick_at: datetime | None = None
+        self._uploads_swept_at: datetime | None = None
         self.on_tick: Callable[[datetime], None] | None = None
 
     async def tick(self) -> SchedulerTick:
@@ -63,10 +67,13 @@ class Scheduler:
         refreshes = await self._due_refreshes(now)
         prunes = await self._due_autoprunes(now)
         unblocked = await self._due_unblocks()
+        swept = await self._due_upload_sweep(now)
         self.last_tick_at = now
         if self.on_tick is not None:
             self.on_tick(now)
-        result = SchedulerTick(refreshes, prunes, requeued, purged_jobs, purged_runs, unblocked)
+        result = SchedulerTick(
+            refreshes, prunes, requeued, purged_jobs, purged_runs, unblocked, swept
+        )
         if any((refreshes, prunes, requeued, purged_jobs, purged_runs, unblocked)):
             log.info("scheduler.tick", **_as_dict(result))
         return result
@@ -159,6 +166,23 @@ class Scheduler:
             async with uow_of(self._container.uow_factory()) as uow:
                 released += await release_if_room(cast("UnitOfWorkPort", uow), users, owner)
         return released
+
+    async def _due_upload_sweep(self, now: datetime) -> bool:
+        """Expired staged uploads removed once per ``UPLOAD_SWEEP_INTERVAL``, not only when
+        someone next stages one; a failure is logged and retried at the next interval."""
+        last = self._uploads_swept_at
+        if last is not None and now - last < UPLOAD_SWEEP_INTERVAL:
+            return False
+        self._uploads_swept_at = now
+        layout = self._container.layout
+        try:
+            await asyncio.to_thread(
+                sweep_expired_uploads, layout.store, layout.uploads_prefix(), now
+            )
+        except Exception as exc:
+            log.warning("scheduler.upload_sweep_failed", error=str(exc))
+            return False
+        return True
 
     async def _maintenance(self, now: datetime) -> tuple[int, int, int]:
         async with uow_of(self._container.uow_factory()) as uow:

@@ -752,6 +752,11 @@ class LoginAttemptRepositoryPort(Protocol):
 
 
 class QuotaRepositoryPort(Protocol):
+    async def lock_owner(self, owner: str) -> None:
+        """Serialise quota admission for ``owner`` until the transaction ends (a check
+        after it sees every byte an earlier holder added)."""
+        ...
+
     async def owned_storage_bytes(self, owner: str) -> int:
         """``SUM(feeds.storage_bytes)`` over ``owner``'s Feeds."""
         ...
