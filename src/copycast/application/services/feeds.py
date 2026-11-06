@@ -18,6 +18,7 @@ from copycast.application.services.context import (
     ServiceContext,
     UnitOfWorkPort,
 )
+from copycast.application.services.owners import acting_owner
 from copycast.application.services.readmodels import bucket_read, feed_reads, one_feed_read
 from copycast.application.services.retry import retry_concurrent
 from copycast.domain.credentials import new_feed_password, new_feed_username
@@ -110,11 +111,15 @@ async def rotate_feed_credentials(ctx: ServiceContext, feed_id: str) -> FeedRead
 
 
 @capability("ensure_default_bucket", response=BucketRead)
-async def ensure_default_bucket(ctx: ServiceContext) -> BucketRead:
-    """The one default Bucket "Copycast", created on first call (api lifespan, worker start)."""
+async def ensure_default_bucket(ctx: ServiceContext, owner: str | None = None) -> BucketRead:
+    """``owner``'s default Local feed "Copycast", created on first call (api lifespan, worker
+    start); None means the acting User's."""
+    owner = owner or acting_owner(ctx)
     async with ctx.uow_factory() as uow:
-        existed = await uow.feeds.default_bucket()
-        feed = await uow.feeds.ensure_default_bucket()
+        # The Owner's ``users`` row first: every Feed names one (startup runs this per User).
+        await uow.users.ensure([owner])
+        existed = await uow.feeds.default_bucket(owner)
+        feed = await uow.feeds.ensure_default_bucket(owner)
         if existed is None:
             await uow.update_intent(feed.id)
             log.info("bucket.default_created", feed_id=feed.id)

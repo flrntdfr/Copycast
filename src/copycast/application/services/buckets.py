@@ -27,6 +27,7 @@ from copycast.application.services.context import (
 )
 from copycast.application.services.feeds import require_bucket
 from copycast.application.services.items import PRIORITY_MANUAL, expand_dedup_key
+from copycast.application.services.owners import acting_owner
 from copycast.application.services.policy import delete_rows, expire_automatic
 from copycast.application.services.readmodels import bucket_read, job_read, request_read
 from copycast.domain.enums import (
@@ -62,6 +63,7 @@ async def create_bucket(ctx: ServiceContext, body: BucketCreate) -> BucketRead:
         feed = await uow.feeds.add(
             ctx.rows.feed(
                 id=bucket_id(body.name),
+                owner=acting_owner(ctx),
                 kind=FeedKind.bucket.value,
                 title=body.name,
                 follow=False,

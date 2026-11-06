@@ -176,6 +176,8 @@ class _Plan:
     last_modified: str | None
     options: dict[str, Any]
     language: str | None
+    owner: str
+    """Whose Cookie files the listing carries: the Feed's Owner."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +212,7 @@ def _plan(ctx: ServiceContext, feed: FeedRow) -> _Plan:
         last_modified=feed.source_last_modified,
         options=dict(feed.engine_options or {}),
         language=language,
+        owner=feed.owner,
     )
 
 
@@ -239,6 +242,7 @@ def _list(ctx: ServiceContext, plan: _Plan, cancel: CancelToken, timeout: float)
         language=plan.language,
         cancel=cancel,
         limit=LIGHT_LISTING_LIMIT,
+        owner=plan.owner,
     )
     if listing.listing_order is ListingOrder.oldest_first:
         # A playlist-like Source: its first page is its oldest items, not its newest.

@@ -166,23 +166,25 @@ def engine_info() -> EngineVersion:
 
 @dataclass(frozen=True, slots=True)
 class StoredCookies:
-    """The cookie file in the Object store (``engine/cookies.txt``) and the Scratch its
-    private copies go to."""
+    """A cookie jar in the Object store (``engine/cookies.txt`` unless ``jar_key`` names
+    another, such as a User's) and the Scratch its private copies go to."""
 
     layout: Layout
     scratch: Scratch
+    jar_key: str | None = None
 
     @property
     def key(self) -> str:
-        return self.layout.cookies_key()
+        return self.jar_key or self.layout.cookies_key()
 
 
 class YtDlpEngine:
     """Implements :class:`copycast.application.ports.Engine` over ``yt_dlp.YoutubeDL``.
 
-    A cookie file stored in the Object store (``Layout.cookies_key``) rides along
-    with every call as ``cookiefile`` (a private Scratch copy) unless the
-    options name one; yt-dlp's refreshed cookies are written back afterwards.
+    A cookie file stored in the Object store (the ``cookie_jar`` key a call names, else
+    ``Layout.cookies_key``) rides along with every call as ``cookiefile`` (a private
+    Scratch copy) unless the options name one; yt-dlp's refreshed cookies are written
+    back to the same key afterwards.
 
     The fetch guard judges every URL handed to yt-dlp before it runs
     (``adapters.sources.guard.check_engine_url``): the Source URL of a listing, the
@@ -209,6 +211,12 @@ class YtDlpEngine:
     def version(self) -> EngineVersion:
         return engine_info()
 
+    def _jar(self, cookie_jar: str | None) -> StoredCookies | None:
+        """The jar a call carries: ``cookie_jar`` when given, else the global one."""
+        if cookie_jar is None or self._cookies is None:
+            return self._cookies
+        return replace(self._cookies, jar_key=cookie_jar)
+
     def list_source(
         self,
         url: str,
@@ -217,13 +225,14 @@ class YtDlpEngine:
         log: EngineLog,
         *,
         limit: int | None = None,
+        cookie_jar: str | None = None,
     ) -> SourceListing:
         _check_cancel(cancel, f"listing of {url}")
         check_engine_url(url, claims=engine_claims)
         errors = _LastErrorLog(log)
         with netguard.recording_refusals() as refused:
             try:
-                with cookie_scope(self._cookies, options) as with_cookies:
+                with cookie_scope(self._jar(cookie_jar), options) as with_cookies:
                     params = listing_params(with_cookies, log=errors, limit=limit)
                     with yt_dlp.YoutubeDL(params) as ydl:
                         info = ydl.extract_info(url, download=False)
@@ -258,6 +267,8 @@ class YtDlpEngine:
         cancel: CancelToken,
         on_progress: ProgressCallback,
         log: EngineLog,
+        *,
+        cookie_jar: str | None = None,
     ) -> FetchResult:
         _check_cancel(cancel, f"fetch of {spec.item_id}")
         if spec.kind is FetchKind.direct and spec.synth is None:
@@ -271,7 +282,7 @@ class YtDlpEngine:
         try:
             with (
                 netguard.recording_refusals() as refused,
-                cookie_scope(self._cookies, options) as with_cookies,
+                cookie_scope(self._jar(cookie_jar), options) as with_cookies,
             ):
                 params = fetch_params_for(
                     spec,

@@ -31,6 +31,7 @@ from copycast.application.services.items import (
     enqueue_archive,
     refresh_dedup_key,
 )
+from copycast.application.services.owners import acting_owner
 from copycast.application.services.policy import (
     apply_policy,
     defaults_for,
@@ -123,13 +124,19 @@ async def request_refresh(
 
 
 async def _resolve_snapshot(
-    ctx: ServiceContext, url: str, token: str | None, *, cancel: CancelToken | None
+    ctx: ServiceContext,
+    url: str,
+    token: str | None,
+    *,
+    owner: str,
+    cancel: CancelToken | None,
 ) -> SourceSnapshot:
-    """The cached probe (by token, then by normalized URL) or a fresh one; one candidate."""
-    cached = ctx.sources.cached(token=token, url=url)
+    """``owner``'s cached probe (by token, then by normalized URL) or a fresh one; one
+    candidate."""
+    cached = ctx.sources.cached(token=token, url=url, owner=owner)
     if cached is not None:
         return cached
-    snapshots = await probe_snapshots(ctx, url, cancel=cancel)
+    snapshots = await probe_snapshots(ctx, url, owner=owner, cancel=cancel)
     if len(snapshots) != 1:
         raise Ambiguous([s.candidate for s in snapshots])
     return snapshots[0]
@@ -190,17 +197,20 @@ async def create_mirror(
     the other modes queue the first Refresh. Without ``backfill`` the operator's
     default policy applies (Automatic out of the box).
     """
-    snapshot = await _resolve_snapshot(ctx, body.source_url, body.candidate_token, cancel=cancel)
+    owner = acting_owner(ctx)
+    snapshot = await _resolve_snapshot(
+        ctx, body.source_url, body.candidate_token, owner=owner, cancel=cancel
+    )
     dedup_key = normalize_source_url(snapshot.source_url)
     backfill, follow = body.resolve(defaults_for(ctx).backfill)
     async with ctx.uow_factory() as uow:
-        existing = await uow.feeds.by_dedup_key(dedup_key)
+        existing = await uow.feeds.by_dedup_key(owner, dedup_key)
         if existing is None:
             existing = await uow.feeds.get(mirror_id(dedup_key))
         if existing is not None:
             raise FeedExists(existing.id, snapshot.source_url)
         feed = await uow.feeds.add(
-            ctx.rows.feed(**_feed_values(snapshot, dedup_key, body, backfill, follow))
+            ctx.rows.feed(owner=owner, **_feed_values(snapshot, dedup_key, body, backfill, follow))
         )
         feed_id = feed.id
         await uow.catalog.upsert_listing(feed_id, snapshot.listing)
@@ -383,10 +393,14 @@ async def update_mirror(
     unlocks nothing.
     """
     fields = body.model_fields_set
+    # The Feed first (404 before anything else), then its Owner's Defaults and probe,
+    # outside any transaction; the write below requires the Feed again.
+    async with ctx.uow_factory() as uow:
+        owner = (await require_mirror(uow, feed_id)).owner
     defaults = defaults_for(ctx)
     snapshot: SourceSnapshot | None = None
     if "source_url" in fields and body.source_url is not None:
-        snapshot = await _resolve_snapshot(ctx, body.source_url, None, cancel=cancel)
+        snapshot = await _resolve_snapshot(ctx, body.source_url, None, owner=owner, cancel=cancel)
     async with ctx.uow_factory() as uow:
         feed = await require_mirror(uow, feed_id)
         refresh_needed = False
@@ -467,7 +481,7 @@ async def _retarget(uow: UnitOfWorkPort, feed: FeedRow, snapshot: SourceSnapshot
     if feed.source_kind != snapshot.source_kind.value:
         raise SourceKindChange(feed.source_kind or "unknown", snapshot.source_kind.value)
     dedup_key = normalize_source_url(snapshot.source_url)
-    other = await uow.feeds.by_dedup_key(dedup_key)
+    other = await uow.feeds.by_dedup_key(feed.owner, dedup_key)
     if other is not None and other.id != feed.id:
         raise FeedExists(other.id, snapshot.source_url)
     feed.source_url = snapshot.source_url

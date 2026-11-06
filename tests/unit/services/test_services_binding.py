@@ -89,7 +89,7 @@ class _SlowGateway:
         self.token: CancelToken | None = None
         self.searches: list[tuple[str, int]] = []
 
-    def probe(self, url: str, *, options: Any, cancel: CancelToken) -> list[Any]:
+    def probe(self, url: str, *, options: Any, cancel: CancelToken, owner: str) -> list[Any]:
         self.token = cancel
         while not cancel.cancelled:
             time.sleep(0.01)
@@ -105,7 +105,9 @@ async def test_probe_deadline_sets_the_token_and_raises_unsupported() -> None:
     settings = SimpleNamespace(engine=SimpleNamespace(options={}))
     ctx = SimpleNamespace(sources=gateway, settings=settings)
     with pytest.raises(Unsupported, match="longer than 0 seconds"):
-        await probe_snapshots(ctx, "https://x.example", deadline_seconds=0.05)  # type: ignore[arg-type]
+        await probe_snapshots(  # type: ignore[arg-type]
+            ctx, "https://x.example", owner="copycast", deadline_seconds=0.05
+        )
     assert gateway.token is not None and gateway.token.cancelled
 
 
@@ -132,3 +134,11 @@ async def test_search_normalizes_query_and_limit() -> None:
 )
 def test_engine_version_is_normalized_to_pep440(raw: str, expected: str) -> None:
     assert normalize_engine_version(raw) == expected
+
+
+def test_lock_seconds_doubles_from_the_fifth_failure_up_to_15_minutes() -> None:
+    from copycast.application.services.auth import lock_seconds
+
+    assert [lock_seconds(n) for n in range(5)] == [0, 0, 0, 0, 0]
+    assert [lock_seconds(n) for n in range(5, 11)] == [30, 60, 120, 240, 480, 900]
+    assert lock_seconds(1000) == 900

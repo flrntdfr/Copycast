@@ -545,6 +545,15 @@ def test_engine_reads_the_cookies_from_the_bucket_of_the_settings(settings: Sett
     assert YtDlpEngine()._cookies is None
 
 
+def test_a_call_may_name_its_own_cookie_jar(settings: Settings) -> None:
+    engine = build_engine(settings)
+    assert engine._jar(None) is engine._cookies
+    jar = engine._jar("users/alice/cookies.txt")
+    assert jar is not None and jar.key == "users/alice/cookies.txt"
+    assert engine._cookies is not None and jar.layout is engine._cookies.layout
+    assert YtDlpEngine()._jar("users/alice/cookies.txt") is None
+
+
 @pytest.mark.parametrize(
     ("ext", "codec", "expected"),
     [

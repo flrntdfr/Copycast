@@ -194,3 +194,16 @@ def test_parse_asset_name(name: str, expected: AssetFileName | None) -> None:
 )
 def test_is_media_name(name: str, expected: bool) -> None:
     assert is_media_name(name) is expected
+
+
+def test_per_user_keys(layout: Layout) -> None:
+    assert layout.user_prefix("florent") == "users/florent/"
+    assert layout.user_defaults_key("florent") == "users/florent/defaults.json"
+    assert layout.user_cookies_key("emilia.k") == "users/emilia.k/cookies.txt"
+    assert layout.user_cookie_files_prefix("florent") == "users/florent/cookie-files/"
+    assert layout.user_cookie_file_key("florent", "yt.txt") == "users/florent/cookie-files/yt.txt"
+    for bad in ("", "Florent", "../x", "a/b", ".x"):
+        with pytest.raises(UnsafePath):
+            layout.user_prefix(bad)
+    with pytest.raises(UnsafePath):
+        layout.user_cookie_file_key("florent", "../cookies.txt")

@@ -16,6 +16,7 @@ from copycast.application.models import (
 )
 from copycast.application.ports import CancelToken
 from copycast.application.services.context import ServiceContext, SourceSnapshot
+from copycast.application.services.owners import acting_owner
 from copycast.domain.enums import FeedKind
 from copycast.domain.exceptions import Unsupported
 from copycast.domain.urls import youtube_playlist_id
@@ -29,15 +30,21 @@ async def probe_snapshots(
     ctx: ServiceContext,
     url: str,
     *,
+    owner: str,
     cancel: CancelToken | None = None,
     deadline_seconds: float = PROBE_TIMEOUT_SECONDS,
 ) -> list[SourceSnapshot]:
-    """Run the blocking probe off the loop; the token is set on timeout or disconnect."""
+    """Run the blocking probe off the loop; the token is set on timeout or disconnect.
+
+    ``owner``'s Cookie files go with the probe, and its result is cached for ``owner``.
+    """
     token = cancel if cancel is not None else CancelToken()
     options: Mapping[str, Any] = ctx.settings.engine.options
     try:
         async with asyncio.timeout(deadline_seconds):
-            return await asyncio.to_thread(ctx.sources.probe, url, options=options, cancel=token)
+            return await asyncio.to_thread(
+                ctx.sources.probe, url, options=options, cancel=token, owner=owner
+            )
     except TimeoutError:
         token.cancel()
         raise Unsupported(
@@ -53,7 +60,7 @@ async def probe_source(
     ctx: ServiceContext, body: ProbeRequest, *, cancel: CancelToken | None = None
 ) -> ProbeResult:
     """Resolve a feed, page or Source URL into candidates (cached ten minutes)."""
-    snapshots = await probe_snapshots(ctx, body.url, cancel=cancel)
+    snapshots = await probe_snapshots(ctx, body.url, owner=acting_owner(ctx), cancel=cancel)
     return ProbeResult(input_url=body.url, candidates=[s.candidate for s in snapshots])
 
 
@@ -80,7 +87,7 @@ async def list_youtube_playlists(ctx: ServiceContext) -> YouTubePlaylistList:
     Needs the cookie file: without it YouTube shows no account, and the engine's
     error is reported as-is.
     """
-    playlists = await asyncio.to_thread(ctx.sources.list_playlists)
+    playlists = await asyncio.to_thread(ctx.sources.list_playlists, owner=acting_owner(ctx))
     async with ctx.uow_factory() as uow:
         mirrors = await uow.feeds.list(FeedKind.mirror)
     by_list_id = {
@@ -104,7 +111,9 @@ async def search_videos(
     limit = max(1, min(int(limit), SEARCH_MAX_LIMIT))
     if not query:
         return VideoSearchPage(query=query, results=[])
-    results = await asyncio.to_thread(ctx.sources.search_videos, query, limit)
+    results = await asyncio.to_thread(
+        ctx.sources.search_videos, query, limit, owner=acting_owner(ctx)
+    )
     return VideoSearchPage(query=query, results=results)
 
 

@@ -48,6 +48,7 @@ async def about(ctx: ServiceContext) -> AboutRead:
         layout_version=layout_version,
         totals=totals,
         auth_enabled=ctx.settings.auth.enabled,
+        auth_mode=ctx.users.mode,
     )
 
 

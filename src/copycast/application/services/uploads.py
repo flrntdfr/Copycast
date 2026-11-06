@@ -36,6 +36,7 @@ from copycast.application.models import (
 from copycast.application.services.buckets import bucket_read_for
 from copycast.application.services.context import ObjectStorePort, ServiceContext
 from copycast.application.services.feeds import require_bucket
+from copycast.application.services.owners import acting_owner
 from copycast.domain.enums import ArchiveState, FeedKind, ListingOrder
 from copycast.domain.exceptions import Conflict, NotFound, Unsupported
 from copycast.domain.ids import bucket_id
@@ -291,6 +292,7 @@ async def create_serial_bucket(ctx: ServiceContext, body: SerialBucketCreate) ->
         feed = await uow.feeds.add(
             ctx.rows.feed(
                 id=bucket_id(body.name),
+                owner=acting_owner(ctx),
                 kind=FeedKind.bucket.value,
                 title=body.name,
                 author=body.author,

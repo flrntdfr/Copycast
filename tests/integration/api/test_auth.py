@@ -74,6 +74,7 @@ async def test_api_requires_the_operator_pair(client: httpx.AsyncClient) -> None
     assert right.status_code == 200
     about = await client.get(ABOUT_PATH, headers=OPERATOR_HEADERS)
     assert about.status_code == 200 and about.json()["auth_enabled"] is True
+    assert about.json()["auth_mode"] == "legacy"
 
     # The health checks stay open for probes; SSE is gated like the rest of /api.
     assert (await client.get(HEALTH_LIVE)).status_code == 200

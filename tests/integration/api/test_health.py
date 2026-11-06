@@ -175,4 +175,5 @@ async def test_status_with_a_healthy_worker(
         "state": "ok",
         "summary": "7.1",
         "facts": [],
+        "meter": None,
     }

@@ -7,6 +7,7 @@ here so the three surfaces agree on the wording.
 
 from __future__ import annotations
 
+import posixpath
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 
@@ -43,6 +44,7 @@ from copycast.domain.enums import (
     AssetProvenance,
     AssetState,
     BackfillMode,
+    BlockedReason,
     FeedKind,
     HealthStatus,
     KeyScope,
@@ -91,6 +93,7 @@ def mirror_read(
         raise ValueError(f"feed {feed.id} is not a Mirror")
     return MirrorRead(
         id=feed.id,
+        owner=feed.owner,
         title=feed.title_override or feed.title,
         source_title=feed.title,
         title_override=feed.title_override,
@@ -136,6 +139,7 @@ def bucket_read(
 ) -> BucketRead:
     return BucketRead(
         id=feed.id,
+        owner=feed.owner,
         title=feed.title,
         name=feed.title,
         description=feed.description,
@@ -224,6 +228,7 @@ def asset_read(asset: AssetRow, urls: PublicUrls) -> AssetRead:
         language=asset.language,
         format=AssetFormat(asset.format) if asset.format else None,
         url=url,
+        name=posixpath.basename(asset.local_path) if served and asset.local_path else None,
         remote_url=asset.remote_url,
         mime=asset.mime,
         size_bytes=asset.size_bytes,
@@ -272,6 +277,7 @@ def item_read(
         live_status=LiveStatus(item.live_status) if item.live_status else None,
         attempt_count=item.attempt_count,
         last_error=item.last_error,
+        blocked_reason=BlockedReason(item.blocked_reason) if item.blocked_reason else None,
         media=media,
         public_media_url=urls.media_url(item.feed_id, item.id, item.public_ext),
         artwork_url=item.artwork_url,
@@ -307,6 +313,7 @@ def job_read(job: JobRow) -> JobRead:
 def api_key_read(key: ApiKeyRow) -> ApiKeyRead:
     return ApiKeyRead(
         id=key.id,
+        owner=key.owner,
         name=key.name,
         scope=KeyScope(key.scope),
         prefix=key.prefix,

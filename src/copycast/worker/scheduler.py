@@ -85,10 +85,13 @@ class Scheduler:
     async def _due_refreshes(self, now: datetime) -> int:
         """Mirrors whose last Refresh attempt is older than their interval (own, else default)."""
         default_hours = load_defaults(self._container.layout).refresh_interval_hours
+        configured = self._container.users.usernames()
         async with uow_of(self._container.uow_factory()) as uow:
             due = [
                 feed.id
-                for feed in await uow.feeds.mirrors_due(now - timedelta(hours=1))
+                for feed in await uow.feeds.mirrors_due(
+                    now - timedelta(hours=1), configured=configured
+                )
                 if feed.last_refresh_attempt_at is None
                 or now - feed.last_refresh_attempt_at
                 >= timedelta(hours=feed.refresh_interval_hours or default_hours)
@@ -102,10 +105,15 @@ class Scheduler:
 
     async def _due_autoprunes(self, now: datetime) -> int:
         count = 0
+        configured = self._container.users.usernames()
         async with uow_of(self._container.uow_factory()) as uow:
             due = [
-                *await uow.feeds.buckets_due_autoprune(now - AUTOPRUNE_INTERVAL),
-                *await uow.feeds.mirrors_due_expiry(now - AUTOPRUNE_INTERVAL),
+                *await uow.feeds.buckets_due_autoprune(
+                    now - AUTOPRUNE_INTERVAL, configured=configured
+                ),
+                *await uow.feeds.mirrors_due_expiry(
+                    now - AUTOPRUNE_INTERVAL, configured=configured
+                ),
             ]
             for feed in due:
                 job = await uow.jobs.enqueue(

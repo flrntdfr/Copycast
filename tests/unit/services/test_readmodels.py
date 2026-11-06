@@ -11,7 +11,7 @@ import pytest
 
 from copycast.application.models import BucketRead, CatalogCounts, MirrorRead
 from copycast.application.services import readmodels
-from copycast.domain.enums import ArchiveState, HealthStatus, LiveStatus
+from copycast.domain.enums import ArchiveState, BlockedReason, HealthStatus, LiveStatus
 
 NOW = datetime(2025, 6, 1, tzinfo=UTC)
 
@@ -44,6 +44,7 @@ def mirror_row(**overrides: Any) -> Any:
     fields: dict[str, Any] = {
         "id": "abc",
         "kind": "mirror",
+        "owner": "copycast",
         "is_default": False,
         "title": "Show",
         "title_override": None,
@@ -175,6 +176,8 @@ def item_row(**overrides: Any) -> Any:
         "first_seen_at": NOW,
         "archive_state": "archived",
         "wanted_reason": "backfill",
+        "blocked_reason": None,
+        "blocked_bytes": None,
         "archive_flag": False,
         "attempt_count": 1,
         "last_error": None,
@@ -292,3 +295,38 @@ def test_job_read_from_row() -> None:
     read = readmodels.job_read(row)
     assert read.kind.value == "refresh" and read.progress is not None
     assert read.progress.phase.value == "listing"
+
+
+def test_reads_carry_the_owner_and_the_blocked_reason() -> None:
+    mirror = readmodels.mirror_read(mirror_row(owner="alice"), Urls(), counts=CatalogCounts())
+    assert mirror.owner == "alice" and mirror.owner_removed is False
+    bucket = readmodels.bucket_read(
+        mirror_row(kind="bucket", owner="bob", source_url=None), Urls(), counts=CatalogCounts()
+    )
+    assert bucket.owner == "bob"
+    blocked = readmodels.item_read(
+        item_row(archive_state="wanted", blocked_reason="quota", blocked_bytes=10), Urls()
+    )
+    assert blocked.blocked_reason is BlockedReason.quota
+    assert blocked.model_dump(mode="json")["blocked_reason"] == "quota"
+    assert readmodels.item_read(item_row(), Urls()).blocked_reason is None
+
+
+def test_asset_read_names_the_archived_file() -> None:
+    read = readmodels.asset_read(asset_row(), Urls())
+    assert read.name == "0123456789abcdef.transcript.en.mirrored.vtt"
+    assert readmodels.asset_read(asset_row(state="wanted"), Urls()).name is None
+
+
+def test_api_key_read_carries_the_owner() -> None:
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        owner="alice",
+        name="agent",
+        scope="read",
+        prefix="cck_abcdefgh",
+        created_at=NOW,
+        last_used_at=None,
+    )
+    read = readmodels.api_key_read(row)
+    assert read.owner == "alice" and read.name == "agent"
