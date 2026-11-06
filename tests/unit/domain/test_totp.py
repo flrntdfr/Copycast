@@ -125,7 +125,15 @@ def test_provisioning_uri_shape() -> None:
     assert uri.startswith("otpauth://totp/Copycast:florent?secret=JBSWY3DPEHPK3PXP&issuer=")
 
 
-@pytest.mark.parametrize("digits", ["١٢٣٤٥٦", "１２３４５６", "۱۲۳۴۵۶", "12345٦"])
+@pytest.mark.parametrize(
+    "digits",
+    [
+        "\u0661\u0662\u0663\u0664\u0665\u0666",  # Arabic-Indic
+        "\uff11\uff12\uff13\uff14\uff15\uff16",  # fullwidth
+        "\u06f1\u06f2\u06f3\u06f4\u06f5\u06f6",  # extended Arabic-Indic
+        "12345\u0666",
+    ],
+)
 def test_match_step_refuses_non_ascii_digits_without_raising(digits: str) -> None:
     # str.isdigit() accepts these, and hmac.compare_digest raises TypeError on them.
     assert digits.isdigit()
