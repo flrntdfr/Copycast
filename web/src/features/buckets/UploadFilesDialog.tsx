@@ -1,8 +1,8 @@
-import { Check, CircleAlert, Loader2, Upload } from "lucide-react";
+import { Check, CircleAlert, HardDrive, Loader2, Upload } from "lucide-react";
 import { useRef, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 
-import { describeProblem, fetchClient } from "@/api/client";
+import { ApiProblem, describeProblem, fetchClient } from "@/api/client";
 import type { BucketRead } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,11 +27,25 @@ type FileState =
   | { status: "waiting" }
   | { status: "uploading"; percent: number }
   | { status: "received"; uploadId: string }
-  | { status: "failed"; error: string };
+  | { status: "failed"; error: string }
+  /** 507 from `create_upload` or the PUT: the User's quota has no room for this file. */
+  | { status: "over-quota" };
 
 interface Entry {
   file: File;
   state: FileState;
+}
+
+/** The PUT answered 507 Insufficient Storage: the Owner is over quota. */
+export class OverQuotaUpload extends Error {
+  constructor() {
+    super("Over quota");
+    this.name = "OverQuotaUpload";
+  }
+}
+
+function isOverQuota(error: unknown): boolean {
+  return error instanceof OverQuotaUpload || ApiProblem.slugOf(error) === "over-quota";
 }
 
 /** PUT the bytes to the one-time upload URL, reporting progress; same origin, path only. */
@@ -44,6 +58,7 @@ function putFile(uploadUrl: string, file: File, onProgress: (percent: number) =>
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else if (xhr.status === 507) reject(new OverQuotaUpload());
       else reject(new Error(problemTitle(xhr.responseText) ?? `HTTP ${xhr.status}`));
     };
     xhr.onerror = () => reject(new Error("Network error"));
@@ -85,7 +100,10 @@ export function UploadFilesButton({ bucket }: { bucket: BucketRead }) {
     for (const [index, file] of files.entries()) {
       update(index, { status: "uploading", percent: 0 });
       try {
-        const { data } = await fetchClient.POST("/api/uploads", { body: { filename: file.name } });
+        // The size goes along so a file that cannot fit is refused before any byte is sent.
+        const { data } = await fetchClient.POST("/api/uploads", {
+          body: { filename: file.name, size_bytes: file.size },
+        });
         if (!data?.upload_url) throw new Error("No upload URL");
         await putFile(data.upload_url, file, (percent) =>
           update(index, { status: "uploading", percent }),
@@ -93,7 +111,12 @@ export function UploadFilesButton({ bucket }: { bucket: BucketRead }) {
         ids.push(data.id);
         update(index, { status: "received", uploadId: data.id });
       } catch (error) {
-        update(index, { status: "failed", error: errorText(error) });
+        update(
+          index,
+          isOverQuota(error)
+            ? { status: "over-quota" }
+            : { status: "failed", error: errorText(error) },
+        );
       }
     }
     if (ids.length > 0) {
@@ -121,6 +144,7 @@ export function UploadFilesButton({ bucket }: { bucket: BucketRead }) {
   };
 
   const failed = entries.filter((entry) => entry.state.status === "failed").length;
+  const overQuota = entries.filter((entry) => entry.state.status === "over-quota").length;
   const done = entries.length - entries.filter((e) => e.state.status === "waiting").length;
   return (
     <>
@@ -158,6 +182,11 @@ export function UploadFilesButton({ bucket }: { bucket: BucketRead }) {
                     <Check className="size-4 shrink-0 text-green-600" aria-label="Uploaded" />
                   ) : state.status === "failed" ? (
                     <CircleAlert className="size-4 shrink-0 text-destructive" aria-label="Failed" />
+                  ) : state.status === "over-quota" ? (
+                    <HardDrive
+                      className="size-4 shrink-0 text-destructive"
+                      aria-label="Over quota"
+                    />
                   ) : state.status === "uploading" ? (
                     <Loader2 className="size-4 shrink-0 animate-spin" aria-label="Uploading" />
                   ) : (
@@ -174,6 +203,11 @@ export function UploadFilesButton({ bucket }: { bucket: BucketRead }) {
                 {state.status === "failed" ? (
                   <p className="pl-6 text-destructive">{state.error}</p>
                 ) : null}
+                {state.status === "over-quota" ? (
+                  <p className="pl-6 text-destructive" data-testid="upload-over-quota">
+                    Over quota: free some space, then upload it again
+                  </p>
+                ) : null}
               </li>
             ))}
           </ol>
@@ -181,9 +215,11 @@ export function UploadFilesButton({ bucket }: { bucket: BucketRead }) {
             <p className="mr-auto self-center text-sm text-muted-foreground tabular-nums">
               {busy
                 ? `${done} of ${entries.length}`
-                : failed > 0
-                  ? `${count(failed, "file")} failed`
-                  : "Done"}
+                : overQuota > 0
+                  ? `${count(overQuota, "file")} over quota${failed > 0 ? `, ${failed} failed` : ""}`
+                  : failed > 0
+                    ? `${count(failed, "file")} failed`
+                    : "Done"}
             </p>
             <Button variant="outline" disabled={busy} onClick={() => setEntries([])}>
               Close
