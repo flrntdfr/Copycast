@@ -113,6 +113,41 @@ async def test_update_intent_exports_once_per_transaction(
     assert "download_count" not in json.dumps(raw)  # no telemetry in the descriptor
 
 
+async def test_export_skips_a_descriptor_whose_content_is_unchanged(
+    spied_factory: UnitOfWorkFactory, layout: Layout, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """A Refresh that only moves ``last_listed_at`` and ``intent_version`` writes nothing."""
+    async with spied_factory() as uow:
+        feed = await uow.feeds.add(mirror_row())
+        await uow.catalog.upsert_listing(feed.id, listing(2))
+        await uow.update_intent(feed.id)
+    store = layout.store
+    path = layout.descriptor_key(feed.id)
+    first = store.head(path)
+    written_version = read_intent_version(store, path)
+    assert first is not None and written_version is not None
+
+    async with spied_factory() as uow:
+        await uow.catalog.upsert_listing(feed.id, listing(2))  # the same items, listed again
+        await uow.update_intent(feed.id)
+    again = store.head(path)
+    assert again is not None and again.etag == first.etag
+    assert read_intent_version(store, path) == written_version  # trails the database
+
+    async with spied_factory() as uow:
+        await uow.catalog.upsert_listing(feed.id, listing(3))  # one new item
+        await uow.update_intent(feed.id)
+    changed = store.head(path)
+    assert changed is not None and changed.etag != first.etag
+    assert read_intent_version(store, path) == written_version + 2
+    assert len(FeedDescriptor.read(store, path).items) == 3
+
+    store.put_bytes(path, "not a descriptor")  # unreadable: written again
+    async with sessionmaker() as session:
+        assert await export_descriptor(session, layout, feed.id) == path
+    assert len(FeedDescriptor.read(store, path).items) == 3
+
+
 async def test_export_skips_when_disk_carries_newer_intent(
     spied_factory: UnitOfWorkFactory, layout: Layout, sessionmaker: async_sessionmaker[AsyncSession]
 ) -> None:

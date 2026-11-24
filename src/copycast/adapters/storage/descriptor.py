@@ -3,6 +3,13 @@
 It carries the feed, its policy, every Catalog item (tombstones included),
 every asset row and every Request; never telemetry (jobs, refresh runs,
 download counters, attempts, errors). ``copycast rebuild`` reads it back.
+
+An export whose content matches the stored descriptor is skipped. The match ignores
+``exported_at``, ``intent_version`` and each item's ``last_listed_at``, which every
+Refresh moves. Rewriting an unchanged descriptor every hour filled the Object store with
+dead versions: SeaweedFS keeps an overwritten object's bytes until a vacuum. The stored
+``intent_version`` can therefore trail the database's. The newer-intent guard stays sound,
+because every real change is still written with the version current at that moment.
 """
 
 from __future__ import annotations
@@ -216,6 +223,13 @@ class FeedDescriptor(_Strict):
     def to_json(self) -> str:
         return self.model_dump_json(indent=2) + "\n"
 
+    def content(self) -> dict[str, Any]:
+        """What an export compares: everything but the fields every Refresh moves."""
+        data = self.model_dump(mode="json", exclude={"exported_at", "intent_version"})
+        for item in cast("list[dict[str, Any]]", data["items"]):
+            item.pop("last_listed_at", None)
+        return data
+
     def write(self, store: ObjectStore, key: str) -> str:
         store.put_bytes(key, self.to_json(), content_type="application/json")
         return key
@@ -253,17 +267,43 @@ class DescriptorError(ValueError):
     """A ``feed.json`` could not be read or does not validate."""
 
 
-def read_intent_version(store: ObjectStore, key: str) -> int | None:
-    """Only the ``intent_version`` of an existing descriptor, or ``None`` when unreadable."""
+def _load_json(store: ObjectStore, key: str) -> object:
+    """The stored object parsed as JSON; ``None`` when absent or unreadable."""
     try:
         body = store.get_bytes(key)
-        data: object = json.loads(body) if body is not None else None
+        return json.loads(body) if body is not None else None
     except (OSError, ValueError):
         return None
+
+
+def _intent_version_of(data: object) -> int | None:
     if not isinstance(data, dict):
         return None
     value = cast("dict[str, Any]", data).get("intent_version")
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def read_intent_version(store: ObjectStore, key: str) -> int | None:
+    """Only the ``intent_version`` of an existing descriptor, or ``None`` when unreadable."""
+    return _intent_version_of(_load_json(store, key))
+
+
+def _read_stored(store: ObjectStore, key: str) -> tuple[int | None, dict[str, Any] | None]:
+    """The stored descriptor's ``intent_version`` and :meth:`FeedDescriptor.content`.
+
+    One read serves both; each is ``None`` when the object is absent or unreadable.
+    """
+    data = _load_json(store, key)
+    if not isinstance(data, dict):
+        return None, None
+    stored = cast("dict[str, Any]", data)
+    content: dict[str, Any] | None = None
+    if stored.get("format") == DESCRIPTOR_FORMAT:
+        try:
+            content = FeedDescriptor.model_validate(stored).content()
+        except ValidationError:
+            content = None
+    return _intent_version_of(stored), content
 
 
 async def build_descriptor(session: AsyncSession, feed_id: str) -> FeedDescriptor | None:
@@ -282,17 +322,18 @@ async def build_descriptor(session: AsyncSession, feed_id: str) -> FeedDescripto
 async def export_descriptor(
     session: AsyncSession, layout: Layout, feed_id: str, *, force: bool = False
 ) -> str | None:
-    """Write ``feed.json`` for ``feed_id`` unless the object already carries a newer intent.
+    """Write ``feed.json`` for ``feed_id`` unless the stored one is newer or already says it.
 
-    Returns the key written, or ``None`` when skipped (feed deleted, or the
-    stored ``intent_version`` is newer than the database's).
+    Returns the key written, or ``None`` when skipped: the feed was deleted, the stored
+    ``intent_version`` is newer than the database's, or the stored content matches
+    (:meth:`FeedDescriptor.content`). ``force`` writes in every case but the first.
     """
     descriptor = await build_descriptor(session, feed_id)
     if descriptor is None:
         return None
     key = layout.descriptor_key(feed_id)
     if not force:
-        on_disk = await asyncio.to_thread(read_intent_version, layout.store, key)
+        on_disk, stored = await asyncio.to_thread(_read_stored, layout.store, key)
         if on_disk is not None and on_disk > descriptor.intent_version:
             log.info(
                 "descriptor.skip_newer",
@@ -300,6 +341,8 @@ async def export_descriptor(
                 on_disk=on_disk,
                 database=descriptor.intent_version,
             )
+            return None
+        if stored is not None and stored == descriptor.content():
             return None
     return await asyncio.to_thread(descriptor.write, layout.store, key)
 

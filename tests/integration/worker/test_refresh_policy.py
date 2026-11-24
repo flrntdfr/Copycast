@@ -319,3 +319,57 @@ async def test_mirror_language_reaches_the_engine(
     await _run_refresh(container, runner, mirror.id)
     seen = [o["extractor_args"] for o in engine.records.options_seen if o.get("extractor_args")]
     assert seen and all(args["youtube"]["lang"] == ["de"] for args in seen), seen
+
+
+async def test_a_quiet_listing_rewrites_neither_descriptor_nor_snapshot(
+    container: Container, engine, runner: Runner
+) -> None:
+    """Hourly Refreshes of a channel with nothing new leave its objects as they are.
+
+    yt-dlp's raw listing differs at every call (``epoch`` here), and each Refresh moves
+    ``last_listed_at`` and ``intent_version``: neither is a reason to write again.
+    """
+    from tests.support.factories import listing
+
+    url = "https://www.youtube.com/@quiet/videos"
+
+    def script(count: int, epoch: int) -> None:
+        raw = {"_type": "playlist", "epoch": epoch}
+        engine.script_listing(url, listing(count, service="YouTube", raw=raw))
+
+    script(2, epoch=1)
+    mirror = await create_mirror(container, url, mode=BackfillMode.new)
+    await runner.run_until_idle()
+    layout = container.layout
+    keys = (layout.descriptor_key(mirror.id), layout.source_listing_key(mirror.id))
+
+    def etags() -> list[str | None]:
+        heads = [layout.store.head(key) for key in keys]
+        assert all(heads), keys
+        return [head.etag for head in heads if head is not None]
+
+    before = etags()
+    script(2, epoch=2)
+    job = await _run_refresh(container, runner, mirror.id)
+    assert job.status == JobStatus.succeeded.value and job.result["new"] == 0
+    assert etags() == before
+
+    script(3, epoch=3)
+    job = await _run_refresh(container, runner, mirror.id)
+    assert job.status == JobStatus.succeeded.value and job.result["new"] == 1
+    after = etags()
+    assert after[0] != before[0] and after[1] != before[1]
+    assert layout.read_json(keys[1])["epoch"] == 3
+    assert len(FeedDescriptor.read(layout.store, keys[0]).items) == 3
+
+
+async def test_source_xml_is_written_only_when_its_bytes_change(layout) -> None:
+    from copycast.worker.jobs.refresh import write_source_xml
+
+    key = layout.source_xml_key("f1")
+    assert write_source_xml(layout, "f1", b"<rss>1</rss>") == key
+    first = layout.store.head(key)
+    assert write_source_xml(layout, "f1", b"<rss>1</rss>") is None
+    assert layout.store.head(key).etag == first.etag
+    assert write_source_xml(layout, "f1", b"<rss>2</rss>") == key
+    assert layout.store.get_bytes(key) == b"<rss>2</rss>"

@@ -120,17 +120,35 @@ def list_engine(
     return Listed(listing, engine_version=engine.version().version)
 
 
-def write_source_snapshot(layout: Layout, feed_id: str, listed: Listed) -> str | None:
-    """``source/feed.xml`` (verbatim RSS) or ``source/listing.json`` (raw flat listing)."""
-    if listed.body is not None:
-        key = layout.source_xml_key(feed_id)
-        layout.store.put_bytes(key, listed.body, content_type="application/xml")
-        return key
-    if listed.listing is not None and listed.listing.raw is not None:
-        key = layout.source_listing_key(feed_id)
-        layout.write_json(key, listed.listing.raw)
-        return key
-    return None
+def write_source_xml(layout: Layout, feed_id: str, body: bytes) -> str | None:
+    """``source/feed.xml`` (verbatim RSS), unless the stored copy has the same bytes.
+
+    A Source that ignores conditional GETs answers 200 with the same document every
+    hour. Its rewrites would only leave dead versions in the Object store.
+    """
+    key = layout.source_xml_key(feed_id)
+    if layout.store.get_bytes(key) == body:
+        return None
+    layout.store.put_bytes(key, body, content_type="application/xml")
+    return key
+
+
+def write_source_listing(
+    layout: Layout, feed_id: str, listing: SourceListing, *, catalog_changed: bool
+) -> str | None:
+    """``source/listing.json`` (yt-dlp's raw flat listing), when the Catalog moved.
+
+    The raw info dict differs at every call (view counts, ``epoch``), so its bytes say
+    nothing. It is written when the listing added or delisted items, or when none is
+    stored yet. Nothing reads it back: it shows what the Catalog last took from the Source.
+    """
+    if listing.raw is None:
+        return None
+    key = layout.source_listing_key(feed_id)
+    if not catalog_changed and layout.store.exists(key):
+        return None
+    layout.write_json(key, listing.raw)
+    return key
 
 
 async def run(ctx: JobContext) -> JobOutcome:
@@ -179,8 +197,9 @@ async def run(ctx: JobContext) -> JobOutcome:
         raise
 
     layout: Layout = ctx.container.layout
-    if not listed.unchanged:
-        await ctx.run_blocking(write_source_snapshot, layout, feed_id, listed)
+    # Before the Catalog commits: an archive job it queues reads its item's XML from here.
+    if listed.body is not None:
+        await ctx.run_blocking(write_source_xml, layout, feed_id, listed.body)
     artwork = await _mirror_feed_artwork(ctx, feed_id, listed.listing, layout)
 
     async with ctx.uow() as uow:
@@ -256,6 +275,20 @@ async def run(ctx: JobContext) -> JobOutcome:
         await uow.publish(FeedEvent(feed_id=feed_id, revision=revision, reason="refresh"))
         if enqueued:
             await uow.notify_jobs()
+    if listed.body is None and listed.listing is not None:
+        # After the commit, and never a reason to fail it: nothing reads the snapshot back.
+        try:
+            await ctx.run_blocking(
+                functools.partial(
+                    write_source_listing,
+                    catalog_changed=new_count > 0 or delisted_count > 0,
+                ),
+                layout,
+                feed_id,
+                listed.listing,
+            )
+        except Exception as exc:
+            log.warning("refresh.snapshot_failed", feed_id=feed_id, error=str(exc))
     log.info(
         "refresh.done",
         feed_id=feed_id,
@@ -380,5 +413,6 @@ __all__ = [
     "list_engine",
     "list_rss",
     "run",
-    "write_source_snapshot",
+    "write_source_listing",
+    "write_source_xml",
 ]
