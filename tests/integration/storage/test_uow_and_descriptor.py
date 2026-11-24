@@ -25,9 +25,10 @@ from copycast.adapters.storage.layout import Layout
 from copycast.application.events import CHANNEL, FeedEvent, parse
 from copycast.domain.enums import ArchiveState, AssetKind, LiveStatus, RequestedVia
 from copycast.domain.exceptions import ConcurrentUpdate
+from copycast.domain.listing import SourceListing
 from copycast.settings import Settings
 from tests.integration.storage.conftest import asset_row, bucket_row, item_row, mirror_row, seed
-from tests.support.factories import listing
+from tests.support.factories import listing, listing_item
 
 pytestmark = pytest.mark.integration
 
@@ -146,6 +147,41 @@ async def test_export_skips_a_descriptor_whose_content_is_unchanged(
     async with sessionmaker() as session:
         assert await export_descriptor(session, layout, feed.id) == path
     assert len(FeedDescriptor.read(store, path).items) == 3
+
+
+async def test_export_ignores_a_resigned_thumbnail_url(
+    spied_factory: UnitOfWorkFactory, layout: Layout
+) -> None:
+    """YouTube signs its thumbnails afresh at each listing; only the path counts."""
+    thumb = "https://i.ytimg.com/vi/abc/hq720.jpg"
+
+    def signed(signature: str, *, path: str = thumb) -> SourceListing:
+        items = [listing_item(1, position=0, artwork_url=f"{path}?sqp={signature}&rs={signature}")]
+        return listing(1, service="YouTube", items=items, artwork_url=f"{path}?rs={signature}")
+
+    async with spied_factory() as uow:
+        feed = await uow.feeds.add(mirror_row())
+        await uow.catalog.upsert_listing(feed.id, signed("one"))
+        await uow.feeds.apply_metadata(feed.id, artwork_url=f"{thumb}?rs=one")
+        await uow.update_intent(feed.id)
+    store = layout.store
+    path = layout.descriptor_key(feed.id)
+    first = store.head(path)
+    assert first is not None
+
+    async with spied_factory() as uow:
+        await uow.catalog.upsert_listing(feed.id, signed("two"))
+        await uow.feeds.apply_metadata(feed.id, artwork_url=f"{thumb}?rs=two")
+        await uow.update_intent(feed.id)
+    again = store.head(path)
+    assert again is not None and again.etag == first.etag
+
+    async with spied_factory() as uow:  # another image is a change
+        await uow.catalog.upsert_listing(feed.id, signed("two", path=thumb.replace("abc", "xyz")))
+        await uow.update_intent(feed.id)
+    changed = store.head(path)
+    assert changed is not None and changed.etag != first.etag
+    assert "xyz" in (FeedDescriptor.read(store, path).items[0].artwork_url or "")
 
 
 async def test_export_skips_when_disk_carries_newer_intent(

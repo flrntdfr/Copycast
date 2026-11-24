@@ -6,8 +6,10 @@ download counters, attempts, errors). ``copycast rebuild`` reads it back.
 
 An export whose content matches the stored descriptor is skipped. The match ignores
 ``exported_at``, ``intent_version`` and each item's ``last_listed_at``, which every
-Refresh moves. Rewriting an unchanged descriptor every hour filled the Object store with
-dead versions: SeaweedFS keeps an overwritten object's bytes until a vacuum. The stored
+Refresh moves, and the query string of every ``artwork_url``: YouTube signs its
+thumbnail URLs (``?sqp=…&rs=…``) afresh at each listing. Rewriting an unchanged
+descriptor every hour filled the Object store with dead versions: SeaweedFS keeps an
+overwritten object's bytes until a vacuum. The stored
 ``intent_version`` can therefore trail the database's. The newer-intent guard stays sound,
 because every real change is still written with the version current at that moment.
 """
@@ -56,6 +58,11 @@ DESCRIPTOR_FORMAT = "copycast-feed"
 DEBOUNCE_SECONDS = 5.0
 
 log = get_logger(__name__)
+
+
+def _unsigned(url: object) -> object:
+    """``url`` without its query string, which carries a per-listing thumbnail signature."""
+    return url.split("?", 1)[0] if isinstance(url, str) else url
 
 
 class _Strict(BaseModel):
@@ -226,8 +233,11 @@ class FeedDescriptor(_Strict):
     def content(self) -> dict[str, Any]:
         """What an export compares: everything but the fields every Refresh moves."""
         data = self.model_dump(mode="json", exclude={"exported_at", "intent_version"})
+        feed = cast("dict[str, Any]", data["feed"])
+        feed["artwork_url"] = _unsigned(feed.get("artwork_url"))
         for item in cast("list[dict[str, Any]]", data["items"]):
             item.pop("last_listed_at", None)
+            item["artwork_url"] = _unsigned(item.get("artwork_url"))
         return data
 
     def write(self, store: ObjectStore, key: str) -> str:
