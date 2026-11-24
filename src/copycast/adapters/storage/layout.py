@@ -13,7 +13,8 @@
     engine/cookies/{name}.txt                       legacy (2.x): the files that jar merged
     engine/defaults.json                            legacy (2.x): the operator's Defaults
     feeds/{feed_id}/feed.json                       descriptor
-      source/feed.xml | source/listing.json         verbatim Source XML | last flat listing
+      source/feed.xml | source/listing.json         verbatim Source XML | flat listing of the
+                                                    last Refresh that moved the Catalog
       media/{item_id}.{ext}                         audio, {item_id}.info.json, {item_id}.item.xml
       assets/feed.artwork.{ext}  assets/{item_id}.artwork.{ext} | {item_id}.chapters.json
              | {item_id}.transcript.{lang}.{provenance}.{ext}
