@@ -231,9 +231,9 @@ password_hash = '$argon2id$v=19$m=65536,t=3,p=4$...'
 entrypoint is already `copycast`, so the subcommand follows the image name:
 
 ```bash
-docker run --rm -it ghcr.io/flrntdfr/copycast:3.0.1 users hash-password      # prompts twice, hidden
-read -rs PW && printf '%s\n' "$PW" | docker run --rm -i ghcr.io/flrntdfr/copycast:3.0.1 users hash-password --stdin
-docker run --rm ghcr.io/flrntdfr/copycast:3.0.1 users totp florent
+docker run --rm -it ghcr.io/flrntdfr/copycast:3.0.2 users hash-password      # prompts twice, hidden
+read -rs PW && printf '%s\n' "$PW" | docker run --rm -i ghcr.io/flrntdfr/copycast:3.0.2 users hash-password --stdin
+docker run --rm ghcr.io/flrntdfr/copycast:3.0.2 users totp florent
 ```
 
 (`docker compose exec api copycast users …` works too: `exec` does not go through the
@@ -1283,8 +1283,8 @@ pushes the lock change to `main`; `image.yml` then builds and publishes:
 | Tag | Moves? | Use |
 |---|---|---|
 | `latest` | yes | the newest successful build |
-| `3.0.1` | yes, on every engine bump | "the current 3.0.1" |
-| `3.0.1-yt2026.11.14.232655.dev0` | never (until pruned) | exactly this app + engine combination |
+| `3.0.2` | yes, on every engine bump | "the current 3.0.2" |
+| `3.0.2-yt2026.11.14.232655.dev0` | never (until pruned) | exactly this app + engine combination |
 | `sha-<short>` | never | one commit |
 
 Every image is smoke-tested (`scripts/smoke.sh`) before its tags move. After each build the
