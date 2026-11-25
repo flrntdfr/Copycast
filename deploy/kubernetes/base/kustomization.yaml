@@ -27,4 +27,4 @@ configMapGenerator:
 
 images:
   - name: ghcr.io/flrntdfr/copycast
-    newTag: "3.0.1"
+    newTag: "3.0.2"
